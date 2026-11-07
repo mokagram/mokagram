@@ -56,6 +56,9 @@
 #include "data/data_document.h"
 #include "api/api_common.h"
 #include "core/application.h"
+#include "main/main_domain.h"
+#include "storage/storage_domain.h"
+#include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "data/data_changes.h"
 #include "mainwindow.h"
 #include "data/data_session.h"
@@ -2542,6 +2545,25 @@ void StartDebugCommands() {
 		file.close();
 		QFile::remove(path);
 		const auto window = Core::App().activePrimaryWindow();
+		// Экран блокировки: сеанса ещё нет, работают только ввод и снимок.
+		if (window && Core::App().passcodeLocked()) {
+			if (cmd.startsWith(u"winshot:"_q)) {
+				window->widget()->grab().save(cmd.mid(8));
+			} else if (cmd.startsWith(u"type:"_q)) {
+				if (const auto w = QApplication::focusWidget()) {
+					for (const auto ch : cmd.mid(5)) {
+						auto press = QKeyEvent(QEvent::KeyPress, 0, Qt::NoModifier, QString(ch));
+						QCoreApplication::sendEvent(w, &press);
+					}
+				}
+			} else if (cmd == u"enter"_q) {
+				if (const auto w = QApplication::focusWidget()) {
+					auto press = QKeyEvent(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QString(QChar('\r')));
+					QCoreApplication::sendEvent(w, &press);
+				}
+			}
+			return;
+		}
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller) {
 			return;
@@ -2881,6 +2903,31 @@ void StartDebugCommands() {
 				LOG(("MOKAREAD before unread=%1").arg(history->unreadCount()));
 				Ghost::ReadNow(history);
 				LOG(("MOKAREAD after unread=%1").arg(history->unreadCount()));
+			}
+		} else if (cmd.startsWith(u"passcode:set:"_q)) {
+			// Только если код-пароля ещё нет: чужой не меняем.
+			auto &local = Core::App().domain().local();
+			if (!local.hasLocalPasscode()) {
+				const auto result = local.setPasscode(
+					cmd.mid(13).toUtf8(),
+					Storage::PasscodeVerification());
+				if (result == Storage::SetPasscodeResult::Success) {
+					Core::App().localPasscodeChanged();
+				}
+			}
+		} else if (cmd.startsWith(u"passcode:off:"_q)) {
+			auto &local = Core::App().domain().local();
+			const auto passcode = cmd.mid(13).toUtf8();
+			if (const auto token = local.verifyPasscode(passcode)) {
+				Mokagram::FakePasscode::RealPasscodeChanged(QByteArray());
+				const auto result = local.setPasscode(QByteArray(), *token);
+				if (result == Storage::SetPasscodeResult::Success) {
+					Core::App().localPasscodeChanged();
+				}
+			}
+		} else if (cmd == u"lock"_q) {
+			if (Core::App().domain().local().hasLocalPasscode()) {
+				Core::App().lockByPasscode();
 			}
 		} else if (cmd.startsWith(u"action:"_q)) {
 			// Действие одной строки настроек по ключу.

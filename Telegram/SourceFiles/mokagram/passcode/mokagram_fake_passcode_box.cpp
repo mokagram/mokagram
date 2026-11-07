@@ -281,10 +281,7 @@ void EditBox(not_null<Ui::GenericBox*> box, std::optional<Entry> existing) {
 		adding ? U("Новый ложный пароль") : existing->name,
 		true);
 	const auto content = box->verticalLayout();
-	const auto initial = existing.value_or(Entry{
-		.name = U("Ложный пароль"),
-		.unlocks = true,
-	});
+	const auto initial = existing.value_or(Entry{ .unlocks = true });
 
 	const auto fields = AddCard(content, 14);
 	const auto name = AddField(fields, U("Название"), initial.name);
@@ -372,72 +369,90 @@ void EditBox(not_null<Ui::GenericBox*> box, std::optional<Entry> existing) {
 	};
 	const auto saving = std::make_shared<bool>(false);
 	const auto weak = base::make_weak(box.get());
+	const auto save = std::make_shared<Fn<void()>>();
+	// Enter переводит к следующему полю, в последнем сохраняет.
+	name->submits() | rpl::on_next([=] {
+		if (passcode) {
+			passcode->setFocus();
+		} else {
+			(*save)();
+		}
+	}, name->lifetime());
+	if (adding) {
+		QObject::connect(passcode, &Ui::MaskedInputField::submitted, [=] {
+			real->setFocus();
+		});
+		QObject::connect(real, &Ui::MaskedInputField::submitted, [=] {
+			(*save)();
+		});
+	}
+	*save = [=] {
+		if (*saving) {
+			return;
+		}
+		const auto title = name->getLastText().trimmed().isEmpty()
+			? U("Ложный пароль")
+			: name->getLastText().trimmed();
+		if (!adding) {
+			Update(existing->id, title, collect());
+			Notify();
+			box->closeBox();
+			return;
+		}
+		if (passcode->getLastText().isEmpty()) {
+			passcode->showError();
+			return;
+		} else if (real->getLastText().isEmpty()) {
+			real->showError();
+			return;
+		}
+		*saving = true;
+		showError(U("Проверяю пароль…"));
+		Add(Entry{
+			.name = title,
+			.passcode = passcode->getLastText(),
+			.unlocks = unlocks->current() && !deleteAll->current(),
+			.actions = collect(),
+		}, real->getLastText(), [=](AddResult result) {
+			if (!weak) {
+				Notify();
+				return;
+			}
+			*saving = false;
+			switch (result) {
+			case AddResult::Ok:
+				Notify();
+				box->closeBox();
+				return;
+			case AddResult::WrongPasscode:
+				real->showError();
+				showError(U("Неверный код-пароль"));
+				return;
+			case AddResult::SameAsReal:
+				passcode->showError();
+				showError(U("Совпадает с настоящим паролем"));
+				return;
+			case AddResult::Duplicate:
+				passcode->showError();
+				showError(U("Такой ложный пароль уже есть"));
+				return;
+			case AddResult::TooMany:
+				showError(U("Больше восьми ложных паролей нельзя"));
+				return;
+			case AddResult::Busy:
+				showError(U("Подождите секунду и повторите"));
+				return;
+			default:
+				showError(U("Не удалось сохранить"));
+				return;
+			}
+		});
+	};
 	AddMainButton(
 		content,
 		adding ? U("Добавить") : U("Сохранить"),
 		PillActive(),
-		[=] {
-			if (*saving) {
-				return;
-			}
-			const auto title = name->getLastText().trimmed().isEmpty()
-				? U("Ложный пароль")
-				: name->getLastText().trimmed();
-			if (!adding) {
-				Update(existing->id, title, collect());
-				Notify();
-				box->closeBox();
-				return;
-			}
-			if (passcode->getLastText().isEmpty()) {
-				passcode->showError();
-				return;
-			} else if (real->getLastText().isEmpty()) {
-				real->showError();
-				return;
-			}
-			*saving = true;
-			showError(U("Проверяю пароль…"));
-			Add(Entry{
-				.name = title,
-				.passcode = passcode->getLastText(),
-				.unlocks = unlocks->current() && !deleteAll->current(),
-				.actions = collect(),
-			}, real->getLastText(), [=](AddResult result) {
-				if (!weak) {
-					Notify();
-					return;
-				}
-				*saving = false;
-				switch (result) {
-				case AddResult::Ok:
-					Notify();
-					box->closeBox();
-					return;
-				case AddResult::WrongPasscode:
-					real->showError();
-					showError(U("Неверный код-пароль"));
-					return;
-				case AddResult::SameAsReal:
-					passcode->showError();
-					showError(U("Совпадает с настоящим паролем"));
-					return;
-				case AddResult::Duplicate:
-					passcode->showError();
-					showError(U("Такой ложный пароль уже есть"));
-					return;
-				case AddResult::TooMany:
-					showError(U("Больше восьми ложных паролей нельзя"));
-					return;
-				case AddResult::Busy:
-					showError(U("Подождите секунду и повторите"));
-					return;
-				default:
-					showError(U("Не удалось сохранить"));
-					return;
-				}
-			});
-		});
+		[=] { (*save)(); });
 	if (!adding) {
 		const auto id = existing->id;
 		AddMainButton(content, U("Удалить пароль"), PillAttention(), [=] {
