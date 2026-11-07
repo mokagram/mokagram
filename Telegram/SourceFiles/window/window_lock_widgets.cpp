@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "main/main_domain.h"
 #include "styles/style_layers.h"
+#include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "styles/style_passcode_box.h"
 #include "styles/style_window_lock_widgets.h"
 
@@ -51,16 +52,70 @@ PasscodeAttempt TryPasscode(
 	const auto cleanse = gsl::finally([&] {
 		OPENSSL_cleanse(utf8.data(), utf8.size());
 	});
-	auto counted = [done = std::move(done)](bool correct) {
+	const auto counted = std::make_shared<Fn<void(bool)>>([
+			done = std::move(done)](bool correct) {
 		if (!correct && Core::App().passcodeLocked()) {
 			cSetPasscodeBadTries(cPasscodeBadTries() + 1);
 			cSetPasscodeLastTry(crl::now());
 		}
 		done(correct);
+	});
+	auto &domain = Core::App().domain();
+	// mokaGram: ложные пароли проверяем только на экране блокировки.
+	if (domain.started() && !Core::App().passcodeLocked()) {
+		return domain.tryPasscode(utf8, [=](bool correct) {
+			(*counted)(correct);
+		})
+			? PasscodeAttempt::Started
+			: PasscodeAttempt::Busy;
+	}
+	// Настоящий и ложный проверяются параллельно и с той же ценой,
+	// чтобы по времени ответа нельзя было понять, какой введён.
+	struct Pending {
+		std::optional<bool> real;
+		std::optional<std::optional<Mokagram::FakePasscode::Match>> fake;
 	};
-	return Core::App().domain().tryPasscode(utf8, std::move(counted))
-		? PasscodeAttempt::Started
-		: PasscodeAttempt::Busy;
+	const auto pending = std::make_shared<Pending>();
+	const auto decide = [=] {
+		if (!pending->real || !pending->fake) {
+			return;
+		} else if (*pending->real) {
+			(*counted)(true);
+			return;
+		}
+		const auto fake = *pending->fake;
+		if (!fake) {
+			(*counted)(false);
+		} else if (!fake->unlocks()) {
+			Mokagram::FakePasscode::RunSilent(fake->actions);
+			(*counted)(false);
+		} else {
+			const auto id = fake->id;
+			const auto started = Core::App().domain().tryPasscode(
+				fake->realPasscode,
+				[=](bool correct) {
+					if (correct) {
+						Mokagram::FakePasscode::SetPending(id);
+					}
+					(*counted)(correct);
+				});
+			if (!started) {
+				(*counted)(false);
+			}
+		}
+	};
+	if (!domain.tryPasscode(utf8, [=](bool correct) {
+		pending->real = correct;
+		decide();
+	})) {
+		return PasscodeAttempt::Busy;
+	}
+	Mokagram::FakePasscode::MatchAsync(utf8, [=](
+			std::optional<Mokagram::FakePasscode::Match> match) {
+		pending->fake = std::move(match);
+		decide();
+	});
+	return PasscodeAttempt::Started;
 }
 
 LockWidget::LockWidget(QWidget *parent, not_null<Controller*> window)

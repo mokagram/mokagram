@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "passport/passport_panel_edit_contact.h"
 #include "settings/sections/settings_privacy_security.h"
 #include "settings/settings_common.h"
+#include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
 #include "styles/style_passcode_box.h"
@@ -861,6 +862,7 @@ void PasscodeBox::save(bool force) {
 			update();
 			return;
 		}
+		Mokagram::FakePasscode::RealPasscodeChanged(pwd.toUtf8());
 		Core::App().localPasscodeChanged();
 		if (weak) {
 			closeBox();

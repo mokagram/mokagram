@@ -91,6 +91,9 @@ PRIVATE
     mokagram/lang/mokagram_lang.cpp
     mokagram/lang/mokagram_lang.h
     mokagram/msginfo/mokagram_message_info.cpp
+    mokagram/passcode/mokagram_fake_passcode.cpp
+    mokagram/passcode/mokagram_fake_passcode.h
+    mokagram/passcode/mokagram_fake_passcode_box.cpp
     mokagram/msginfo/mokagram_message_info.h
     mokagram/msginfo/mokagram_media_fingerprint.cpp
     mokagram/msginfo/mokagram_media_fingerprint.h

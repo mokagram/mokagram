@@ -2882,6 +2882,13 @@ void StartDebugCommands() {
 				Ghost::ReadNow(history);
 				LOG(("MOKAREAD after unread=%1").arg(history->unreadCount()));
 			}
+		} else if (cmd.startsWith(u"action:"_q)) {
+			// Действие одной строки настроек по ключу.
+			for (const auto &entry : Entries()) {
+				if (entry.key == cmd.mid(7) && entry.action) {
+					entry.action();
+				}
+			}
 		} else if (cmd == u"schedule"_q) {
 			for (const auto &entry : Entries()) {
 				if (entry.action) {

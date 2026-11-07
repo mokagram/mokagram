@@ -178,6 +178,10 @@ public:
 	[[nodiscard]] bool hasPasscode() const;
 	[[nodiscard]] bool appLockEnabled() const;
 	[[nodiscard]] bool hasLocalPasscode() const;
+	// mokaGram: ключ для зашифрованных файлов фич (ложные пароли).
+	[[nodiscard]] MTP::AuthKeyPtr localKey() const {
+		return _localKey;
+	}
 
 private:
 	enum class StartModernResult {

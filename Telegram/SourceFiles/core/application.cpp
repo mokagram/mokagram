@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/streamer/mokagram_streamer.h"
 #include "mokagram/history/mokagram_history.h"
+#include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 #include "mokagram/misc/mokagram_misc.h"
 #include "mokagram/saveinator/mokagram_saveinator.h"
@@ -358,6 +359,7 @@ void Application::run() {
 	Mokagram::Streamer::RegisterSettings();
 	Mokagram::History::RegisterSettings();
 	Mokagram::Ghost::RegisterSettings();
+	Mokagram::FakePasscode::RegisterSettings();
 	Mokagram::Misc::RegisterSettings();
 	Mokagram::Appearance::RegisterSettings();
 	Mokagram::Effects::RegisterSettings();
@@ -1481,6 +1483,7 @@ void Application::unlockPasscode() {
 	enumerateWindows([&](not_null<Window::Controller*> w) {
 		w->clearPasscodeLock();
 	});
+	Mokagram::FakePasscode::RunPending();
 }
 
 void Application::clearPasscodeLock() {
