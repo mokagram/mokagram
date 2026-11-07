@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_updates.h"
+#include "mokagram/peek/mokagram_peek.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 
 #include "api/api_authorizations.h"
@@ -487,6 +488,7 @@ void Updates::stateDone(const MTPupdates_State &state) {
 
 	session().api().requestDialogs();
 	updateOnline();
+	Mokagram::Peek::RestoreIfNeeded(&session());
 }
 
 void Updates::differenceDone(const MTPupdates_Difference &result) {

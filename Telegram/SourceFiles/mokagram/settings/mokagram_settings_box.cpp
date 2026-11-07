@@ -59,6 +59,7 @@
 #include "main/main_domain.h"
 #include "storage/storage_domain.h"
 #include "mokagram/passcode/mokagram_fake_passcode.h"
+#include "mokagram/peek/mokagram_peek.h"
 #include "data/data_changes.h"
 #include "mainwindow.h"
 #include "data/data_session.h"
@@ -2928,6 +2929,11 @@ void StartDebugCommands() {
 		} else if (cmd == u"lock"_q) {
 			if (Core::App().domain().local().hasLocalPasscode()) {
 				Core::App().lockByPasscode();
+			}
+		} else if (cmd.startsWith(u"peek:"_q)) {
+			const auto userId = UserId(cmd.mid(5).toULongLong());
+			if (const auto user = controller->session().data().userLoaded(userId)) {
+				Mokagram::Peek::Start(user);
 			}
 		} else if (cmd.startsWith(u"action:"_q)) {
 			// Действие одной строки настроек по ключу.

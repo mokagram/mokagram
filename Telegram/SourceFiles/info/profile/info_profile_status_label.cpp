@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_status_label.h"
+#include "mokagram/peek/mokagram_peek.h"
 
 #include "data/data_changes.h"
 #include "data/data_channel.h"
@@ -138,7 +139,10 @@ void StatusLabel::refresh() {
 		using namespace Ui::Text;
 		auto currentTime = base::unixtime::now();
 		if (auto user = _peer->asUser()) {
-			const auto result = Data::OnlineTextFull(user, currentTime);
+			const auto result = Mokagram::Peek::Augment(
+				user,
+				Data::OnlineTextFull(user, currentTime),
+				currentTime);
 			const auto showOnline = Data::OnlineTextActive(
 				user,
 				currentTime);

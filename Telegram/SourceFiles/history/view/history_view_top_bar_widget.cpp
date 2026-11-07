@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_top_bar_widget.h"
+#include "mokagram/peek/mokagram_peek.h"
 #include "mokagram/notes/mokagram_notes.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include <deque>
@@ -1984,7 +1985,10 @@ void TopBarWidget::updateOnlineDisplay() {
 			text = QString::fromUtf8("\xe2\x9a\xa0\xef\xb8\x8f check info");
 			titlePeerTextOnline = false;
 		} else {
-			text = Data::OnlineText(user, now);
+			text = Mokagram::Peek::Augment(
+				user,
+				Data::OnlineText(user, now),
+				now);
 			titlePeerTextOnline = Data::OnlineTextActive(user, now);
 		}
 	} else if (const auto chat = peer->asChat()) {

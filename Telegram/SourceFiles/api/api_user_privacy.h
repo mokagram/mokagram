@@ -59,6 +59,12 @@ public:
 	void save(
 		Key key,
 		const UserPrivacy::Rule &rule);
+	// mokaGram: с ответом сервера (peek возвращает правило обратно).
+	void save(
+		Key key,
+		const UserPrivacy::Rule &rule,
+		Fn<void()> done,
+		Fn<void()> fail);
 	void apply(
 		mtpTypeId type,
 		const MTPVector<MTPPrivacyRule> &rules,

@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_peer_menu.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/ghost/mokagram_ghost.h"
+#include "mokagram/peek/mokagram_peek.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/misc/mokagram_misc.h"
 
@@ -359,6 +360,7 @@ private:
 	void addMokagramDeleteMine();
 	void addMokagramToStart();
 	void addMokagramGuard();
+	void addMokagramPeek();
 	void addTranslate();
 	void addReport();
 	void addNewContact();
@@ -1192,6 +1194,17 @@ void Filler::addMokagramToStart() {
 				MsgId(1));
 		},
 		&st::menuIconAbove);
+}
+
+void Filler::addMokagramPeek() {
+	const auto user = _peer ? _peer->asUser() : nullptr;
+	if (!user || (_thread && _thread->asTopic()) || !Mokagram::Peek::Available(user)) {
+		return;
+	}
+	_addAction(
+		QString::fromUtf8(Mokagram::Lang::Tr("Когда был в сети")),
+		[=] { Mokagram::Peek::Start(user); },
+		&st::menuIconInfo);
 }
 
 void Filler::addMokagramGuard() {
@@ -2066,6 +2079,7 @@ void Filler::fillContextMenuActions() {
 	addToggleFolder();
 	addMokagramGhost();
 	addMokagramGuard();
+	addMokagramPeek();
 	addMokagramPlugins(u"chat"_q);
 	if (const auto user = _peer->asUser()) {
 		if (!user->isContact()) {
@@ -2100,6 +2114,7 @@ void Filler::fillHistoryActions() {
 	addMokagramHistory();
 	addMokagramGhost();
 	addMokagramGuard();
+	addMokagramPeek();
 	addMokagramPlugins(u"chat"_q);
 	addTranslate();
 	addReport();
@@ -2132,6 +2147,7 @@ void Filler::fillProfileActions() {
 	addMokagramHistory();
 	addMokagramGhost();
 	addMokagramGuard();
+	addMokagramPeek();
 	addMokagramPlugins(u"profile"_q);
 	addToggleNoForwards();
 	addToggleFolder();
