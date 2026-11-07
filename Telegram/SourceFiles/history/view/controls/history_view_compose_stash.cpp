@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/controls/history_view_compose_stash.h"
+#include "mokagram/stash/mokagram_compose_stash.h"
 
 #include "api/api_common.h"
 #include "apiwrap.h"
@@ -101,7 +102,12 @@ StashManager::~StashManager() = default;
 
 Data::ComposeStash *StashManager::current() const {
 	const auto history = _data.history();
-	return history ? history->composeStash(_data.key()) : nullptr;
+	if (!history) {
+		return nullptr;
+	}
+	const auto key = _data.key();
+	Mokagram::Stash::RestoreIfNeeded(history, key);
+	return history->composeStash(key);
 }
 
 bool StashManager::applicable(const Data::ComposeStash &stash) const {
@@ -134,7 +140,7 @@ bool StashManager::exchange() {
 	const auto key = history ? _data.key() : Data::DraftKey::None();
 	if (!key || !_data.allowed()) {
 		return false;
-	} else if (const auto stashed = history->composeStash(key)) {
+	} else if (const auto stashed = current()) {
 		if (!checkApplicable(*stashed)) {
 			return false;
 		}

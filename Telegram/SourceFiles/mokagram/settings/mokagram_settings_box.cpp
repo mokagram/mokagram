@@ -56,6 +56,7 @@
 #include "data/data_document.h"
 #include "api/api_common.h"
 #include "core/application.h"
+#include "core/shortcuts.h"
 #include "main/main_domain.h"
 #include "storage/storage_domain.h"
 #include "mokagram/passcode/mokagram_fake_passcode.h"
@@ -2930,6 +2931,8 @@ void StartDebugCommands() {
 			if (Core::App().domain().local().hasLocalPasscode()) {
 				Core::App().lockByPasscode();
 			}
+		} else if (cmd == u"stash"_q) {
+			Shortcuts::Launch(Shortcuts::Command::StashMessage);
 		} else if (cmd.startsWith(u"peek:"_q)) {
 			const auto userId = UserId(cmd.mid(5).toULongLong());
 			if (const auto user = controller->session().data().userLoaded(userId)) {

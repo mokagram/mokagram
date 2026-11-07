@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history.h"
+#include "mokagram/stash/mokagram_compose_stash.h"
 
 #include "history/view/history_view_element.h"
 #include "history/view/history_view_item_preview.h"
@@ -584,7 +585,9 @@ void History::setComposeStash(
 		std::unique_ptr<Data::ComposeStash> stash) {
 	if (!key) {
 		return;
-	} else if (stash) {
+	}
+	Mokagram::Stash::Persist(this, key, stash.get());
+	if (stash) {
 		_composeStashes[key] = std::move(stash);
 	} else if (!_composeStashes.remove(key)) {
 		return;
@@ -602,6 +605,7 @@ std::unique_ptr<Data::ComposeStash> History::takeComposeStash(
 	}
 	auto result = std::move(i->second);
 	_composeStashes.erase(i);
+	Mokagram::Stash::Persist(this, key, nullptr);
 	session().changes().historyUpdated(
 		this,
 		Data::HistoryUpdate::Flag::ComposeStash);

@@ -100,6 +100,8 @@ PRIVATE
     mokagram/passcode/mokagram_passcode_guard.h
     mokagram/peek/mokagram_peek.cpp
     mokagram/peek/mokagram_peek.h
+    mokagram/stash/mokagram_compose_stash.cpp
+    mokagram/stash/mokagram_compose_stash.h
     mokagram/msginfo/mokagram_message_info.h
     mokagram/msginfo/mokagram_media_fingerprint.cpp
     mokagram/msginfo/mokagram_media_fingerprint.h
