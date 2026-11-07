@@ -4864,6 +4864,8 @@ constexpr auto kLyricsPanelWidth = 340;
 constexpr auto kLyricsHeaderHeight = 56;
 
 // Колонка справа от чата: название трека и синхронный текст.
+[[nodiscard]] bool &ThirdColumnOpenedForLyrics();
+
 class LyricsPanel final : public Ui::RpWidget {
 public:
 	LyricsPanel(
@@ -4910,6 +4912,11 @@ public:
 		}, lifetime());
 		controller->adaptive().changes(
 		) | rpl::on_next([=] {
+			if (!controller->adaptive().isThreeColumn()) {
+				ThirdColumnOpenedForLyrics() = false;
+				Mokagram::Settings::SetBool(u"lyrics.enabled"_q, false);
+				return;
+			}
 			updateGeometryFromAnchor();
 		}, lifetime());
 		Core::App().settings().thirdColumnWidthChanges(
@@ -7769,6 +7776,11 @@ void SyncLyricsPanel(
 		if (base::take(ThirdColumnOpenedForLyrics())) {
 			controller->closeThirdSection();
 		}
+		return;
+	}
+	if (!controller->adaptive().isThreeColumn()) {
+		ThirdColumnOpenedForLyrics() = false;
+		Mokagram::Settings::SetBool(u"lyrics.enabled"_q, false);
 		return;
 	}
 	const auto parent = not_null<Ui::RpWidget*>(controller->content());
