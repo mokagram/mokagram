@@ -104,6 +104,8 @@ PRIVATE
     mokagram/stash/mokagram_compose_stash.h
     mokagram/stories/mokagram_story_post.cpp
     mokagram/stories/mokagram_story_post.h
+    mokagram/forward/mokagram_copy_forward.cpp
+    mokagram/forward/mokagram_copy_forward.h
     mokagram/msginfo/mokagram_message_info.h
     mokagram/msginfo/mokagram_media_fingerprint.cpp
     mokagram/msginfo/mokagram_media_fingerprint.h

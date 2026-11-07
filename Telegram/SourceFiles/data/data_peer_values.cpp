@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_peer_values.h"
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/settings/mokagram_settings.h"
 
 #include "lang/lang_keys.h"
 #include "data/data_channel.h"
@@ -378,7 +379,19 @@ rpl::producer<bool> CanPinMessagesValue(not_null<PeerData*> peer) {
 	Unexpected("Peer type in CanPinMessagesValue.");
 }
 
+rpl::producer<bool> AllowsForwardingRawValue(not_null<PeerData*> peer);
+
 rpl::producer<bool> AllowsForwardingValue(not_null<PeerData*> peer) {
+	// mokaGram: обход запретов делает чат обычным (копирование, скриншоты).
+	return rpl::combine(
+		AllowsForwardingRawValue(peer),
+		Mokagram::Settings::BoolValue(u"chats.bypass_protection"_q)
+	) | rpl::map([](bool allows, bool bypass) {
+		return allows || bypass;
+	});
+}
+
+rpl::producer<bool> AllowsForwardingRawValue(not_null<PeerData*> peer) {
 	if (const auto user = peer->asUser()) {
 		return rpl::combine(
 			PeerFlagValue(user, UserDataFlag::NoForwardsMyEnabled),

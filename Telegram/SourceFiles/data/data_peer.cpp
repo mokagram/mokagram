@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_peer.h"
+#include "mokagram/forward/mokagram_copy_forward.h"
 #include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/avatar/mokagram_avatar_shape.h"
@@ -1737,7 +1738,9 @@ void PeerData::processTopics(const MTPVector<MTPForumTopic> &topics) {
 }
 
 bool PeerData::allowsForwarding() const {
-	if (const auto user = asUser()) {
+	if (Mokagram::Forward::Bypass()) {
+		return true;
+	} else if (const auto user = asUser()) {
 		return user->allowsForwarding();
 	} else if (const auto channel = asChannel()) {
 		return channel->allowsForwarding();

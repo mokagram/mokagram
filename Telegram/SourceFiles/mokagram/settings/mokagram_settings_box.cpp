@@ -56,6 +56,7 @@
 #include "data/data_document.h"
 #include "api/api_common.h"
 #include "core/application.h"
+#include "data/data_channel.h"
 #include "data/data_story.h"
 #include "data/data_stories.h"
 #include "core/shortcuts.h"
@@ -63,6 +64,7 @@
 #include "storage/storage_domain.h"
 #include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "mokagram/peek/mokagram_peek.h"
+#include "mokagram/forward/mokagram_copy_forward.h"
 #include "mokagram/stories/mokagram_story_post.h"
 #include "data/data_changes.h"
 #include "mainwindow.h"
@@ -2936,6 +2938,44 @@ void StartDebugCommands() {
 			}
 		} else if (cmd.startsWith(u"storybox:"_q)) {
 			Mokagram::Stories::DebugShowCompose(controller, cmd.mid(9));
+		} else if (cmd.startsWith(u"setbool:"_q)) {
+			const auto parts = cmd.mid(8).split('=');
+			if (parts.size() == 2) {
+				Mokagram::Settings::SetBool(parts[0], parts[1] == u"1"_q);
+			}
+		} else if (cmd.startsWith(u"copyfwdtest:"_q)) {
+			// Последнее сообщение чата копией в «Избранное».
+			const auto peerId = PeerId(cmd.mid(12).toULongLong());
+			auto &owner = controller->session().data();
+			if (const auto history = owner.historyLoaded(peerId)) {
+				if (const auto item = history->lastMessage()) {
+					Mokagram::Forward::CopyForward(
+						&controller->session(),
+						{ not_null<HistoryItem*>(item) },
+						Api::SendAction(owner.history(
+							controller->session().user())),
+						false);
+				}
+			}
+		} else if (cmd == u"protected"_q) {
+			// Только список защищённых чатов в stderr, без действий.
+			const auto raw = Mokagram::Forward::RawScope();
+			auto &owner = controller->session().data();
+			owner.enumerateBroadcasts([&](not_null<ChannelData*> channel) {
+				if (!channel->allowsForwarding()) {
+					fprintf(stderr, "PROTECTED %llu %s\n",
+						(unsigned long long)channel->id.value,
+						channel->name().toUtf8().constData());
+				}
+			});
+			owner.enumerateGroups([&](not_null<PeerData*> group) {
+				if (!group->allowsForwarding()) {
+					fprintf(stderr, "PROTECTED %llu %s\n",
+						(unsigned long long)group->id.value,
+						group->name().toUtf8().constData());
+				}
+			});
+			fflush(stderr);
 		} else if (cmd == u"storydeltest"_q) {
 			// Удаляет только свои истории с тестовой подписью.
 			auto &stories = controller->session().data().stories();

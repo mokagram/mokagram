@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_item.h"
+#include "mokagram/forward/mokagram_copy_forward.h"
 
 #include "mokagram/scam/mokagram_scam.h"
 #include "mokagram/plugins/mokagram_plugin_api.h"
@@ -3443,13 +3444,17 @@ bool HistoryItem::canStopPoll() const {
 }
 
 bool HistoryItem::forbidsForward() const {
-	return (_flags & MessageFlag::NoForwards);
+	// mokaGram: «Снять запреты в защищённых чатах».
+	return (_flags & MessageFlag::NoForwards)
+		&& !Mokagram::Forward::Bypass();
 }
 
 bool HistoryItem::forbidsSaving() const {
 	if (forbidsForward()) {
 		return true;
-	} else if (_media && _media->ttlSeconds()) {
+	} else if (_media
+		&& _media->ttlSeconds()
+		&& !Mokagram::Forward::Bypass()) {
 		return true;
 	} else if (const auto invoice = _media ? _media->invoice() : nullptr) {
 		return HasExtendedMedia(*invoice);

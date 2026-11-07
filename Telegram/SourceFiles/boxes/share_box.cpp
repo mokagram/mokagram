@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/share_box.h"
+#include "mokagram/forward/mokagram_copy_forward.h"
 
 #include "api/api_premium.h"
 #include "base/call_delayed.h"
@@ -1879,6 +1880,31 @@ ShareBox::SubmitCallback ShareBox::DefaultForwardCallback(
 			| (videoTimestamp.has_value()
 				? Flag::f_video_timestamp
 				: Flag(0));
+		// mokaGram: из защищённого чата сервер не пересылает, шлём копией.
+		if (Mokagram::Forward::Bypass()
+			&& ranges::any_of(items, [](not_null<HistoryItem*> item) {
+				return Mokagram::Forward::NeedsCopy(item);
+			})) {
+			for (const auto &thread : result) {
+				if (!comment.text.isEmpty()) {
+					auto message = Api::MessageToSend(
+						Api::SendAction(thread, options));
+					message.textWithTags = comment;
+					message.action.clearDraft = false;
+					history->session().api().sendMessage(std::move(message));
+				}
+				Mokagram::Forward::CopyForward(
+					&history->session(),
+					items,
+					Api::SendAction(thread, options),
+					(forwardOptions
+						== Data::ForwardOptions::NoNamesAndCaptions));
+			}
+			if (show->valid()) {
+				show->hideLayer();
+			}
+			return;
+		}
 		const auto ranges = CollectForwardRanges(items);
 		if (ranges.empty()) {
 			return;

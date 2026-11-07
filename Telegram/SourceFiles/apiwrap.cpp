@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "apiwrap.h"
+#include "mokagram/forward/mokagram_copy_forward.h"
 #include "mokagram/snippets/mokagram_snippets.h"
 
 #include "api/api_authorizations.h"
@@ -3908,6 +3909,22 @@ void ApiWrap::forwardMessages(
 		SendAction action,
 		FnMut<void()> &&successCallback) {
 	Expects(!draft.items.empty());
+
+	// mokaGram: из защищённого чата сервер не пересылает, шлём копией.
+	if (Mokagram::Forward::Bypass()
+		&& ranges::any_of(draft.items, [](not_null<HistoryItem*> item) {
+			return Mokagram::Forward::NeedsCopy(item);
+		})) {
+		Mokagram::Forward::CopyForward(
+			_session,
+			draft.items,
+			action,
+			(draft.options == Data::ForwardOptions::NoNamesAndCaptions));
+		if (successCallback) {
+			successCallback();
+		}
+		return;
+	}
 
 	auto &histories = _session->data().histories();
 
