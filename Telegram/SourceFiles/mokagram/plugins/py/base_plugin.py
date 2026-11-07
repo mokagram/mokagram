@@ -1,6 +1,6 @@
 """Mokagram SDK: базовые классы плагина (скелет, 22.10.2026).
 
-Имена хуков и стратегий повторяют контракт exteraless (GPL-3.0). Реализация своя.
+Имена хуков и стратегий совместимы с чужими плагинами. Реализация своя.
 Хост на C++ вызывает методы этого класса; сейчас это заглушки, чтобы спецификация была исполняемой.
 """
 from __future__ import annotations
@@ -270,7 +270,7 @@ class Password:
 EditText = Input
 
 
-# ---- имена из exteraGram, чтобы `from base_plugin import ...` в чужих плагинах находил их ----
+# ---- совместимые имена, чтобы `from base_plugin import ...` в чужих плагинах находил их ----
 
 class MenuItemType(str, Enum):
     MESSAGE_CONTEXT_MENU = "MESSAGE_CONTEXT_MENU"

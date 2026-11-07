@@ -824,8 +824,8 @@ void RegisterSettings() {
 }
 
 
-// Идея и схема отрисовки (отдельные Element со своим делегатом, рендер вне
-// окна) взяты из функции Message Shot в AyuGram Desktop (GPL, Radolyn).
+// Схема отрисовки: отдельные Element со своим делегатом, рендер вне
+// окна.
 class ShotDelegate final : public HistoryView::DefaultElementDelegate {
 public:
 	ShotDelegate(not_null<const Ui::ChatStyle*> st, not_null<History*> history)

@@ -256,7 +256,7 @@ def cancel_timer(timer_id):
 
 
 def run_on_queue(fn, delay_ms=0):
-    """Совместимость с exteraGram: выполнить fn в фоне после delay_ms."""
+    """Совместимость: выполнить fn в фоне после delay_ms."""
     return set_timeout(fn, max(0, delay_ms) / 1000.0)
 
 

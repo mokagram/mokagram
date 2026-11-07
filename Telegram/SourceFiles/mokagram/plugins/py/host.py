@@ -248,7 +248,7 @@ def _moka_install_sdk(source):
     mod = types.ModuleType('mokagram_sdk.base_plugin')
     sys.modules['mokagram_sdk'] = pkg
     sys.modules['mokagram_sdk.base_plugin'] = mod
-    sys.modules['base_plugin'] = mod   # exteraGram-плагины импортируют именно так
+    sys.modules['base_plugin'] = mod   # чужие плагины импортируют именно так
     exec(compile(source, 'mokagram_sdk/base_plugin.py', 'exec'), mod.__dict__)
     pkg.base_plugin = mod
 

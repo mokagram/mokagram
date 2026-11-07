@@ -21,7 +21,7 @@ namespace Storage {
 namespace {
 
 constexpr auto kKillSessionTimeout = 15 * crl::time(1000);
-// Быстрая загрузка (как «Download speed boost» у exteraGram): окно запросов
+// Быстрая загрузка (ускоренная загрузка): окно запросов
 // одной сессии побольше. 0 стандартно, 1 быстрая, 2 максимум.
 [[nodiscard]] int FastDownloadMode() {
 	return std::clamp(Mokagram::Settings::Int(u"net.fast_download"_q), 0, 2);

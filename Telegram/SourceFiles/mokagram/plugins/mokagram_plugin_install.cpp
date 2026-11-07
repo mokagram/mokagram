@@ -181,7 +181,7 @@ struct AvatarState {
 	mtpRequestId requestId = 0;
 };
 
-// __icon__ вида "ИмяНабора/номер" (как в exteraGram) или обычный эмодзи.
+// __icon__ вида "ИмяНабора/номер" или обычный эмодзи.
 void AddAvatar(
 		not_null<Ui::VerticalLayout*> content,
 		Window::SessionController *controller,
