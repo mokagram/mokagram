@@ -2871,11 +2871,11 @@ protected:
 		auto to = from;
 		to.setAlpha(0);
 		const auto vertical = (_edge == Edge::Top || _edge == Edge::Bottom);
-		const auto far = (_edge == Edge::Right || _edge == Edge::Bottom);
+		const auto reversed = (_edge == Edge::Right || _edge == Edge::Bottom);
 		auto gradient = QLinearGradient(
 			0, 0, vertical ? 0 : width(), vertical ? height() : 0);
-		gradient.setColorAt(0., far ? to : from);
-		gradient.setColorAt(1., far ? from : to);
+		gradient.setColorAt(0., reversed ? to : from);
+		gradient.setColorAt(1., reversed ? from : to);
 		p.fillRect(rect(), gradient);
 	}
 
