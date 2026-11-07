@@ -56,6 +56,8 @@
 #include "data/data_document.h"
 #include "api/api_common.h"
 #include "core/application.h"
+#include "data/data_story.h"
+#include "data/data_stories.h"
 #include "core/shortcuts.h"
 #include "main/main_domain.h"
 #include "storage/storage_domain.h"
@@ -2934,6 +2936,27 @@ void StartDebugCommands() {
 			}
 		} else if (cmd.startsWith(u"storybox:"_q)) {
 			Mokagram::Stories::DebugShowCompose(controller, cmd.mid(9));
+		} else if (cmd == u"storydeltest"_q) {
+			// Удаляет только свои истории с тестовой подписью.
+			auto &stories = controller->session().data().stories();
+			const auto self = controller->session().user()->id;
+			auto ids = std::vector<FullStoryId>();
+			if (const auto source = stories.source(self)) {
+				for (const auto &entry : source->ids) {
+					const auto id = FullStoryId{ self, entry.id };
+					if (const auto story = stories.lookup(id)) {
+						if ((*story)->caption().text
+							== u"mokagram test story"_q) {
+							ids.push_back(id);
+						}
+					}
+				}
+			}
+			if (!ids.empty()) {
+				stories.deleteList(ids);
+			}
+			controller->showToast(u"test stories: "_q
+				+ QString::number(ids.size()));
 		} else if (cmd == u"stash"_q) {
 			Shortcuts::Launch(Shortcuts::Command::StashMessage);
 		} else if (cmd.startsWith(u"peek:"_q)) {
