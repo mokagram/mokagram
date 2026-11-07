@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/passcode/mokagram_passcode_guard.h"
 #include "mokagram/forward/mokagram_copy_forward.h"
+#include "mokagram/tweaks/mokagram_tweaks.h"
 #include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 #include "mokagram/misc/mokagram_misc.h"
@@ -364,6 +365,7 @@ void Application::run() {
 	Mokagram::FakePasscode::RegisterSettings();
 	Mokagram::PasscodeGuard::RegisterSettings();
 	Mokagram::Forward::RegisterSettings();
+	Mokagram::Tweaks::RegisterSettings();
 	Mokagram::PasscodeGuard::Init();
 	Mokagram::Misc::RegisterSettings();
 	Mokagram::Appearance::RegisterSettings();

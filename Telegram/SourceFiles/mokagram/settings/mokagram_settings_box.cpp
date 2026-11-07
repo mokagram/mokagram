@@ -64,6 +64,7 @@
 #include "storage/storage_domain.h"
 #include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "mokagram/peek/mokagram_peek.h"
+#include "mokagram/tweaks/mokagram_tweaks.h"
 #include "mokagram/forward/mokagram_copy_forward.h"
 #include "mokagram/stories/mokagram_story_post.h"
 #include "data/data_changes.h"
@@ -2955,6 +2956,24 @@ void StartDebugCommands() {
 						Api::SendAction(owner.history(
 							controller->session().user())),
 						false);
+				}
+			}
+		} else if (cmd.startsWith(u"localpin:"_q)) {
+			if (const auto peer = controller->session().data().peerLoaded(
+					PeerId(cmd.mid(9).toULongLong()))) {
+				Mokagram::Tweaks::ToggleLocalPin(peer);
+			}
+		} else if (cmd.startsWith(u"stripfile:"_q)) {
+			const auto parts = cmd.mid(10).split(',');
+			if (parts.size() == 2) {
+				auto in = QFile(parts[0]);
+				if (in.open(QIODevice::ReadOnly)) {
+					const auto cleaned = Mokagram::Tweaks::StripMetadata(
+						in.readAll());
+					auto out = QFile(parts[1]);
+					if (out.open(QIODevice::WriteOnly)) {
+						out.write(cleaned);
+					}
 				}
 			}
 		} else if (cmd == u"protected"_q) {

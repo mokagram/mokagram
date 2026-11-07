@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history.h"
+#include "mokagram/tweaks/mokagram_tweaks.h"
 #include "mokagram/stash/mokagram_compose_stash.h"
 
 #include "history/view/history_view_element.h"
@@ -3453,7 +3454,11 @@ bool History::useTopPromotion() const {
 }
 
 int History::fixedOnTopIndex() const {
-	return useTopPromotion() ? kTopPromotionFixOnTopIndex : 0;
+	if (useTopPromotion()) {
+		return kTopPromotionFixOnTopIndex;
+	}
+	// mokaGram: закрепы только у себя.
+	return Mokagram::Tweaks::LocalPinIndex(peer);
 }
 
 bool History::trackUnreadMessages() const {

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_media_types.h"
+#include "mokagram/tweaks/mokagram_tweaks.h"
 #include "mokagram/history/mokagram_history.h"
 
 #include "base/random.h"
@@ -1013,7 +1014,7 @@ bool MediaPhoto::allowsEditMedia() const {
 }
 
 bool MediaPhoto::hasSpoiler() const {
-	return _spoiler;
+	return _spoiler && !Mokagram::Tweaks::RevealSpoilers();
 }
 
 crl::time MediaPhoto::ttlSeconds() const {
@@ -1435,7 +1436,7 @@ bool MediaFile::dropForwardedInfo() const {
 }
 
 bool MediaFile::hasSpoiler() const {
-	return _spoiler;
+	return _spoiler && !Mokagram::Tweaks::RevealSpoilers();
 }
 
 crl::time MediaFile::ttlSeconds() const {

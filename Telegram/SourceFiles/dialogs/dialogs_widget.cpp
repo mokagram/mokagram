@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mokagram/lang/mokagram_lang.h"
 #include "dialogs/dialogs_widget.h"
+#include "mokagram/tweaks/mokagram_tweaks.h"
+#include "mokagram/settings/mokagram_settings.h"
 
 #include "base/call_delayed.h"
 #include "base/unixtime.h"
@@ -1839,6 +1841,12 @@ void Widget::setupMainMenuToggle() {
 }
 
 void Widget::setupStories() {
+	// mokaGram: «Спрятать полосу историй».
+	Mokagram::Settings::BoolValue(
+		u"look.hide_stories"_q
+	) | rpl::skip(1) | rpl::on_next([=] {
+		updateStoriesVisibility();
+	}, lifetime());
 	_stories->verticalScrollEvents(
 	) | rpl::on_next([=](not_null<QWheelEvent*> e) {
 		_scroll->viewportEvent(e);
@@ -2999,6 +3007,7 @@ void Widget::updateStoriesVisibility() {
 	const auto pulledDown = _scroll->position().overscroll
 		< -st::dialogsFilterSkip;
 	const auto hiddenInstant = _showAnimation
+		|| Mokagram::Tweaks::HideStories()
 		|| _openedForum
 		|| _openedCommunity
 		|| (widthAnimation && !suggestionsAnimation)

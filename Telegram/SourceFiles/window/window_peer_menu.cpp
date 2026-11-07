@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 #include "mokagram/peek/mokagram_peek.h"
+#include "mokagram/tweaks/mokagram_tweaks.h"
 #include "mokagram/stories/mokagram_story_post.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/misc/mokagram_misc.h"
@@ -362,6 +363,7 @@ private:
 	void addMokagramToStart();
 	void addMokagramGuard();
 	void addMokagramPeek();
+	void addMokagramLocalPin();
 	void addMokagramStory();
 	void addTranslate();
 	void addReport();
@@ -1211,6 +1213,27 @@ void Filler::addMokagramStory() {
 		QString::fromUtf8(Mokagram::Lang::Tr("Опубликовать историю")),
 		[=] { Mokagram::Stories::StartPosting(controller, peer); },
 		&st::menuIconAdd);
+}
+
+void Filler::addMokagramLocalPin() {
+	const auto history = _request.key.history();
+	if (!history
+		|| _request.section == Section::SubsectionTabsMenu
+		|| (_thread && _thread->asTopic())) {
+		return;
+	}
+	const auto peer = history->peer;
+	const auto pinned = Mokagram::Tweaks::IsLocallyPinned(peer);
+	// Родные закрепы сервера не трогаем: у закреплённых там свой пункт.
+	if (!pinned && history->isPinnedDialog(_request.filterId)) {
+		return;
+	}
+	_addAction(
+		QString::fromUtf8(Mokagram::Lang::Tr(pinned
+			? "Открепить у себя"
+			: "Закрепить у себя")),
+		[=] { Mokagram::Tweaks::ToggleLocalPin(peer); },
+		pinned ? &st::menuIconUnpin : &st::menuIconPin);
 }
 
 void Filler::addMokagramPeek() {
@@ -2087,6 +2110,7 @@ void Filler::fillContextMenuActions() {
 	addHidePromotion();
 	addToggleArchive();
 	addTogglePin();
+	addMokagramLocalPin();
 	if (ViewProfileInChatsListContextMenu.value()) {
 		addInfo();
 	}

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "storage/localimageloader.h"
+#include "mokagram/tweaks/mokagram_tweaks.h"
 
 #include "api/api_text_entities.h"
 #include "api/api_sending.h"
@@ -1142,6 +1143,9 @@ void FileLoadTask::process(ProcessArgs &&args) {
 					fullimagebytes = fullimageformat = QByteArray();
 				}
 				filedata = ComputePhotoJpegBytes(full, fullimagebytes, fullimageformat);
+				if (Mokagram::Tweaks::StripsMetadata()) {
+					filedata = Mokagram::Tweaks::StripMetadata(filedata);
+				}
 
 				photoThumbs.emplace('m', PreparedPhotoThumb{ .image = medium });
 				photoSizes.push_back(MTP_photoSize(MTP_string("m"), MTP_int(medium.width()), MTP_int(medium.height()), MTP_int(0)));
@@ -1167,6 +1171,29 @@ void FileLoadTask::process(ProcessArgs &&args) {
 				}
 			}
 			thumbnail = PrepareFileThumbnail(std::move(fullimage));
+		}
+	}
+	// mokaGram: фото, отправленное файлом, тоже без метаданных.
+	if (Mokagram::Tweaks::StripsMetadata()
+		&& !isVoice
+		&& !isRound
+		&& !isSticker
+		&& !isAnimation
+		&& filedata.isEmpty()
+		&& (filemime == u"image/jpeg"_q || filemime == u"image/png"_q)) {
+		auto raw = _content;
+		if (raw.isEmpty() && !_filepath.isEmpty()) {
+			auto file = QFile(_filepath);
+			if (file.size() <= 64 * 1024 * 1024 && file.open(QIODevice::ReadOnly)) {
+				raw = file.readAll();
+			}
+		}
+		if (!raw.isEmpty()) {
+			auto cleaned = Mokagram::Tweaks::StripMetadata(raw);
+			if (cleaned.size() != raw.size()) {
+				filedata = std::move(cleaned);
+				filesize = _result->filesize = filedata.size();
+			}
 		}
 	}
 	thumbnail = FinalizeFileThumbnail(

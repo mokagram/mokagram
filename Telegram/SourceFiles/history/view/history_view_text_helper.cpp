@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_text_helper.h"
+#include "mokagram/tweaks/mokagram_tweaks.h"
 
 #include "core/click_handler_types.h"
 #include "data/data_document.h"
@@ -21,7 +22,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace HistoryView {
 
 void InitElementTextPart(not_null<Element*> view, Ui::Text::String &text) {
-	if (view->context() == Context::MediaEditor) {
+	if (view->context() == Context::MediaEditor
+		|| Mokagram::Tweaks::RevealSpoilers()) {
 		text.setSpoilerRevealed(true, anim::type::instant);
 	}
 	if (text.hasSpoilers()) {
