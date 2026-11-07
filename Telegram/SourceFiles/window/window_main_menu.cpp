@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
+#include "mokagram/stories/mokagram_story_post.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "ui/abstract_button.h"
@@ -1411,6 +1412,14 @@ void MainMenu::setupMenu() {
 			{ &st::menuIconChannel }
 		)->setClickedCallback([=] {
 			Mokagram::Feed::Show(controller);
+		});
+		addAction(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Опубликовать историю"))),
+			{ &st::menuIconAdd }
+		)->setClickedCallback([=] {
+			Mokagram::Stories::StartPosting(
+				controller,
+				controller->session().user());
 		});
 		for (auto &item : Mokagram::Plugins::DrawerMenuItems()) {
 			addAction(

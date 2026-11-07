@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 #include "mokagram/peek/mokagram_peek.h"
+#include "mokagram/stories/mokagram_story_post.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/misc/mokagram_misc.h"
 
@@ -361,6 +362,7 @@ private:
 	void addMokagramToStart();
 	void addMokagramGuard();
 	void addMokagramPeek();
+	void addMokagramStory();
 	void addTranslate();
 	void addReport();
 	void addNewContact();
@@ -1194,6 +1196,21 @@ void Filler::addMokagramToStart() {
 				MsgId(1));
 		},
 		&st::menuIconAbove);
+}
+
+void Filler::addMokagramStory() {
+	const auto peer = _peer;
+	if (!peer
+		|| peer->isUser()
+		|| (_thread && _thread->asTopic())
+		|| !Mokagram::Stories::CanPost(peer)) {
+		return;
+	}
+	const auto controller = _controller;
+	_addAction(
+		QString::fromUtf8(Mokagram::Lang::Tr("Опубликовать историю")),
+		[=] { Mokagram::Stories::StartPosting(controller, peer); },
+		&st::menuIconAdd);
 }
 
 void Filler::addMokagramPeek() {
@@ -2080,6 +2097,7 @@ void Filler::fillContextMenuActions() {
 	addMokagramGhost();
 	addMokagramGuard();
 	addMokagramPeek();
+	addMokagramStory();
 	addMokagramPlugins(u"chat"_q);
 	if (const auto user = _peer->asUser()) {
 		if (!user->isContact()) {
@@ -2115,6 +2133,7 @@ void Filler::fillHistoryActions() {
 	addMokagramGhost();
 	addMokagramGuard();
 	addMokagramPeek();
+	addMokagramStory();
 	addMokagramPlugins(u"chat"_q);
 	addTranslate();
 	addReport();
@@ -2148,6 +2167,7 @@ void Filler::fillProfileActions() {
 	addMokagramGhost();
 	addMokagramGuard();
 	addMokagramPeek();
+	addMokagramStory();
 	addMokagramPlugins(u"profile"_q);
 	addToggleNoForwards();
 	addToggleFolder();

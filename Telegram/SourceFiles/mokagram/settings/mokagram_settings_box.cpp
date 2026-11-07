@@ -61,6 +61,7 @@
 #include "storage/storage_domain.h"
 #include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "mokagram/peek/mokagram_peek.h"
+#include "mokagram/stories/mokagram_story_post.h"
 #include "data/data_changes.h"
 #include "mainwindow.h"
 #include "data/data_session.h"
@@ -2931,6 +2932,8 @@ void StartDebugCommands() {
 			if (Core::App().domain().local().hasLocalPasscode()) {
 				Core::App().lockByPasscode();
 			}
+		} else if (cmd.startsWith(u"storybox:"_q)) {
+			Mokagram::Stories::DebugShowCompose(controller, cmd.mid(9));
 		} else if (cmd == u"stash"_q) {
 			Shortcuts::Launch(Shortcuts::Command::StashMessage);
 		} else if (cmd.startsWith(u"peek:"_q)) {

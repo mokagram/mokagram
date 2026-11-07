@@ -102,6 +102,8 @@ PRIVATE
     mokagram/peek/mokagram_peek.h
     mokagram/stash/mokagram_compose_stash.cpp
     mokagram/stash/mokagram_compose_stash.h
+    mokagram/stories/mokagram_story_post.cpp
+    mokagram/stories/mokagram_story_post.h
     mokagram/msginfo/mokagram_message_info.h
     mokagram/msginfo/mokagram_media_fingerprint.cpp
     mokagram/msginfo/mokagram_media_fingerprint.h
