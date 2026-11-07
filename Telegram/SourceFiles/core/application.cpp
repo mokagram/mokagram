@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/streamer/mokagram_streamer.h"
 #include "mokagram/history/mokagram_history.h"
+#include "mokagram/passcode/mokagram_passcode_guard.h"
 #include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 #include "mokagram/misc/mokagram_misc.h"
@@ -360,6 +361,8 @@ void Application::run() {
 	Mokagram::History::RegisterSettings();
 	Mokagram::Ghost::RegisterSettings();
 	Mokagram::FakePasscode::RegisterSettings();
+	Mokagram::PasscodeGuard::RegisterSettings();
+	Mokagram::PasscodeGuard::Init();
 	Mokagram::Misc::RegisterSettings();
 	Mokagram::Appearance::RegisterSettings();
 	Mokagram::Effects::RegisterSettings();
@@ -1075,6 +1078,9 @@ void Application::startEmojiImageLoader() {
 
 void Application::setScreenIsLocked(bool locked) {
 	_screenIsLocked = locked;
+	if (locked) {
+		Mokagram::PasscodeGuard::ScreenLocked();
+	}
 }
 
 bool Application::screenIsLocked() const {
@@ -1484,6 +1490,7 @@ void Application::unlockPasscode() {
 		w->clearPasscodeLock();
 	});
 	Mokagram::FakePasscode::RunPending();
+	Mokagram::PasscodeGuard::RegisterSuccess();
 }
 
 void Application::clearPasscodeLock() {

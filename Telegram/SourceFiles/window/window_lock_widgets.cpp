@@ -29,6 +29,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "main/main_domain.h"
 #include "styles/style_layers.h"
+#include "mokagram/passcode/mokagram_lock_screen.h"
+#include "mokagram/passcode/mokagram_passcode_guard.h"
 #include "mokagram/passcode/mokagram_fake_passcode.h"
 #include "styles/style_passcode_box.h"
 #include "styles/style_window_lock_widgets.h"
@@ -54,9 +56,11 @@ PasscodeAttempt TryPasscode(
 	});
 	const auto counted = std::make_shared<Fn<void(bool)>>([
 			done = std::move(done)](bool correct) {
-		if (!correct && Core::App().passcodeLocked()) {
-			cSetPasscodeBadTries(cPasscodeBadTries() + 1);
-			cSetPasscodeLastTry(crl::now());
+		if (!correct
+			&& (Core::App().passcodeLocked()
+				|| !Core::App().domain().started())) {
+			// mokaGram: попытки переживают перезапуск, после N стирание.
+			Mokagram::PasscodeGuard::RegisterFailure();
 		}
 		done(correct);
 	});
@@ -178,8 +182,8 @@ PasscodeLockWidget::PasscodeLockWidget(
 	QWidget *parent,
 	not_null<Controller*> window)
 : LockWidget(parent, window)
-, _passcode(this, st::passcodeInput, tr::lng_passcode_ph())
-, _submit(this, tr::lng_passcode_submit(), st::passcodeSubmit)
+, _passcode(this, Mokagram::LockScreen::FieldStyle(), tr::lng_passcode_ph())
+, _submit(this, tr::lng_passcode_submit(), Mokagram::LockScreen::SubmitStyle())
 , _logout(this, tr::lng_passcode_logout(tr::now)) {
 	connect(_passcode, &Ui::MaskedInputField::changed, [=] { changed(); });
 	connect(_passcode, &Ui::MaskedInputField::submitted, [=] { submit(); });
@@ -187,6 +191,11 @@ PasscodeLockWidget::PasscodeLockWidget(
 	_logout->setClickedCallback([=] {
 		window->showLogoutConfirmation();
 	});
+	Mokagram::LockScreen::Setup(
+		this,
+		_passcode.data(),
+		_submit.data(),
+		_logout.data());
 
 	using namespace rpl::mappers;
 	if (Core::App().settings().systemUnlockEnabled()) {
@@ -324,17 +333,8 @@ void PasscodeLockWidget::systemUnlockDone(base::SystemUnlockResult result) {
 }
 
 void PasscodeLockWidget::paintContent(QPainter &p) {
+	// mokaGram: заголовок, ошибку и карточку рисует подложка LockScreen.
 	LockWidget::paintContent(p);
-
-	p.setFont(st::passcodeHeaderFont);
-	p.setPen(st::windowFg);
-	p.drawText(QRect(0, _passcode->y() - st::passcodeHeaderHeight, width(), st::passcodeHeaderHeight), tr::lng_passcode_enter(tr::now), style::al_center);
-
-	if (!_error.isEmpty()) {
-		p.setFont(st::boxTextFont);
-		p.setPen(st::boxTextFgError);
-		p.drawText(QRect(0, _passcode->y() + _passcode->height(), width(), st::passcodeSubmitSkip), _error, style::al_center);
-	}
 }
 
 void PasscodeLockWidget::submit() {
@@ -353,6 +353,7 @@ void PasscodeLockWidget::submit() {
 	case PasscodeAttempt::Flood:
 		_error = tr::lng_flood_error(tr::now);
 		_passcode->showError();
+		Mokagram::LockScreen::SetError(this, _error);
 		update();
 		return;
 	case PasscodeAttempt::Busy:
@@ -367,10 +368,12 @@ void PasscodeLockWidget::error() {
 	_error = tr::lng_passcode_wrong(tr::now);
 	_passcode->selectAll();
 	_passcode->showError();
+	Mokagram::LockScreen::SetError(this, _error);
 	update();
 }
 
 void PasscodeLockWidget::setDeriving(bool deriving) {
+	Mokagram::LockScreen::SetBusy(this, deriving);
 	_passcode->setDisabled(deriving);
 	_submit->setDisabled(deriving);
 	_submit->setAttribute(Qt::WA_TransparentForMouseEvents, deriving);
@@ -385,14 +388,13 @@ void PasscodeLockWidget::setDeriving(bool deriving) {
 void PasscodeLockWidget::changed() {
 	if (!_error.isEmpty()) {
 		_error = QString();
+		Mokagram::LockScreen::SetError(this, _error);
 		update();
 	}
 }
 
 void PasscodeLockWidget::resizeEvent(QResizeEvent *e) {
-	_passcode->move((width() - _passcode->width()) / 2, (height() / 3));
-	_submit->move(_passcode->x(), _passcode->y() + _passcode->height() + st::passcodeSubmitSkip);
-	_logout->move(_passcode->x() + (_passcode->width() - _logout->width()) / 2, _submit->y() + _submit->height() + st::linkFont->ascent);
+	Mokagram::LockScreen::Layout(this);
 }
 
 void PasscodeLockWidget::setInnerFocus() {
