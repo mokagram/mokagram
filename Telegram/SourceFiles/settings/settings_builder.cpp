@@ -576,6 +576,14 @@ void SectionBuilder::addDivider() {
 		// Mokagram: вместо полосы-разделителя заканчивается карточка, следующая
 		// строка сама откроет новую (иначе остаются пустые полоски).
 		if (const auto parent = GroupOuter(ctx.container)) {
+			// Отступ в самом конце карточки даёт лишнее место под строкой.
+			for (auto i = ctx.container->count(); i--;) {
+				const auto widget = ctx.container->widgetAt(i);
+				if (!widget->property("moka-skip").toBool()) {
+					break;
+				}
+				widget->resize(widget->width(), 0);
+			}
 			ctx.container = parent;
 		}
 	}, [](const SearchContext &) {
@@ -585,7 +593,11 @@ void SectionBuilder::addDivider() {
 void SectionBuilder::addSkip() {
 	v::match(_context, [&](const WidgetContext &ctx) {
 		if (InsideGroup(ctx.container)) {
-			Ui::AddSkip(ctx.container);
+			const auto skip = ctx.container->add(
+				object_ptr<Ui::FixedHeightWidget>(
+					ctx.container,
+					st::defaultVerticalListSkip));
+			skip->setProperty("moka-skip", true);
 		}
 	}, [](const SearchContext &) {
 	});
@@ -594,7 +606,9 @@ void SectionBuilder::addSkip() {
 void SectionBuilder::addSkip(int height) {
 	v::match(_context, [&](const WidgetContext &ctx) {
 		if (InsideGroup(ctx.container)) {
-			Ui::AddSkip(ctx.container, height);
+			const auto skip = ctx.container->add(
+				object_ptr<Ui::FixedHeightWidget>(ctx.container, height));
+			skip->setProperty("moka-skip", true);
 		}
 	}, [](const SearchContext &) {
 	});
