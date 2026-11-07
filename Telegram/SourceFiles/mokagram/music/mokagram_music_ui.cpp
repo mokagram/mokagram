@@ -1794,7 +1794,6 @@ public:
 	: AbstractButton(parent)
 	, _track(track)
 	, _mode(mode)
-	, _index(index)
 	, _results(std::move(results))
 	, _playlistId(std::move(playlistId)) {
 		resize(width(), kRowHeight);
@@ -2145,7 +2144,6 @@ private:
 	double _equalizerPhase = 0.;
 	Track _track;
 	RowMode _mode;
-	int _index = 0;
 	std::shared_ptr<std::vector<Track>> _results;
 	TrackLikeButton *_likeButton = nullptr;
 	bool _glass = false;
@@ -2415,7 +2413,8 @@ private:
 void Row::updateAnimation() {
 	const auto instance = Media::Player::instance();
 	const auto state = instance->getState(AudioMsgId::Type::Song);
-	const auto animate = isVisible()
+	const auto animate = (_mode != RowMode::Home)
+		&& isVisible()
 		&& QGuiApplication::applicationState() == Qt::ApplicationActive
 		&& QueueState().currentId == _track.id
 		&& UsesQueue(state.id)
@@ -2726,6 +2725,7 @@ public:
 		const auto url = _track.artistArtworkUrl.isEmpty() ? _track.artworkUrl : _track.artistArtworkUrl;
 		LoadImage(ArtUrl(url, u"t500x500"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
+			_scaledArt = QImage();
 			update();
 		}));
 	}
@@ -2751,8 +2751,11 @@ protected:
 		if (_art.isNull()) {
 			p.fillRect(art, st::windowBgOver->c);
 		} else {
-			const auto scaled = _art.scaled(art.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-			p.drawImage(art, scaled, QRect((scaled.width() - art.width()) / 2, (scaled.height() - art.height()) / 2, art.width(), art.height()));
+			if (_scaledArt.isNull() || _scaledArtSize != art.size()) {
+				_scaledArt = _art.scaled(art.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+				_scaledArtSize = art.size();
+			}
+			p.drawImage(art, _scaledArt, QRect((_scaledArt.width() - art.width()) / 2, (_scaledArt.height() - art.height()) / 2, art.width(), art.height()));
 		}
 		p.restore();
 		p.setFont(st::semiboldFont);
@@ -2765,6 +2768,8 @@ protected:
 private:
 	Track _track;
 	QImage _art;
+	QImage _scaledArt;
+	QSize _scaledArtSize;
 	HoverFade _hoverFade;
 };
 
@@ -3198,6 +3203,7 @@ public:
 		setToolTip(_album.title + u" - "_q + _album.artist);
 		LoadImage(ArtUrl(_album.artworkUrl, u"t500x500"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
+			_scaledArt = QImage();
 			update();
 		}));
 	}
@@ -3238,10 +3244,13 @@ protected:
 		if (_art.isNull()) {
 			p.fillRect(art, QColor(0x38, 0x38, 0x38));
 		} else {
-			const auto scaled = _art.scaled(art.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-			const auto source = QRect((scaled.width() - art.width()) / 2,
-				(scaled.height() - art.height()) / 2, art.width(), art.height());
-			p.drawImage(art, scaled, source);
+			if (_scaledArt.isNull() || _scaledArtSize != art.size()) {
+				_scaledArt = _art.scaled(art.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+				_scaledArtSize = art.size();
+			}
+			const auto source = QRect((_scaledArt.width() - art.width()) / 2,
+				(_scaledArt.height() - art.height()) / 2, art.width(), art.height());
+			p.drawImage(art, _scaledArt, source);
 		}
 		p.restore();
 		const auto left = narrow ? margin : art.right() + s(25);
@@ -3285,6 +3294,8 @@ private:
 	bool _isTrack = false;
 	bool _isArtist = false;
 	QImage _art;
+	QImage _scaledArt;
+	QSize _scaledArtSize;
 	Fn<void(QImage, QRect)> _showCover;
 
 };
@@ -5654,7 +5665,8 @@ public:
 		connect(&_ambientTimer, &QTimer::timeout, this, [=] {
 			if (!isVisible() || !_isPlaying || !Mokagram::Perf::UserIsLooking()
 				|| PowerSaving::On(PowerSaving::kAnimations)) return;
-			if (Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
+			if (_tab == Tab::Now
+				&& Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
 				_view->update();
 				update();
 			}
@@ -6359,6 +6371,7 @@ protected:
 		rebuildTab();
 		auto event = QResizeEvent(size(), size());
 		resizeEvent(&event);
+		refresh();
 	}
 	[[nodiscard]] QString tabTitle() const {
 		const auto text = [&]() -> const char* {
@@ -6965,10 +6978,13 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		paintBackgroundPart(p, e->rect());
+		const auto plainBackground = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+		if (plainBackground < 1.) {
+			paintBackgroundPart(p, e->rect());
+		}
 		// Вне «Сейчас играет» экран в цветах клиента, как остальные окна.
-		if (const auto plain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.); plain > 0.) {
-			p.setOpacity(plain);
+		if (plainBackground > 0.) {
+			p.setOpacity(plainBackground);
 			p.fillRect(e->rect(), QColor(0x1c, 0x1c, 0x1c));
 			p.setOpacity(1.);
 		}
@@ -7306,8 +7322,10 @@ private:
 				QFile::remove(path);
 				target->setBad();
 			}
-			_view->update();
-			update();
+			if (_tab == Tab::Now) {
+				_view->update();
+				update(computeLayout().cover);
+			}
 		});
 	}
 
@@ -7422,7 +7440,7 @@ private:
 		_canvas.refresh(
 			Mokagram::Settings::Bool(u"player.public_canvas"_q) && !_spotifyCanvas
 				? track.id : QString(),
-			track.title, track.artist, playing);
+			track.title, track.artist, playing && _tab == Tab::Now);
 		if (_isPlaying != playing) {
 			_isPlaying = playing;
 			_playAnim.start([=] { update(); }, playing ? 0. : 1., playing ? 1. : 0., 180, anim::easeOutCubic);

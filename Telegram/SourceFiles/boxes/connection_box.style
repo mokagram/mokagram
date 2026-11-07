@@ -11,7 +11,7 @@ connectionHostInputField: InputField(defaultInputField) {
 	width: 160px;
 }
 connectionPortInputField: InputField(defaultInputField) {
-	width: 55px;
+	width: 90px;
 }
 connectionUserInputField: InputField(defaultInputField) {
 }

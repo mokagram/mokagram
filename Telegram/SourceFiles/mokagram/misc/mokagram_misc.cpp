@@ -631,6 +631,7 @@ void RegisterSettings() {
 		.kind = Settings::Kind::Bool,
 		.defaultValue = true,
 		.category = u"chats"_q,
+		.hidden = true,
 	});
 	Settings::Register({
 		.key = u"plugins.sources"_q,
@@ -681,6 +682,7 @@ void RegisterSettings() {
 		.choices = { u"Telegram"_q, u"Google"_q, u"Microsoft"_q, QString::fromUtf8(Mokagram::Lang::Tr("Яндекс")) },
 		.requiresRestart = true,
 		.category = u"chats"_q,
+		.hidden = true,
 	});
 	Settings::Register({
 		.key = u"translation.microsoftCredentials"_q,
@@ -690,6 +692,7 @@ void RegisterSettings() {
 		.kind = Settings::Kind::String,
 		.defaultValue = QString(),
 		.category = u"chats"_q,
+		.hidden = true,
 		.action = Ui::ConfigureMicrosoftTranslation,
 	});
 	Settings::Register({
@@ -700,6 +703,7 @@ void RegisterSettings() {
 		.kind = Settings::Kind::String,
 		.defaultValue = QString(),
 		.category = u"chats"_q,
+		.hidden = true,
 	});
 	Settings::Register({
 		.key = u"look.menu_side"_q,
