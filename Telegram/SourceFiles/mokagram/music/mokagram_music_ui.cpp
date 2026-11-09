@@ -1587,7 +1587,27 @@ protected:
 			(height() - s(44)) / 2,
 			s(44),
 			s(44));
-		Mokagram::Music::PaintSoundCloudBadge(p, badge);
+		if (_avatar.isNull()) {
+			Mokagram::Music::PaintSoundCloudBadge(p, badge);
+		} else {
+			// Аватарка профиля кругом, фирменный значок маленьким в углу.
+			p.save();
+			auto clip = QPainterPath();
+			clip.addEllipse(badge);
+			p.setClipPath(clip);
+			p.drawImage(badge, _avatar);
+			p.restore();
+			const auto mark = s(20);
+			const auto markRect = QRect(
+				badge.right() - mark + s(4),
+				badge.bottom() - mark + s(4),
+				mark,
+				mark);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBg->c);
+			p.drawEllipse(markRect.adjusted(-s(2), -s(2), s(2), s(2)));
+			Mokagram::Music::PaintSoundCloudBadge(p, markRect);
+		}
 
 		auto titleFont = st::semiboldFont->f;
 		titleFont.setPixelSize(s(15));
@@ -1670,6 +1690,18 @@ private:
 					Mokagram::Lang::Tr("лайков: %1")).arg(count))
 				: who;
 		}
+		if (_logged
+			&& info.avatarUrl.contains(u"sndcdn.com"_q)
+			&& info.avatarUrl != _avatarUrl) {
+			_avatarUrl = info.avatarUrl;
+			LoadImage(ArtUrl(_avatarUrl, u"t200x200"_q), crl::guard(this, [=](QImage image) {
+				_avatar = std::move(image);
+				update();
+			}));
+		} else if (!_logged) {
+			_avatarUrl = QString();
+			_avatar = QImage();
+		}
 		update();
 	}
 
@@ -1677,6 +1709,8 @@ private:
 	Fn<void()> _logout;
 	QString _note;
 	QRect _pill;
+	QImage _avatar;
+	QString _avatarUrl;
 	bool _pillOver = false;
 	bool _logged = false;
 
