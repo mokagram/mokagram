@@ -251,6 +251,22 @@ void EnsureAnyClientId(Fn<void(bool)> done, bool force) {
 	EnsureClientId(done, force);
 }
 
+[[nodiscard]] QString ApiErrorDetail(const QByteArray &data) {
+	const auto root = QJsonDocument::fromJson(data).object();
+	auto message = root.value("message").toString().trimmed();
+	if (message.isEmpty()) {
+		message = root.value("error_message").toString().trimmed();
+	}
+	if (message.isEmpty()) {
+		const auto errors = root.value("errors").toArray();
+		if (!errors.isEmpty()) {
+			message = errors.first().toObject()
+				.value("error_message").toString().trimmed();
+		}
+	}
+	return message.left(200);
+}
+
 // GET с автоматическим обновлением client_id при 401/403 (один повтор).
 void ApiGet(
 		const QString &base,
@@ -298,13 +314,19 @@ void ApiGet(
 				return;
 			}
 			if (status == 401) {
-				done({}, QString::fromUtf8(Mokagram::Lang::Tr(
-					"SoundCloud отклонил токен авторизации (HTTP 401). Получи новый токен и войди снова.")));
+				auto message = QString::fromUtf8(Mokagram::Lang::Tr(
+					"SoundCloud отклонил токен авторизации (HTTP 401)."));
+				const auto detail = ApiErrorDetail(data);
+				if (!detail.isEmpty()) message += u" "_q + detail;
+				done({}, std::move(message));
 				return;
 			}
 			if (status == 403) {
-				done({}, QString::fromUtf8(Mokagram::Lang::Tr(
-					"SoundCloud запретил запрос (HTTP 403). Проверь доступ аккаунта.")));
+				auto message = QString::fromUtf8(Mokagram::Lang::Tr(
+					"SoundCloud запретил запрос (HTTP 403)."));
+				const auto detail = ApiErrorDetail(data);
+				if (!detail.isEmpty()) message += u" "_q + detail;
+				done({}, std::move(message));
 				return;
 			}
 			if (status == 429) {
@@ -1062,23 +1084,29 @@ QJsonObject &UserObject() {
 }
 
 void FetchUser(Fn<void(QString)> done) {
-	ApiGet(
-		QString::fromLatin1(kPublicApi) + u"/me"_q,
-		QUrlQuery(),
+	const auto finish = [=](QByteArray data, QString error) {
+		if (!error.isEmpty() || data.isEmpty()) {
+			done(error.isEmpty()
+				? u"SoundCloud вернул пустой профиль."_q
+				: error);
+			return;
+		}
+		const auto profile = QJsonDocument::fromJson(data).object();
+		if (profile.isEmpty()) {
+			done(u"SoundCloud вернул некорректный профиль."_q);
+			return;
+		}
+		UserObject() = profile;
+		done(QString());
+	};
+	ApiGet(QString::fromLatin1(kPublicApi) + u"/me"_q, QUrlQuery(),
 		[=](QByteArray data, QString error) {
-			if (!error.isEmpty() || data.isEmpty()) {
-				done(error.isEmpty()
-					? u"SoundCloud вернул пустой профиль."_q
-					: error);
-				return;
+			if (error.contains(u"HTTP 403"_q)) {
+				// Старые токены сайта иногда доступны только через его api-v2.
+				ApiGet(QString::fromLatin1(kApi) + u"/me"_q, QUrlQuery(), finish);
+			} else {
+				finish(std::move(data), std::move(error));
 			}
-			const auto profile = QJsonDocument::fromJson(data).object();
-			if (profile.isEmpty()) {
-				done(u"SoundCloud вернул некорректный профиль."_q);
-				return;
-			}
-			UserObject() = profile;
-			done(QString());
 		});
 }
 
@@ -1178,7 +1206,7 @@ void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done) {
 		query.addQueryItem(u"limit"_q, u"200"_q);
 		query.addQueryItem(u"linked_partitioning"_q, u"true"_q);
 	}
-	ApiGet(url, query, [=](QByteArray data, QString error) {
+	const auto parse = [=](QByteArray data, QString error) {
 		auto result = LikesPage();
 		if (!error.isEmpty()) {
 			result.error = error;
@@ -1187,8 +1215,13 @@ void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done) {
 		}
 		const auto root = QJsonDocument::fromJson(data).object();
 		for (const auto &value : root.value("collection").toArray()) {
-			// Лайк бывает и треком, и плейлистом: берём только треки.
-			auto track = ParseTrack(value.toObject());
+			// Коллекция /likes — это лайки, а не треки: сам трек лежит в поле
+			// "track". Плейлисты (kind like с "playlist") пропускаем.
+			auto object = value.toObject();
+			if (object.contains(u"track"_q)) {
+				object = object.value(u"track"_q).toObject();
+			}
+			auto track = ParseTrack(object);
 			if (!track.id.isEmpty() && !track.title.isEmpty()) {
 				result.tracks.push_back(std::move(track));
 			}
@@ -1196,6 +1229,19 @@ void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done) {
 		const auto next = root.value("next_href").toString();
 		result.next = ValidApiUrl(next) ? next : QString();
 		done(std::move(result));
+	};
+	ApiGet(url, query, [=](QByteArray data, QString error) {
+		const auto info = User();
+		if (error.contains(u"HTTP 403"_q)
+			&& !info.id.isEmpty()
+			&& QUrl(url).host() == u"api.soundcloud.com"_q) {
+			// Для авторизации сайта пробуем его старый endpoint с найденным client_id.
+			const auto legacy = QString::fromLatin1(kApi)
+				+ u"/users/"_q + info.id + u"/likes"_q;
+			ApiGet(legacy, QUrlQuery(), parse);
+		} else {
+			parse(std::move(data), std::move(error));
+		}
 	});
 }
 
@@ -1217,7 +1263,38 @@ void SetTrackLiked(const QString &trackId, bool liked) {
 		? Net().post(request, QByteArray())
 		: Net().deleteResource(request);
 	QObject::connect(reply, &QNetworkReply::finished, reply, [=] {
+		const auto status = reply->attribute(
+			QNetworkRequest::HttpStatusCodeAttribute).toInt();
 		reply->deleteLater();
+		if (status != 403) {
+			return;
+		}
+		const auto info = User();
+		if (info.id.isEmpty()) {
+			return;
+		}
+		EnsureAnyClientId([=](bool ok) {
+			if (!ok) {
+				return;
+			}
+			auto url = QUrl(QString::fromLatin1(kApi)
+				+ u"/users/"_q + info.id + u"/track-likes/"_q + trackId);
+			auto query = QUrlQuery();
+			query.addQueryItem(u"client_id"_q, ClientId());
+			url.setQuery(query);
+			auto legacyRequest = QNetworkRequest(url);
+			legacyRequest.setRawHeader("User-Agent", kUserAgent);
+			legacyRequest.setRawHeader(
+				"Authorization",
+				QByteArray("OAuth ") + AccountToken().toUtf8());
+			legacyRequest.setTransferTimeout(20000);
+			const auto legacyReply = liked
+				? Net().put(legacyRequest, QByteArray())
+				: Net().deleteResource(legacyRequest);
+			QObject::connect(legacyReply, &QNetworkReply::finished, legacyReply, [=] {
+				legacyReply->deleteLater();
+			});
+		}, false);
 	});
 }
 
