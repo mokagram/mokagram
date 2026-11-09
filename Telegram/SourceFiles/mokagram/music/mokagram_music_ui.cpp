@@ -5606,9 +5606,13 @@ public:
 	}
 
 	void setState(bool loading, bool active, bool playing, const QString &note) {
-		_button->setText(text(loading ? "Подбираю музыку под ваш вкус…"
+		const auto label = text(loading ? "Подбираю музыку под ваш вкус…"
 			: active ? (playing ? "Приостановить волну" : "Продолжить волну")
-			: "Включить мою волну"));
+			: "Включить мою волну");
+		if (_buttonText != label) {
+			_buttonText = label;
+			_button->setText(rpl::single(label));
+		}
 		_button->setDisabled(loading);
 		_note = note;
 		update();
@@ -5666,6 +5670,7 @@ private:
 	QRect _art;
 	std::array<QImage, 4> _covers;
 	QString _note;
+	QString _buttonText;
 };
 
 class FullscreenPlayer final : public Ui::RpWidget {
