@@ -111,13 +111,40 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				Tr("2. На странице SoundCloud нажмите F12, вставьте код ниже в консоль и скопируйте результат."),
+				Tr("2. На странице SoundCloud нажмите F12, вставьте код ниже в консоль. Он напечатает токен под ним."),
 				st::boxLabel),
 			style::margins(st::boxRowPadding.left(), st::boxLittleSkip, st::boxRowPadding.right(), st::boxLittleSkip));
 
-		// Код для консоли браузера: достаёт токен и кладёт в clipboard.
+		// Код для консоли браузера: печатает токен отдельной строкой.
+		// copy() в DevTools кладёт в буфер не всегда, поэтому нужен вывод.
 		const auto snippet = QString::fromUtf8(
-			R"JS((()=>{const m=/oauth_token["'\s\\]{0,3}[:=]["'\s\\]{0,3}([A-Za-z0-9_-]{16,256})/;const v=localStorage.getItem('oauth_token')||([...Object.keys(localStorage)].map(k=>localStorage.getItem(k)).join(' ').match(m)||[])[1]||'';copy(v);console.log('Токен скопирован')})())JS");
+			R"JS((()=>{
+const M=/oauth_token["'\s\\]{0,6}[:=]["'\s\\]{0,6}([A-Za-z0-9_-]{16,256})/;
+const out=new Set();
+const add=(t)=>{if(!t)return;const m=String(t).match(M);if(m)out.add(m[1]);};
+try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);add(k);add(localStorage.getItem(k))}}catch(e){}
+try{for(let i=0;i<sessionStorage.length;i++){const k=sessionStorage.key(i);add(k);add(sessionStorage.getItem(k))}}catch(e){}
+add(document.cookie);
+const dbs=indexedDB.databases?indexedDB.databases():Promise.resolve([]);
+dbs.then(list=>Promise.all(list.map(db=>new Promise(r=>{
+  const q=indexedDB.open(db.name);
+  q.onerror=()=>r();
+  q.onsuccess=()=>{
+    const d=q.result;const names=[...d.objectStoreNames];
+    if(!names.length)return r();
+    const tx=d.transaction(names,'readonly');
+    const jobs=names.map(n=>new Promise(r2=>{
+      try{const all=tx.objectStore(n).getAll();all.onerror=()=>r2();
+        all.onsuccess=()=>{try{add(JSON.stringify(all.result))}catch(e){}r2()}}catch(e){r2()}
+    }));
+    Promise.all(jobs).then(()=>{d.close();r()});
+  };
+})))).then(()=>{
+  const v=[...out][0];
+  if(v){console.log('TOKEN:',v);try{copy(v)}catch(e){}}
+  else{console.log('TOKEN NOT FOUND. Проверьте, что вы вошли в SoundCloud.')}
+});
+})())JS");
 		const auto snippetLabel = content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
@@ -139,7 +166,7 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				Tr("3. Вставьте сюда токен из буфера обмена."),
+				Tr("3. Скопируйте напечатанную строку и вставьте её здесь."),
 				st::boxLabel),
 			style::margins(st::boxRowPadding.left(), st::boxLittleSkip, st::boxRowPadding.right(), st::boxLittleSkip));
 		const auto field = box->addRow(
@@ -149,6 +176,20 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 				rpl::single(Tr("Токен SoundCloud")),
 				TokenFromText(QGuiApplication::clipboard()->text())),
 			st::boxRowPadding);
+		const auto pasteButton = Ui::CreateChild<Ui::RoundButton>(
+			box,
+			rpl::single(Tr("Вставить из буфера")),
+			st::defaultLightButton);
+		pasteButton->setClickedCallback([=] {
+			const auto fromClipboard = TokenFromText(
+				QGuiApplication::clipboard()->text());
+			if (fromClipboard.isEmpty()) {
+				Ui::Toast::Show(Tr("В буфере обмена нет токена."));
+				return;
+			}
+			field->setText(fromClipboard);
+			field->setFocusFast();
+		});
 		box->setFocusCallback([=] { field->setFocusFast(); });
 
 		const auto submit = [=] {
