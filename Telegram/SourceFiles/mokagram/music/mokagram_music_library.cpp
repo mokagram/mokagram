@@ -702,6 +702,340 @@ void Gather(
 	}
 }
 
+// Типографские кавычки, ё и лишние пробелы: запрос не должен зависеть от того,
+// как трек назвали в SoundCloud.
+[[nodiscard]] QString CleanQuery(const QString &source) {
+	auto text = source;
+	text.replace(u'«', u'"').replace(u'»', u'"');
+	text.replace(u'“', u'"').replace(u'”', u'"');
+	text.replace(u'`', u'"').replace(u'\'', u' ');
+	text.replace(u'ё', u'е').replace(u'Ё', u'Е');
+	return text.simplified();
+}
+
+// Ключ автора для разнообразия подборки: аккаунт, иначе ник из названия.
+[[nodiscard]] QString OriginKey(const Track &t) {
+	return t.artistId.isEmpty()
+		? u"o:"_q + Origin(t)
+		: u"a:"_q + t.artistId;
+}
+
+// Название без служебных слов: «Bo Chax (prod. by X)» для поиска почти бесполезно,
+// а «бо чакс» и «bo chax» находят одно и то же.
+[[nodiscard]] QString SearchTitle(const QString &title, const QString &artist) {
+	static const auto noise = QRegularExpression(
+		u"\\([^\\)]*\\)|\\[[^\\]]*\\]|\\{[^\\}]*\\}"_q);
+	auto text = CleanQuery(title);
+	auto titleKey = NormalizePart(text);
+	if (!artist.isEmpty()) {
+		// «Автор - Название» или «Автор — Название»: для поиска по звучанию нужна
+		// только часть после тире, иначе ищется сам автор, а это уже «Ещё от».
+		static const auto dashPattern = QRegularExpression(u"\\s[\\-–—]\\s"_q);
+		const auto artistKey = NormalizePart(artist);
+		auto match = dashPattern.match(text);
+		while (match.hasMatch()) {
+			if (NormalizePart(text.left(match.capturedStart())) == artistKey) {
+				text = text.mid(match.capturedEnd()).trimmed();
+				break;
+			}
+			match = dashPattern.match(text, match.capturedEnd());
+		}
+		titleKey = NormalizePart(text);
+	}
+	text.remove(noise).simplified();
+	if (NormalizePart(text).size() >= 3) {
+		return text;
+	}
+	// Всё название было в скобках («(Intro)»): оставляем как есть.
+	return titleKey.isEmpty() ? title : text.isEmpty() ? title : text;
+}
+
+// Слова названия и тегов без служебного шума: по ним трек понимается
+// по-настоящему («хорроркор», «бэнгер»), а не только по имени автора.
+[[nodiscard]] QStringList TasteWords(const Track &t) {
+	auto words = QStringList();
+	static const auto service = QRegularExpression(
+		u"\\b(prod|remix|edit|mix|instrumental|original|official|audio|video|clip|lyrics|"
+		u"slowed|reverb|speed|sped|nightcore|extended|version|feat|ft|by|the|and|now|out)\\b"_q,
+		QRegularExpression::CaseInsensitiveOption
+			| QRegularExpression::UseUnicodePropertiesOption);
+	const auto add = [&](const QString &text) {
+		const auto cleaned = CleanQuery(text).remove(service).simplified();
+		for (const auto &word : cleaned.split(
+				QRegularExpression(u"[^\\p{L}\\p{N}#]+"_q),
+				Qt::SkipEmptyParts)) {
+			const auto lower = word.toLower();
+			if (lower.size() >= 3 && lower.size() <= 20
+				&& !words.contains(lower)) {
+				words.push_back(lower);
+			}
+		}
+	};
+	const auto addTag = [&](const QString &tag) {
+		const auto cleaned = CleanQuery(tag).remove(service).simplified();
+		// Тег целиком нужен как точное совпадение звучания, а не только словами.
+		if (cleaned.size() >= 3 && cleaned.size() <= 24 && !cleaned.contains(u' ')
+			&& !words.contains(cleaned.toLower())) {
+			words.push_back(cleaned.toLower());
+		}
+		for (const auto &part : cleaned.split(u' ', Qt::SkipEmptyParts)) {
+			if (part.size() >= 3 && !words.contains(part.toLower())) {
+				words.push_back(part.toLower());
+			}
+		}
+	};
+	addTag(t.genre);
+	for (const auto &tag : t.tags) {
+		addTag(tag);
+	}
+	const auto hasPrefix = [](const QString &text, const QString &key) {
+		return text.size() >= 4 && key.size() >= 4 && text.startsWith(key);
+	};
+	const auto artistKey = NormalizePart(t.artist);
+	const auto addTitleWord = [&](const QString &word) {
+		const auto lower = word.toLower();
+		const auto key = NormalizePart(lower);
+		// Слово автора в названии («Pharaoh - ...») это не звучание.
+		if (lower.size() < 3 || lower.size() > 20 || words.contains(lower)
+			|| (key.size() >= 4 && (key == artistKey
+				|| hasPrefix(key, artistKey)
+				|| hasPrefix(artistKey, key)))) {
+			return;
+		}
+		words.push_back(lower);
+	};
+	const auto title = SearchTitle(t.title, t.artist);
+	for (const auto &word : title.split(u' ', Qt::SkipEmptyParts)) {
+		addTitleWord(word);
+	}
+	// Автор не тег, но его ник в названии — не звучание: такое слово отсекается.
+	return words;
+}
+
+// Сила совпадения слова с треком, 0..1: жанр весит больше тегов, теги больше
+// названия. Типографика и словоформы не мешают: сравниваем ключи.
+[[nodiscard]] double WordMatch(const QString &word, const Track &t) {
+	const auto key = NormalizePart(word);
+	if (key.size() < 3) {
+		return 0.;
+	}
+	const auto close = [&](const QString &text) {
+		const auto other = NormalizePart(text);
+		if (other.size() < 3) {
+			return false;
+		}
+		if (other == key) {
+			return true;
+		}
+		const auto shorter = std::min(other.size(), key.size());
+		return shorter >= 4
+			&& (other.startsWith(key) || key.startsWith(other));
+	};
+	if (close(t.genre)) {
+		return 1.;
+	}
+	for (const auto &tag : t.tags) {
+		if (close(tag)) {
+			return 0.9;
+		}
+	}
+	if (close(t.title)) {
+		return 0.7;
+	}
+	return 0.;
+}
+
+struct SimilarContext {
+	Track seed;
+	std::vector<Track> avoid;
+	int count = 0;
+	QStringList tasteWords;
+};
+
+void BuildSimilarImpl(SimilarContext context, Fn<void(std::vector<Track>, QString)> done) {
+	auto seed = std::move(context.seed);
+	seed.title = CleanQuery(seed.title);
+	seed.artist = CleanQuery(seed.artist);
+	if (seed.title.trimmed().isEmpty()) {
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr(
+			"У трека нет названия: похожее подобрать не из чего.")));
+		return;
+	}
+	const auto ctx = std::make_shared<SimilarContext>(std::move(context));
+	ctx->seed = seed;
+	ctx->tasteWords = TasteWords(seed);
+	const auto now = QDateTime::currentSecsSinceEpoch();
+	const auto profile = std::make_shared<Profile>(BuildProfile(seed));
+	const auto seedOrigin = OriginKey(seed);
+
+	// Один и тот же трек под разными id: сам трек, уже показанное рядом, лайки.
+	auto excluded = std::set<QString>();
+	for (const auto &k : KeysFor(seed)) {
+		excluded.insert(k);
+	}
+	for (const auto &t : ctx->avoid) {
+		for (const auto &k : KeysFor(t)) {
+			excluded.insert(k);
+		}
+	}
+	for (const auto &l : Lib().liked) {
+		for (const auto &k : KeysFor(l.track)) {
+			excluded.insert(k);
+		}
+	}
+	for (const auto &b : Lib().boosted) {
+		for (const auto &k : KeysFor(b.track)) {
+			excluded.insert(k);
+		}
+	}
+
+	const auto collector = std::make_shared<Collector>();
+	collector->finish = [=] {
+		auto scored = std::vector<std::pair<Track, double>>();
+		for (const auto &[id, c] : collector->candidates) {
+			const auto &t = c.track;
+			const auto keys = KeysFor(t);
+			auto skip = false;
+			for (const auto &k : keys) {
+				skip = skip || excluded.contains(k);
+			}
+			// Мусор: превью и очень длинные миксы (если автор не слушает такое).
+			if (t.durationMs > 0
+				&& (t.durationMs < kMinDurationMs
+					|| (t.durationMs > kMaxDurationMs && !profile->likesLong))) {
+				skip = true;
+			}
+			if (skip || IsBlockedArtist(t)) {
+				continue;
+			}
+			// Семантика: слова жанра и настроения из названия и тегов сида.
+			auto semantic = 0.;
+			for (const auto &word : ctx->tasteWords) {
+				semantic += WordMatch(word, t);
+			}
+			semantic = std::min(1., semantic / 1.5);
+			// Сходство по SoundCloud (похожие следом за сидом) и по словам.
+			auto value = 1.4 * std::min(1., c.seedHits / 1.5);
+			value += 1.5 * semantic;
+			if (!t.genre.isEmpty() && !seed.genre.isEmpty() && t.genre == seed.genre) {
+				value += 0.5;
+			}
+			// Вкус слушателя не перебивает звучание, но помогает выбрать из равных.
+			auto tagAffinity = 0.;
+			for (const auto &tag : t.tags) {
+				tagAffinity += std::tanh(Get(profile->tag, tag));
+			}
+			value += 0.5 * std::min(1., tagAffinity / 2.);
+			if (!t.artistId.isEmpty()) {
+				value += 0.3 * std::tanh(Get(profile->artist, t.artistId));
+			}
+			value += 0.25 * std::clamp(std::log10(t.playbackCount + 1.) / 7., 0., 1.);
+			if (t.playbackCount > 0) {
+				value += 0.2 * std::min(1., (t.likesCount / double(t.playbackCount)) * 25.);
+			}
+			if (t.createdAt > 0 && (now - t.createdAt) < 365 * 86400) {
+				value += 0.15;
+			}
+			// Автор сида не повторяется: для него есть отдельный ряд «Ещё от».
+			if (OriginKey(t) == seedOrigin) {
+				value -= 6.;
+			}
+			value += (Random01() - 0.5) * 0.2;
+			scored.push_back(std::make_pair(t, value));
+		}
+		std::sort(scored.begin(), scored.end(), [](const auto &a, const auto &b) {
+			return a.second > b.second;
+		});
+		const auto wanted = std::max(ctx->count, 6);
+		auto result = std::vector<Track>();
+		auto origins = std::map<QString, int>();
+		auto genres = std::map<QString, int>();
+		const auto perOrigin = std::max(1, wanted / 4);
+		for (const auto &[track, value] : scored) {
+			// Слабое совпадение не тянем ради количества: лучше показать меньше.
+			if (int(result.size()) >= wanted || value < 0.35) {
+				break;
+			}
+			const auto origin = OriginKey(track);
+			if (origins[origin] >= perOrigin
+				|| (!track.genre.isEmpty()
+					&& genres[track.genre] > (int(result.size()) / 2) + 1)) {
+				continue;
+			}
+			++origins[origin];
+			++genres[track.genre];
+			result.push_back(track);
+		}
+		MarkShown(result);
+		done(std::move(result), QString());
+	};
+
+	// Запросы: похожие по SoundCloud, жанр и теги, настроение из слов названия,
+	// для треков без тегов — название в кавычках и «автор название».
+	auto queries = QStringList();
+	const auto addQuery = [&](QString query) {
+		const auto pieces = CleanQuery(query).split(u' ', Qt::SkipEmptyParts);
+		if (int(pieces.size()) > 5) {
+			return;
+		}
+		query = pieces.join(u' ');
+		if (query.size() >= 3 && !query.contains(u'"')
+			&& !queries.contains(query, Qt::CaseInsensitive)) {
+			queries.push_back(std::move(query));
+		}
+	};
+	addQuery(seed.genre);
+	for (const auto &tag : seed.tags) {
+		addQuery(tag);
+	}
+	for (const auto &word : ctx->tasteWords) {
+		addQuery(u'"' + word + u'"');
+	}
+	addQuery(seed.artist + u' ' + SearchTitle(seed.title, seed.artist));
+	if (seed.tags.isEmpty() && seed.genre.isEmpty()) {
+		const auto title = SearchTitle(seed.title, seed.artist);
+		addQuery(u'"' + title + u'"');
+		const auto pieces = title.split(u' ', Qt::SkipEmptyParts);
+		if (pieces.size() > 2) {
+			addQuery(pieces.front() + u' ' + pieces.back());
+		}
+	}
+	if (queries.empty() && seed.id.isEmpty()) {
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr(
+			"Нет жанра и тегов: поищу похожее позже.")));
+		return;
+	}
+	// Пустой ответ поиска не должен останавливать остальные запросы, поэтому
+	// считаем ответы вручную, а сбор кандидатов идёт там же, в collector.
+	auto pending = std::make_shared<int>(int(seed.id.isEmpty() ? 0 : 1)
+		+ std::min(int(queries.size()), 6));
+	auto found = std::make_shared<bool>(false);
+	const auto settle = [=] {
+		if (--*pending == 0 && !*found) {
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr(
+				"Не нашлось похожего по звучанию. Попробуйте позже.")));
+		}
+	};
+	const auto gather = [=](std::vector<Track> list, double weight) {
+		if (list.empty()) {
+			settle();
+			return;
+		}
+		*found = true;
+		Gather(collector, std::move(list), weight, false);
+	};
+	if (!seed.id.isEmpty()) {
+		Related(seed.id, 40, [=](std::vector<Track> list) {
+			gather(std::move(list), 1.5);
+		});
+	}
+	for (auto i = 0; i != std::min(int(queries.size()), 6); ++i) {
+		SearchLimited(queries[i], 20, [=](std::vector<Track> list) {
+			gather(std::move(list), 0.6);
+		});
+	}
+}
+
 void BuildImpl(
 		StreamContext context,
 		int count,
@@ -1245,6 +1579,17 @@ void BuildStream(
 		int count,
 		Fn<void(std::vector<Track>, QString)> done) {
 	BuildImpl(std::move(context), count, true, std::move(done));
+}
+
+void BuildSimilar(
+		Track seed,
+		const std::vector<Track> &avoid,
+		int count,
+		Fn<void(std::vector<Track>, QString)> done) {
+	if (IsTelegramId(seed.id)) {
+		seed.artistId.clear();
+	}
+	BuildSimilarImpl({ std::move(seed), avoid, count }, std::move(done));
 }
 
 } // namespace Mokagram::Music

@@ -77,6 +77,15 @@ void BuildStream(
 	int count,
 	Fn<void(std::vector<Track> tracks, QString note)> done);
 
+// Похожие по звучанию: жанр и теги трека и слова из его названия (не ник
+// автора), похожие по SoundCloud и немного вкуса слушателя. Автор трека и
+// треки из avoid сюда не попадают: у автора есть отдельный ряд.
+void BuildSimilar(
+	Track seed,
+	const std::vector<Track> &avoid,
+	int count,
+	Fn<void(std::vector<Track> tracks, QString note)> done);
+
 // Собирает подборку. note: пояснение для интерфейса (например, «лайкни пару треков»).
 void BuildForYou(
 	int count,
