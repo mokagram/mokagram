@@ -103,7 +103,8 @@ void RegisterSponsoredEntry() {
 		.key = u"adblock.hideSponsored"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Реклама")),
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Скрывать спонсорские сообщения")),
-		.description = QString::fromUtf8(Mokagram::Lang::Tr("Не запрашиваем и не показываем рекламу в каналах. Скрыто за сессию: "))
+		.description = Mokagram::Lang::Tr(
+			"Не запрашиваем и не показываем рекламу в каналах. Скрыто за сессию: ")
 			+ QString::number(blocked),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
@@ -144,17 +145,17 @@ struct LockRow {
 	using K = Api::UserPrivacy::Key;
 	using O = Api::UserPrivacy::Option;
 	static const auto rows = std::vector<LockRow>{
-		{ K::PhoneNumber, O::Nobody, "Скрыть номер телефона от всех", true },
-		{ K::AddedByPhone, O::Contacts, "Не находить меня по номеру телефона", true },
-		{ K::LastSeen, O::Nobody, "Скрыть время захода", true },
-		{ K::Invites, O::Nobody, "Запретить добавлять меня в группы и каналы", true },
-		{ K::CallsPeer2Peer, O::Nobody, "Звонки только через серверы Telegram (без p2p)", true },
-		{ K::Calls, O::Contacts, "Звонить мне могут только контакты", true },
-		{ K::ProfilePhoto, O::Contacts, "Фото профиля только контактам", true },
-		{ K::About, O::Contacts, "Описание профиля только контактам", true },
-		{ K::Birthday, O::Contacts, "День рождения только контактам", true },
-		{ K::Forwards, O::Nobody, "Скрывать ссылку на меня при пересылке", true },
-		{ K::Voices, O::Contacts, "Голосовые и кружки только от контактов", false },
+		{ K::PhoneNumber, O::Nobody, Mokagram::Lang::Tr("Скрыть номер телефона от всех"), true },
+		{ K::AddedByPhone, O::Contacts, Mokagram::Lang::Tr("Не находить меня по номеру телефона"), true },
+		{ K::LastSeen, O::Nobody, Mokagram::Lang::Tr("Скрыть время захода"), true },
+		{ K::Invites, O::Nobody, Mokagram::Lang::Tr("Запретить добавлять меня в группы и каналы"), true },
+		{ K::CallsPeer2Peer, O::Nobody, Mokagram::Lang::Tr("Звонки только через серверы Telegram (без p2p)"), true },
+		{ K::Calls, O::Contacts, Mokagram::Lang::Tr("Звонить мне могут только контакты"), true },
+		{ K::ProfilePhoto, O::Contacts, Mokagram::Lang::Tr("Фото профиля только контактам"), true },
+		{ K::About, O::Contacts, Mokagram::Lang::Tr("Описание профиля только контактам"), true },
+		{ K::Birthday, O::Contacts, Mokagram::Lang::Tr("День рождения только контактам"), true },
+		{ K::Forwards, O::Nobody, Mokagram::Lang::Tr("Скрывать ссылку на меня при пересылке"), true },
+		{ K::Voices, O::Contacts, Mokagram::Lang::Tr("Голосовые и кружки только от контактов"), false },
 	};
 	return rows;
 }
@@ -306,8 +307,8 @@ void ShowPrivacyLockBox() {
 		content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				QString::fromUtf8(Mokagram::Lang::Tr(
-					"Отметьте, что скрыть. Исключения «всегда разрешать» и «никогда не разрешать» не меняются. Прежние значения запомнятся, их можно вернуть.")),
+				Mokagram::Lang::Tr(
+					"Отметьте, что скрыть. Исключения «всегда разрешать» и «никогда не разрешать» не меняются. Прежние значения запомнятся, их можно вернуть."),
 				st::boxLabel),
 			QMargins(24, 0, 24, 8));
 		auto checks = std::make_shared<std::vector<QPointer<Ui::Checkbox>>>();
@@ -417,20 +418,20 @@ void AddBotButtonCopyActions(
 	switch (button->type) {
 	case Type::Callback:
 	case Type::CallbackWithPassword:
-		add("Копировать callback data", data);
+		add(Mokagram::Lang::Tr("Копировать callback data"), data);
 		break;
 	case Type::WebView:
 	case Type::SimpleWebView:
-		add("Копировать url", data);
+		add(Mokagram::Lang::Tr("Копировать url"), data);
 		break;
 	case Type::SwitchInline:
 	case Type::SwitchInlineSame:
-		add("Копировать inline query", data);
+		add(Mokagram::Lang::Tr("Копировать inline query"), data);
 		break;
 	default:
 		break;
 	}
-	add("Копировать текст кнопки", button->text);
+	add(Mokagram::Lang::Tr("Копировать текст кнопки"), button->text);
 }
 
 bool SponsoredHidden() {
@@ -491,12 +492,12 @@ void RegisterSettings() {
 			QString::fromUtf8(Mokagram::Lang::Tr("Моноширинный")),
 			QString::fromUtf8(Mokagram::Lang::Tr("Скрытый (спойлер)")),
 			QString::fromUtf8(Mokagram::Lang::Tr("Цитата")),
-			QString::fromUtf8("𝐁𝐨𝐥𝐝 (жирный)"),
-			QString::fromUtf8("𝓢𝓬𝓻𝓲𝓹𝓽 (рукописный)"),
-			QString::fromUtf8("𝔊𝔬𝔱𝔥𝔦𝔠 (готический)"),
-			QString::fromUtf8("Ⓒⓘⓡⓒⓛⓔⓢ (в кружках)"),
-			QString::fromUtf8("Ｗｉｄｅ (широкий)"),
-			QString::fromUtf8("ꜱᴍᴀʟʟ ᴄᴀᴘꜱ (малые заглавные)"),
+			QString::fromUtf8(Mokagram::Lang::Tr("𝐁𝐨𝐥𝐝 (bold)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("𝓢𝓬𝓻𝓲𝓹𝓽 (script)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("𝔊𝔬𝔱𝔥𝔦𝔠 (gothic)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Ⓒⓘⓡⓒⓛⓔⓢ (circled)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("Ｗｉｄｅ (wide)")),
+			QString::fromUtf8(Mokagram::Lang::Tr("ꜱᴍᴀʟʟ ᴄᴀᴘꜱ (small caps)")),
 		},
 		.category = u"chats"_q,
 		.sectionIcon = u"edit"_q,
@@ -617,7 +618,7 @@ void RegisterSettings() {
 		.key = u"privacy.relativeLastSeen"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Статус «в сети»")),
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Точное время вместо «был(а) недавно»")),
-		.description = QString::fromUtf8(Mokagram::Lang::Tr("Если Telegram скрывает время, но мы видели человека в сети или за действием, пишем «был(а) 5 минут назад». Строка обновляется сама.")),
+		.description = Mokagram::Lang::Tr("Если Telegram скрывает время, но мы видели человека в сети или за действием, пишем «был(а) 5 минут назад». Строка обновляется сама."),
 		.kind = Settings::Kind::Bool,
 		.defaultValue = false,
 		.category = u"privacy"_q,

@@ -146,7 +146,7 @@ constexpr auto kTranslateValues = std::array{ "", "ru", "en" };
 [[nodiscard]] QStringList TranslateTitles() {
 	return {
 		QString::fromUtf8(Mokagram::Lang::Tr("Оригинал")),
-		u"Русский"_q,
+		QString::fromUtf8(Mokagram::Lang::Tr("Русский")),
 		u"English"_q,
 	};
 }
