@@ -43,6 +43,7 @@
 #include "base/call_delayed.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_soundcloud_login.h"
 #include "mokagram/music/mokagram_motion.h"
 #include "mokagram/music/mokagram_music_ui.h"
 #include "data/data_user.h"
@@ -2677,6 +2678,8 @@ void StartDebugCommands() {
 			ShowColorBox(u"Мои сообщения: фон"_q, cmd.mid(9));
 		} else if (cmd == u"pluginsbox"_q) {
 			controller->show(Box(Mokagram::Plugins::PluginsBox, controller));
+		} else if (cmd == u"sclogin"_q) {
+			Mokagram::Music::ShowSoundCloudLogin(nullptr);
 		} else if (cmd == u"pluginstore"_q) {
 			controller->show(Box(
 				Mokagram::Plugins::StoreBox,
