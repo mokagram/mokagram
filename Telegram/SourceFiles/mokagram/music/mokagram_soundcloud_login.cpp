@@ -95,23 +95,51 @@ constexpr auto kGrabScript = R"PY(
 import glob, json, os, shutil, signal, sqlite3, subprocess, sys, tempfile, time
 signal.signal(signal.SIGTERM, lambda *a: sys.exit(1))
 home = os.path.expanduser("~")
-BROWSERS = [
-    ("Helium", ".config/net.imput.helium", ["helium", "helium-browser"]),
-    ("Chromium", ".config/chromium", ["/usr/lib/chromium/chromium", "chromium"]),
-    ("Chrome", ".config/google-chrome", ["/opt/google/chrome/chrome", "google-chrome-stable", "google-chrome"]),
-    ("Brave", ".config/BraveSoftware/Brave-Browser", ["brave", "brave-browser"]),
-    ("Vivaldi", ".config/vivaldi", ["/opt/vivaldi/vivaldi-bin", "vivaldi"]),
-    ("Edge", ".config/microsoft-edge", ["microsoft-edge-stable", "microsoft-edge"]),
-]
-def find_binary(names):
-    for n in names:
-        p = n if os.path.isabs(n) else shutil.which(n)
-        if p and os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
+def norm(text):
+    return "".join(ch for ch in text.lower() if ch.isalnum())
+# Любой Chromium-браузер: профили ищем по самим данным (Local State и куки
+# SoundCloud), исполняемый файл берём из .desktop-файлов системы.
+def desktop_binaries():
+    found = {}
+    dirs = [os.path.join(home, ".local/share/applications"), "/usr/share/applications", "/var/lib/flatpak/exports/share/applications"]
+    for d in dirs:
+        for f in glob.glob(os.path.join(d, "*.desktop")):
+            try:
+                for line in open(f, encoding="utf8", errors="ignore"):
+                    if line.startswith("Exec="):
+                        parts = [x for x in line[5:].split() if "=" not in x.split("/")[-1] or x.startswith("/")]
+                        exe = parts[0] if parts else ""
+                        exe = exe if os.path.isabs(exe) else shutil.which(exe)
+                        if exe and os.access(exe, os.X_OK):
+                            found[norm(os.path.basename(exe))] = exe
+                        break
+            except Exception:
+                pass
+    return found
+def find_binary(rootname, binaries):
+    key = norm(rootname)
+    best = None
+    for name, exe in binaries.items():
+        short = name
+        for tail in ("stable", "browser", "bin", "beta", "unstable"):
+            short = short[:-len(tail)] if short.endswith(tail) and len(short) > len(tail) + 2 else short
+        if len(short) >= 4 and (short in key or key in short):
+            if best is None or len(short) > best[0]:
+                best = (len(short), exe)
+    if best:
+        return best[1]
+    return shutil.which(os.path.basename(rootname)) or shutil.which(os.path.basename(rootname).lower())
+binaries = desktop_binaries()
+roots = []
+for pattern in (os.path.join(home, ".config/*"), os.path.join(home, ".config/*/*"), os.path.join(home, ".var/app/*/config/*")):
+    for root in glob.glob(pattern):
+        if os.path.isfile(os.path.join(root, "Local State")):
+            roots.append(root)
 cands = []
-for name, rel, bins in BROWSERS:
-    root = os.path.join(home, rel)
-    binary = find_binary(bins)
+for root in roots:
+    name = os.path.basename(root)
+    rootname = os.path.relpath(root, os.path.join(home, ".config")) if root.startswith(os.path.join(home, ".config")) else name
+    binary = find_binary(rootname, binaries)
     if not binary:
         continue
     for prof in sorted(glob.glob(os.path.join(root, "Default")) + glob.glob(os.path.join(root, "Profile *"))):
@@ -126,7 +154,7 @@ for name, rel, bins in BROWSERS:
             except Exception:
                 continue
             if row and row[0] is not None:
-                cands.append((row[0], name, binary, prof, sub))
+                cands.append((row[0], os.path.basename(binary), binary, prof, sub))
 if not cands:
     sys.exit(2)
 cands.sort(reverse=True)
