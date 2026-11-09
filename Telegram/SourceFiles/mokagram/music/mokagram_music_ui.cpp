@@ -445,6 +445,7 @@ void ChatMusicSearch::searchMore() {
 void PlayIndex(int index);
 void RefillStream();
 void Subscribe();
+void PrefetchUpcoming();
 
 void ResolveThen(const Track &track, Fn<void(Track, QString)> done) {
 	if (!track.transcodingUrl.isEmpty()) {
@@ -487,6 +488,7 @@ void DropUpcoming(Fn<bool(const Track &)> predicate, int from, bool onlyAuto) {
 		}
 	}
 	queue.changes.fire({});
+	PrefetchUpcoming();
 }
 
 void RememberRadioTrack(Radio &radio, const Track &track) {
@@ -581,6 +583,7 @@ void RefillRadio() {
 		}
 		const auto waiting = base::take(queue.waiting);
 		queue.changes.fire({});
+		PrefetchUpcoming();
 		if (waiting && queue.index + 1 < int(queue.tracks.size())) {
 			PlayIndex(queue.index + 1);
 		} else if (waiting || !error.isEmpty()) {
@@ -652,6 +655,7 @@ void CommitRadio(
 	}
 	Subscribe();
 	queue.changes.fire({});
+	PrefetchUpcoming();
 	controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
 		"Радио по треку: ")) + seed.title);
 	if (queue.tracks.size() <= 4 && !radio->exhausted) {
@@ -829,6 +833,7 @@ void RefillStream() {
 			queue.tracks.push_back(std::move(t));
 		}
 		queue.changes.fire({});
+		PrefetchUpcoming();
 		if (queue.waiting) {
 			queue.waiting = false;
 			if (queue.index + 1 < int(queue.tracks.size())) {
@@ -838,6 +843,26 @@ void RefillStream() {
 			}
 		}
 	});
+}
+
+// Три следующих трека готовим заранее: переход на них будет без загрузки.
+// Telegram-треки стримит сам плеер, их не трогаем.
+void PrefetchUpcoming() {
+	const auto &queue = QueueState();
+	for (auto i = queue.index + 1, left = 3
+		; left > 0 && i < int(queue.tracks.size())
+		; ++i) {
+		const auto &track = queue.tracks[i];
+		if (IsTelegramTrack(track) || !track.id.toULongLong()) {
+			continue;
+		}
+		--left;
+		ResolveThen(track, [](Track next, QString error) {
+			if (error.isEmpty()) {
+				Download(next, [](const QString &, const QString &) {});
+			}
+		});
+	}
 }
 
 void Subscribe() {
@@ -906,6 +931,7 @@ void PlayIndex(int index) {
 	queue.index = index;
 	queue.currentId = track.id;
 	queue.changes.fire({});
+	PrefetchUpcoming();
 	if (IsTelegramTrack(track)) {
 		const auto item = TrackMessage(track);
 		const auto document = item && item->media()
@@ -964,15 +990,7 @@ void PlayIndex(int index) {
 				&& int(queue.tracks.size()) - index - 1 <= 3) {
 				RefillStream();
 			}
-			// Следующий трек качаем заранее, чтобы переход был без паузы.
-			if (index + 1 < int(queue.tracks.size())
-				&& !IsTelegramTrack(queue.tracks[index + 1])) {
-				ResolveThen(queue.tracks[index + 1], [](Track next, QString error) {
-					if (error.isEmpty()) {
-						Download(next, [](const QString &, const QString &) {});
-					}
-				});
-			}
+			PrefetchUpcoming();
 		});
 	});
 }
@@ -9798,7 +9816,7 @@ void ShowMusicBoxWith(
 		// Список: сверху строка действий (для подборки) и пояснение, дальше треки.
 		const auto openAlbum = std::make_shared<Fn<void(Album)>>();
 		const auto closeAlbum = std::make_shared<Fn<void()>>();
-		const auto fill = [=] {
+		const Fn<void()> fill = [=] {
 			list->clear();
 			const auto &queue = QueueState();
 			const auto albumsShown = albums->active
