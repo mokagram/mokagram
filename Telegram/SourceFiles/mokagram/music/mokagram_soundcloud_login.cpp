@@ -96,6 +96,7 @@ import glob, json, os, shutil, signal, sqlite3, subprocess, sys, tempfile, time
 signal.signal(signal.SIGTERM, lambda *a: sys.exit(1))
 home = os.path.expanduser("~")
 BROWSERS = [
+    ("Helium", ".config/net.imput.helium", ["helium", "helium-browser"]),
     ("Chromium", ".config/chromium", ["/usr/lib/chromium/chromium", "chromium"]),
     ("Chrome", ".config/google-chrome", ["/opt/google/chrome/chrome", "google-chrome-stable", "google-chrome"]),
     ("Brave", ".config/BraveSoftware/Brave-Browser", ["brave", "brave-browser"]),
