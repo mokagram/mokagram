@@ -52,7 +52,7 @@ constexpr auto kSoundCloudUrl = "https://soundcloud.com/";
 	const auto bare = trimmed.startsWith(u"TOKEN:"_q)
 		? trimmed.mid(6).trimmed()
 		: trimmed;
-	if (TokenPattern().match(bare).hasMatch() && bare.size() <= 256) {
+	if (TokenPattern().match(bare).hasMatch() && bare.size() <= 800) {
 		return bare;
 	}
 	const auto pattern = QRegularExpression(
