@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_wrap_widget.h"
+#include "mokagram/settings/mokagram_settings_box.h"
 #include "base/call_delayed.h"
 
 #include "info/profile/info_profile_widget.h"
@@ -512,6 +513,18 @@ void WrapWidget::setupTopBarMenuToggle() {
 			button->setAccessibleName(tr::lng_dlg_filter(tr::now));
 			button->addClickHandler([=] {
 				_controller->showSettings(::Settings::Search::Id());
+			});
+		} else if (section.settingsType() == ::Settings::MokagramSettingsId()) {
+			// Mokagram: поиск по настройкам клиента слева от крестика.
+			const auto &st = (wrap() == Wrap::Layer)
+				? st::infoLayerTopBarSearch
+				: st::infoTopBarSearch;
+			const auto button = _topBar->addButton(
+				base::make_unique_q<Ui::IconButton>(_topBar, st));
+			button->setAccessibleName(tr::lng_dlg_filter(tr::now));
+			button->addClickHandler([=] {
+				Mokagram::Settings::ShowSettingsSearch(
+					_controller->parentController());
 			});
 		} else if (section.settingsType() == ::Settings::ShortcutsId()) {
 			const auto &st = (wrap() == Wrap::Layer)

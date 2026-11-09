@@ -50,6 +50,9 @@ void ShowCustomizeSearch(
 	Window::SessionController *controller,
 	const QString &query);
 
+// Поиск по всем настройкам mokaGram: результат открывает нужную страницу.
+void ShowSettingsSearch(Window::SessionController *controller);
+
 // Значок плагина из набора iOSTelegram по обычному эмодзи. false: набора пока нет, рисуйте запасной.
 bool PaintPackIcon(
 	QPainter &p,

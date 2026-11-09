@@ -2330,6 +2330,174 @@ void CustomizeBox(
 	}, 1., 0., 380, anim::easeOutCubic);
 }
 
+
+namespace {
+
+// Строка результата поиска по настройкам: название и «Раздел · группа».
+class SettingsSearchRow final : public Ui::AbstractButton {
+public:
+	SettingsSearchRow(QWidget *parent, QString title, QString note)
+	: AbstractButton(parent)
+	, _title(std::move(title))
+	, _note(std::move(note)) {
+		setPointerCursor(true);
+	}
+
+protected:
+	int resizeGetHeight(int newWidth) override {
+		return style::ConvertScale(56);
+	}
+
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		if (isOver()) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(rect().adjusted(s(6), s(2), -s(6), -s(2)), s(16), s(16));
+		}
+		const auto left = s(22);
+		const auto available = width() - left - s(22);
+		auto titleFont = st::semiboldFont->f;
+		titleFont.setPixelSize(s(14));
+		p.setFont(titleFont);
+		p.setPen(st::windowFg);
+		p.drawText(
+			QRect(left, s(8), available, s(20)),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			QFontMetrics(titleFont).elidedText(_title, Qt::ElideRight, available));
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		p.drawText(
+			QRect(left, s(29), available, s(18)),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			QFontMetrics(st::normalFont->f).elidedText(_note, Qt::ElideRight, available));
+	}
+
+private:
+	QString _title;
+	QString _note;
+
+};
+
+} // namespace
+
+void ShowSettingsSearch(Window::SessionController *controller) {
+	if (!controller) {
+		return;
+	}
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		RoundedNoButtons(box);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto content = box->verticalLayout();
+
+		const auto pinned = box->setPinnedToTopContent(
+			object_ptr<Ui::VerticalLayout>(box));
+		const auto header = pinned->add(
+			object_ptr<Ui::RpWidget>(pinned),
+			QMargins(10, 10, 10, 0));
+		header->resize(header->width(), 40);
+		const auto close = MakeRoundButton(
+			header,
+			true,
+			[=] { box->closeBox(); });
+		const auto title = Ui::CreateChild<Ui::FlatLabel>(
+			header,
+			U(Mokagram::Lang::Tr("Поиск настроек")),
+			st::boxTitle);
+		header->widthValue() | rpl::on_next([=](int width) {
+			close->move(0, (header->height() - close->height()) / 2);
+			title->move(
+				(width - title->width()) / 2,
+				(header->height() - title->height()) / 2);
+		}, header->lifetime());
+
+		// Поле в карточке, как в остальных окнах клиента.
+		const auto fieldCard = pinned->add(
+			object_ptr<Ui::VerticalLayout>(pinned),
+			QMargins(s(14), s(10), s(14), s(8)));
+		fieldCard->paintOn([=](QPainter &p) {
+			BoxParts::PaintCard(p, fieldCard->rect());
+		});
+		const auto field = fieldCard->add(
+			object_ptr<Ui::InputField>(
+				fieldCard,
+				BoxParts::CardField(st::defaultInputField),
+				rpl::single(U(Mokagram::Lang::Tr("Название настройки или плагина")))),
+			QMargins());
+
+		const auto results = content->add(
+			object_ptr<Ui::VerticalLayout>(content),
+			QMargins(s(14), 0, s(14), s(14)));
+		const auto rebuild = [=] {
+			results->clear();
+			const auto query = field->getLastText().trimmed().toLower();
+			const auto words = query.split(u' ', Qt::SkipEmptyParts);
+			if (words.isEmpty()) {
+				return;
+			}
+			struct Hit {
+				QString title;
+				QString note;
+				QString page;
+			};
+			auto hits = std::vector<Hit>();
+			for (const auto &group : BuildGroups()) {
+				const auto page = PageOfGroup(group);
+				const auto pageTitle = PageTitle(page);
+				for (const auto &entry : group.entries) {
+					const auto haystack = (entry.title + u' ' + entry.description
+						+ u' ' + group.name + u' ' + pageTitle).toLower();
+					auto all = true;
+					for (const auto &word : words) {
+						all = all && haystack.contains(word);
+					}
+					if (all) {
+						hits.push_back({
+							entry.title,
+							pageTitle + QString::fromUtf8(" · ") + group.name,
+							page });
+					}
+				}
+			}
+			if (hits.empty()) {
+				const auto empty = results->add(
+					object_ptr<Ui::FlatLabel>(
+						results,
+						U(Mokagram::Lang::Tr("Ничего не нашлось.")),
+						st::boxDividerLabel),
+					QMargins(s(16), s(12), s(16), s(12)));
+				Q_UNUSED(empty);
+				return;
+			}
+			const auto card = results->add(object_ptr<Ui::VerticalLayout>(results));
+			card->paintOn([=](QPainter &p) {
+				BoxParts::PaintCard(p, card->rect());
+			});
+			Ui::AddSkip(card, s(4));
+			const auto shown = std::min(int(hits.size()), 30);
+			for (auto i = 0; i != shown; ++i) {
+				const auto hit = hits[i];
+				const auto row = card->add(object_ptr<SettingsSearchRow>(
+					card,
+					hit.title,
+					hit.note));
+				row->setClickedCallback([=] {
+					const auto page = hit.page;
+					const auto name = hit.title;
+					box->closeBox();
+					PendingQuery = name;
+					ShowSettingsPage(controller, page);
+				});
+			}
+			Ui::AddSkip(card, s(4));
+		};
+		field->changes() | rpl::on_next(rebuild, field->lifetime());
+		box->setFocusCallback([=] { field->setFocusFast(); });
+	}));
+}
+
 void ShowCustomizeSearch(
 		Window::SessionController *controller,
 		const QString &query) {

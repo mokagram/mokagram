@@ -21,6 +21,7 @@ class VerticalLayout;
 namespace Settings {
 
 [[nodiscard]] Type MainId();
+[[nodiscard]] Type MokagramSettingsId();
 
 void SetupLanguageButton(
 	not_null<Window::Controller*> window,

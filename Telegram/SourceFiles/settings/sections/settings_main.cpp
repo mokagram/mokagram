@@ -1523,6 +1523,11 @@ Type MainId() {
 	return Main::Id();
 }
 
+// Mokagram: страница «Настройки mokaGram» для кнопки поиска в шапке.
+Type MokagramSettingsId() {
+	return MokagramSettings::Id();
+}
+
 void OpenFaq(base::weak_ptr<Window::SessionController> weak) {
 	UrlClickHandler::Open(
 		tr::lng_settings_faq_link(tr::now),
