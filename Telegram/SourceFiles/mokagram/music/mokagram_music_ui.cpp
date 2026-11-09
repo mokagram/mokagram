@@ -5629,6 +5629,9 @@ public:
 				syncLibrary();
 			}
 		}, lifetime());
+		Account::LikeWriteErrors() | rpl::on_next([=](QString error) {
+			_controller->showToast(error);
+		}, lifetime());
 		_searchField = Ui::CreateChild<QLineEdit>(this);
 		_searchField->setFrame(false);
 		_searchField->installEventFilter(this);

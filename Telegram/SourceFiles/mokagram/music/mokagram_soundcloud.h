@@ -142,6 +142,7 @@ struct Info {
 void Login(const QString &accessToken, Fn<void(QString)> done);
 void Logout();
 [[nodiscard]] rpl::producer<> Changes();
+[[nodiscard]] rpl::producer<QString> LikeWriteErrors();
 
 // Лайки из аккаунта: страница по nextHref (пусто — с начала).
 struct LikesPage {

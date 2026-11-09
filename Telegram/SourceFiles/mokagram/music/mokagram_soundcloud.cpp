@@ -1057,6 +1057,11 @@ rpl::event_stream<> &ChangesStream() {
 	return result;
 }
 
+rpl::event_stream<QString> &LikeWriteErrorsStream() {
+	static auto result = rpl::event_stream<QString>();
+	return result;
+}
+
 QJsonObject &UserObject() {
 	static auto result = []() -> QJsonObject {
 		auto file = QFile(SessionFile());
@@ -1192,6 +1197,10 @@ rpl::producer<> Changes() {
 	return ChangesStream().events();
 }
 
+rpl::producer<QString> LikeWriteErrors() {
+	return LikeWriteErrorsStream().events();
+}
+
 void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done) {
 	if (!IsLoggedIn()) {
 		done({ .error = QString::fromUtf8(Mokagram::Lang::Tr("нет аккаунта SoundCloud")) });
@@ -1250,6 +1259,24 @@ void SetTrackLiked(const QString &trackId, bool liked) {
 	if (!IsLoggedIn() || !ValidTrackId(trackId)) {
 		return;
 	}
+	const auto failure = [=](
+			int status,
+			QNetworkReply::NetworkError networkError,
+			QString networkMessage,
+			QByteArray data) {
+		auto message = QString::fromUtf8(Mokagram::Lang::Tr(
+			"SoundCloud не сохранил лайк"));
+		if (status) {
+			message += u" (HTTP "_q + QString::number(status) + u")"_q;
+		} else if (networkError != QNetworkReply::NoError) {
+			message += u": "_q + networkMessage;
+		}
+		const auto detail = ApiErrorDetail(data);
+		if (!detail.isEmpty()) {
+			message += u". "_q + detail;
+		}
+		LikeWriteErrorsStream().fire(std::move(message));
+	};
 	auto request = QNetworkRequest(QUrl(QString::fromLatin1(kPublicApi)
 		+ u"/likes/tracks/"_q + trackId));
 	request.setRawHeader("User-Agent", kUserAgent);
@@ -1272,16 +1299,25 @@ void SetTrackLiked(const QString &trackId, bool liked) {
 	QObject::connect(reply, &QNetworkReply::finished, reply, [=] {
 		const auto status = reply->attribute(
 			QNetworkRequest::HttpStatusCodeAttribute).toInt();
+		const auto networkError = reply->error();
+		const auto networkMessage = reply->errorString();
+		const auto data = reply->readAll();
 		reply->deleteLater();
-		if (status != 401 && status != 403 && status != 404) {
+		if (status >= 200 && status < 300) {
 			return;
 		}
+		const auto primaryStatus = status;
+		const auto primaryNetworkError = networkError;
+		const auto primaryNetworkMessage = networkMessage;
+		const auto primaryData = data;
 		const auto info = User();
 		if (info.id.isEmpty()) {
+			failure(primaryStatus, primaryNetworkError, primaryNetworkMessage, primaryData);
 			return;
 		}
 		EnsureAnyClientId([=](bool ok) {
 			if (!ok) {
+				failure(primaryStatus, primaryNetworkError, primaryNetworkMessage, primaryData);
 				return;
 			}
 			// api-v2 сайта: users/{id}/track_likes/{track}, PUT ставит лайк.
@@ -1305,7 +1341,24 @@ void SetTrackLiked(const QString &trackId, bool liked) {
 				? Net().put(legacyRequest, QByteArray())
 				: Net().deleteResource(legacyRequest);
 			QObject::connect(legacyReply, &QNetworkReply::finished, legacyReply, [=] {
+				const auto legacyStatus = legacyReply->attribute(
+					QNetworkRequest::HttpStatusCodeAttribute).toInt();
+				const auto legacyError = legacyReply->error();
+				const auto legacyMessage = legacyReply->errorString();
+				const auto legacyData = legacyReply->readAll();
 				legacyReply->deleteLater();
+				if (legacyStatus >= 200 && legacyStatus < 300) {
+					return;
+				}
+				failure(
+					legacyStatus ? legacyStatus : primaryStatus,
+					legacyError != QNetworkReply::NoError
+						? legacyError
+						: primaryNetworkError,
+					legacyError != QNetworkReply::NoError
+						? legacyMessage
+						: primaryNetworkMessage,
+					legacyData.isEmpty() ? primaryData : legacyData);
 			});
 		}, false);
 	});
