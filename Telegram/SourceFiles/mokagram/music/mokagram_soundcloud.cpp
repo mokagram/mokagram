@@ -85,12 +85,16 @@ QString &ClientId() {
 }
 
 [[nodiscard]] bool ValidSessionToken(const QString &token) {
-	// Настоящий oauth_token SoundCloud выглядит как "2-293746-185937845-AbCd".
-	// Заголовок JWT (eyJ...) и прочие строки сюда не проходят: у них нет
-	// ведущей группы цифр через дефис.
-	return QRegularExpression(
-		u"^[0-9][0-9]*-[0-9]+-[0-9]+-[A-Za-z0-9_-]{6,}$"_q).match(token).hasMatch()
-		&& token.size() <= 256;
+	// oauth_token SoundCloud — JWT из трёх частей через точку. Иногда бывает
+	// старый вид "2-293746-185937845-AbCd". Токен уходит в query, поэтому
+	// пускаем только безопасные символы и ограничиваем длину.
+	if (token.isEmpty() || token.size() > 800) {
+		return false;
+	}
+	static const auto pattern = QRegularExpression(
+		u"^([A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+		u"|[0-9][0-9]*-[0-9]+-[0-9]+-[A-Za-z0-9_-]{6,})$"_q);
+	return pattern.match(token).hasMatch();
 }
 
 // Токен входа; живёт в файле рядом с client_id, как и он.
@@ -833,32 +837,52 @@ void Download(
 		done(path, QString());
 		return;
 	}
+	// Один и тот же трек могут просить предзагрузка следующего и предзагрузка
+	// хвоста очереди: качаем файл один раз, остальным отдаём тот же результат.
+	using Waiters = std::vector<Fn<void(const QString &, const QString &)>>;
+	static auto loading = std::map<QString, Waiters>();
+	if (const auto i = loading.find(path); i != loading.end()) {
+		i->second.push_back(std::move(done));
+		return;
+	}
+	loading[path].push_back(std::move(done));
+	const auto finish = [=](const QString &result, const QString &error) {
+		const auto i = loading.find(path);
+		if (i != loading.end()) {
+			// Колбэки могут снова зайти в Download: забираем список заранее.
+			auto waiters = std::move(i->second);
+			loading.erase(i);
+			for (const auto &waiter : waiters) {
+				waiter(result, error);
+			}
+		}
+	};
 	auto q = QUrlQuery();
 	if (!track.authorization.isEmpty()) {
 		q.addQueryItem(u"track_authorization"_q, track.authorization);
 	}
 	// Ссылка на транскодинг пришла из ответа API: проверяем перед загрузкой.
 	if (!SafeMediaUrl(QUrl(track.transcodingUrl))) {
-		done({}, QString::fromUtf8(Mokagram::Lang::Tr("сервер вернул недопустимую ссылку")));
+		finish({}, QString::fromUtf8(Mokagram::Lang::Tr("сервер вернул недопустимую ссылку")));
 		return;
 	}
 	ApiGet(track.transcodingUrl, q, [=](QByteArray data, QString error) {
 		if (!error.isEmpty()) {
-			done({}, error);
+			finish({}, error);
 			return;
 		}
 		const auto url = QJsonDocument::fromJson(data).object()
 			.value("url").toString();
 		if (url.isEmpty()) {
-			done({}, QString::fromUtf8(Mokagram::Lang::Tr("нет ссылки на поток")));
+			finish({}, QString::fromUtf8(Mokagram::Lang::Tr("нет ссылки на поток")));
 			return;
 		}
 		if (!SafeMediaUrl(QUrl(url))) {
-			done({}, QString::fromUtf8(Mokagram::Lang::Tr("сервер вернул недопустимую ссылку")));
+			finish({}, QString::fromUtf8(Mokagram::Lang::Tr("сервер вернул недопустимую ссылку")));
 			return;
 		}
 		if (track.hls) {
-			DownloadHls(url, path, done);
+			DownloadHls(url, path, finish);
 			return;
 		}
 		const auto reply = Get(QUrl(url), kMaxAudioBytes);
@@ -867,10 +891,10 @@ void Download(
 			const auto failed = (reply->error() != QNetworkReply::NoError);
 			reply->deleteLater();
 			if (failed) {
-				done({}, QString::fromUtf8(Mokagram::Lang::Tr("сбой загрузки трека")));
+				finish({}, QString::fromUtf8(Mokagram::Lang::Tr("сбой загрузки трека")));
 				return;
 			}
-			FinishFile(path, bytes, done);
+			FinishFile(path, bytes, finish);
 		});
 	});
 }
