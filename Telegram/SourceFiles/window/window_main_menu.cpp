@@ -543,12 +543,6 @@ private:
 	void layoutChildren(double docksOpen) {
 		const auto skip = style::ConvertScale(4);
 		const auto margin = skip * 3;
-		// Пункты по центру панели, без оглядки на правый край.
-		auto itemsWidth = 0;
-		for (const auto &button : _buttons) {
-			itemsWidth += (button ? button->width() : 0) + skip;
-		}
-		itemsWidth -= skip;
 		if (_account) {
 			_account->move(margin, (height() - _account->height()) / 2);
 		}
@@ -557,15 +551,50 @@ private:
 			burgerLeft -= _burger->width();
 			_burger->move(burgerLeft, (height() - _burger->height()) / 2);
 		}
-		auto x = (width() - itemsWidth) / 2;
-		x = std::min(x, burgerLeft - itemsWidth - skip);
-		x = std::max(x, skip);
+
+		// Пункты живут строго между аватаркой и бургером. Не влезают: сначала
+		// сжимаем кнопки до квадратов поменьше, потом прячем лишние с конца.
+		const auto full = style::ConvertScale(44);
+		const auto least = style::ConvertScale(30);
+		const auto from = (_account ? _account->x() + _account->width() : margin) + skip;
+		const auto to = burgerLeft - skip;
+		const auto span = std::max(to - from, 0);
+		auto total = 0;
+		for (const auto &button : _buttons) {
+			if (button) {
+				++total;
+			}
+		}
+		auto size = full;
+		auto gap = skip;
+		auto capacity = total;
+		if (total > 0 && total * full + (total - 1) * skip > span) {
+			size = std::max((span - (total - 1) * skip) / total, least);
+			if (total * size + (total - 1) * skip > span) {
+				gap = 0;
+				size = least;
+				capacity = std::max(span / size, 0);
+			}
+		}
+		const auto shown = std::min(total, capacity);
+		const auto itemsWidth = shown * size + std::max(shown - 1, 0) * gap;
+		auto x = std::clamp(
+			(width() - itemsWidth) / 2,
+			from,
+			std::max(to - itemsWidth, from));
+		auto index = 0;
 		for (const auto &button : _buttons) {
 			if (!button) {
 				continue;
 			}
-			button->move(x, (height() - button->height()) / 2);
-			x += button->width() + skip;
+			const auto visible = (index++ < shown);
+			button->setVisible(visible);
+			if (!visible) {
+				continue;
+			}
+			button->resize(size, size);
+			button->move(x, (height() - size) / 2);
+			x += size + gap;
 		}
 		// Четыре кнопки закрепления выезжают влево из бургера.
 		auto offset = 0;
