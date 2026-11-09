@@ -3,6 +3,7 @@
 // of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
 // mokagram-id: 7b8dec14
 #include "mokagram/music/mokagram_music_ui.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "ui/widgets/rp_window.h"
 #include "ui/boxes/confirm_box.h"
@@ -1547,13 +1548,36 @@ public:
 		// высоту и кнопка не ловила бы клики.
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
+		_refreshButton = Ui::CreateChild<Ui::RoundButton>(
+			this,
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Обновить интеграцию"))),
+			Mokagram::BoxParts::PillLight());
+		_disconnectButton = Ui::CreateChild<Ui::RoundButton>(
+			this,
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отключить"))),
+			Mokagram::BoxParts::PillLight());
+		_disconnectButton->setClickedCallback(_logout);
+		_refreshButton->setClickedCallback([=] {
+			if (_syncing || !Mokagram::Music::Account::IsLoggedIn()) {
+				return;
+			}
+			_syncing = true;
+			_syncNote = QString::fromUtf8(Mokagram::Lang::Tr("Обновляем…"));
+			_refreshButton->setDisabled(true);
+			refresh();
+			Mokagram::Music::Account::SyncLikes(crl::guard(this,
+				[=](int, int, QString error) {
+					_syncing = false;
+					_syncNote = std::move(error);
+					_refreshButton->setDisabled(false);
+					refresh();
+				}));
+		});
 		refresh();
-		setMouseTracking(true);
 		setClickedCallback([=] {
 			if (!Mokagram::Music::Account::IsLoggedIn()) {
 				_login();
-			} else if (_pill.contains(mapFromGlobal(QCursor::pos()))) {
-				_logout();
+
 			}
 		});
 		Mokagram::Music::Account::Changes() | rpl::on_next([=] {
@@ -1566,7 +1590,13 @@ public:
 
 protected:
 	int resizeGetHeight(int newWidth) override {
-		return style::ConvertScale(72);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto buttonWidth = (newWidth - s(36)) / 2;
+		_refreshButton->setFullWidth(buttonWidth);
+		_disconnectButton->setFullWidth(buttonWidth);
+		_refreshButton->move(s(14), s(68));
+		_disconnectButton->move(newWidth - s(14) - buttonWidth, s(68));
+		return s(_logged ? 122 : 72);
 	}
 
 	void paintEvent(QPaintEvent *e) override {
@@ -1584,7 +1614,7 @@ protected:
 		}
 		const auto badge = QRect(
 			s(14),
-			(height() - s(44)) / 2,
+			s(14),
 			s(44),
 			s(44));
 		if (_avatar.isNull()) {
@@ -1614,30 +1644,7 @@ protected:
 		p.setFont(titleFont);
 		p.setPen(st::windowFg);
 		const auto textLeft = badge.right() + s(14);
-		_pill = QRect();
-		auto textRight = width() - s(16);
-		if (_logged) {
-			// «Отключить» пилюлей справа: отключает только она, не вся плашка.
-			const auto label = QString::fromUtf8(
-				Mokagram::Lang::Tr("Отключить"));
-			const auto metrics = QFontMetrics(st::normalFont->f);
-			const auto pillWidth = metrics.horizontalAdvance(label) + s(28);
-			_pill = QRect(
-				width() - s(14) - pillWidth,
-				(height() - s(34)) / 2,
-				pillWidth,
-				s(34));
-			const auto over = _pillOver;
-			p.setPen(Qt::NoPen);
-			p.setBrush(over ? st::windowBgRipple->c : st::windowBgOver->c);
-			p.drawRoundedRect(_pill, s(17), s(17));
-			p.setFont(st::normalFont);
-			p.setPen(over ? st::windowFg : st::windowSubTextFg);
-			p.drawText(_pill, Qt::AlignCenter, label);
-			textRight = _pill.left() - s(12);
-			p.setFont(titleFont);
-			p.setPen(st::windowFg);
-		}
+		const auto textRight = width() - s(16);
 		p.drawText(
 			QRect(textLeft, s(15), textRight - textLeft, s(20)),
 			Qt::AlignVCenter | Qt::AlignLeft,
@@ -1654,23 +1661,6 @@ protected:
 				_note,
 				Qt::ElideRight,
 				textRight - textLeft));
-	}
-
-	void mouseMoveEvent(QMouseEvent *e) override {
-		Ui::AbstractButton::mouseMoveEvent(e);
-		const auto over = _pill.contains(e->pos());
-		if (_pillOver != over) {
-			_pillOver = over;
-			update();
-		}
-	}
-
-	void leaveEventHook(QEvent *e) override {
-		Ui::AbstractButton::leaveEventHook(e);
-		if (_pillOver) {
-			_pillOver = false;
-			update();
-		}
 	}
 
 private:
@@ -1702,16 +1692,24 @@ private:
 			_avatarUrl = QString();
 			_avatar = QImage();
 		}
+		if (!_syncNote.isEmpty() && _logged) {
+			_note = _syncNote;
+		}
+		_refreshButton->setVisible(_logged);
+		_disconnectButton->setVisible(_logged);
+		resizeToWidth(width());
 		update();
 	}
 
+	Ui::RoundButton *_refreshButton = nullptr;
+	Ui::RoundButton *_disconnectButton = nullptr;
+	QString _syncNote;
+	bool _syncing = false;
 	Fn<void()> _login;
 	Fn<void()> _logout;
 	QString _note;
-	QRect _pill;
 	QImage _avatar;
 	QString _avatarUrl;
-	bool _pillOver = false;
 	bool _logged = false;
 
 };
