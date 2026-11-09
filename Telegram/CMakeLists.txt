@@ -142,6 +142,8 @@ PRIVATE
     mokagram/music/mokagram_music_ui.h
     mokagram/music/mokagram_soundcloud.cpp
     mokagram/music/mokagram_soundcloud.h
+    mokagram/music/mokagram_soundcloud_login.cpp
+    mokagram/music/mokagram_soundcloud_login.h
     mokagram/plugins/mokagram_plugin_api.cpp
     mokagram/plugins/mokagram_plugin_api.h
     mokagram/plugins/mokagram_plugin_install.cpp
