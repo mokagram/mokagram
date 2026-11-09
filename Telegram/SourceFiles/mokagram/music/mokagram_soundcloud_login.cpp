@@ -16,14 +16,18 @@
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
+#include "ui/wrap/slide_wrap.h"
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "main/main_session.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 
-#include <QtCore/QRegularExpression>
 #include <QtCore/QPointer>
+#include <QtCore/QProcess>
+#include <QtCore/QRegularExpression>
+#include <QtCore/QStandardPaths>
+#include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtGui/QClipboard>
 #include <QtGui/QDesktopServices>
@@ -38,7 +42,7 @@ constexpr auto kSoundCloudUrl = "https://soundcloud.com/";
 	return QString::fromUtf8(Mokagram::Lang::Tr(text));
 }
 
-// oauth_token SoundCloud — JWT: три части через точку, каждая из base64url.
+// oauth_token SoundCloud: JWT, три части через точку, каждая из base64url.
 // Иногда встречается и старый вид "2-293746-185937845-AbCd".
 [[nodiscard]] QRegularExpression TokenPattern() {
 	return QRegularExpression(
@@ -47,7 +51,7 @@ constexpr auto kSoundCloudUrl = "https://soundcloud.com/";
 }
 
 // Токен приходит из консоли на странице SoundCloud: сам токен, JSON
-// {"oauth_token":"..."} или строка "TOKEN: ..."; редко — в base64.
+// {"oauth_token":"..."} или строка "TOKEN: ..."; редко в base64.
 [[nodiscard]] QString TokenFromText(const QString &text) {
 	const auto trimmed = text.trimmed();
 	const auto bare = trimmed.startsWith(u"TOKEN:"_q)
@@ -71,6 +75,121 @@ constexpr auto kSoundCloudUrl = "https://soundcloud.com/";
 	}
 	return QString();
 }
+
+#ifdef Q_OS_LINUX
+// Достаёт oauth_token SoundCloud из куков браузера на Chromium: копирует
+// базу куков во временный профиль и просит headless-браузер отдать их через
+// DevTools по каналу (без портов). Расшифровывает куки сам браузер.
+// Вывод: строка "BROWSER <имя>", затем "TOKEN <jwt>". Код 2: входа нет.
+constexpr auto kGrabScript = R"PY(
+import glob, json, os, shutil, signal, sqlite3, subprocess, sys, tempfile, time
+signal.signal(signal.SIGTERM, lambda *a: sys.exit(1))
+home = os.path.expanduser("~")
+BROWSERS = [
+    ("Chromium", ".config/chromium", ["/usr/lib/chromium/chromium", "chromium"]),
+    ("Chrome", ".config/google-chrome", ["/opt/google/chrome/chrome", "google-chrome-stable", "google-chrome"]),
+    ("Brave", ".config/BraveSoftware/Brave-Browser", ["brave", "brave-browser"]),
+    ("Vivaldi", ".config/vivaldi", ["/opt/vivaldi/vivaldi-bin", "vivaldi"]),
+    ("Edge", ".config/microsoft-edge", ["microsoft-edge-stable", "microsoft-edge"]),
+]
+def find_binary(names):
+    for n in names:
+        p = n if os.path.isabs(n) else shutil.which(n)
+        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+cands = []
+for name, rel, bins in BROWSERS:
+    root = os.path.join(home, rel)
+    binary = find_binary(bins)
+    if not binary:
+        continue
+    for prof in sorted(glob.glob(os.path.join(root, "Default")) + glob.glob(os.path.join(root, "Profile *"))):
+        for sub in ("Network/Cookies", "Cookies"):
+            db = os.path.join(prof, sub)
+            if not os.path.isfile(db):
+                continue
+            try:
+                c = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
+                row = c.execute("select max(expires_utc) from cookies where host_key like '%soundcloud.com' and name in ('oauth_token','oauth_refresh_token')").fetchone()
+                c.close()
+            except Exception:
+                continue
+            if row and row[0] is not None:
+                cands.append((row[0], name, binary, prof, sub))
+if not cands:
+    sys.exit(2)
+cands.sort(reverse=True)
+_, name, binary, prof, sub = cands[0]
+tmp = tempfile.mkdtemp(prefix="moka-sc-")
+proc = None
+try:
+    dst = os.path.join(tmp, "Default", sub)
+    os.makedirs(os.path.dirname(dst))
+    a = sqlite3.connect("file:" + os.path.join(prof, sub) + "?mode=ro", uri=True)
+    b = sqlite3.connect(dst)
+    a.backup(b); b.close(); a.close()
+    ls = os.path.join(os.path.dirname(prof), "Local State")
+    if os.path.isfile(ls):
+        shutil.copy(ls, os.path.join(tmp, "Local State"))
+    r_in, w_in = os.pipe()
+    r_out, w_out = os.pipe()
+    def prep():
+        os.dup2(r_in, 3); os.dup2(w_out, 4)
+    proc = subprocess.Popen(
+        [binary, "--headless=new", "--user-data-dir=" + tmp, "--remote-debugging-pipe",
+         "--no-first-run", "--no-default-browser-check", "--disable-gpu",
+         "--disable-extensions", "--password-store=gnome-libsecret", "about:blank"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        preexec_fn=prep, pass_fds=(3, 4))
+    os.close(r_in); os.close(w_out)
+    rd = os.fdopen(r_out, "rb", buffering=0)
+    wr = os.fdopen(w_in, "wb", buffering=0)
+    state = {"buf": b"", "id": 0}
+    def call(method, params=None):
+        state["id"] += 1
+        wr.write(json.dumps({"id": state["id"], "method": method, "params": params or {}}).encode() + b"\0")
+        end = time.time() + 15
+        while time.time() < end:
+            while b"\0" in state["buf"]:
+                raw, state["buf"] = state["buf"].split(b"\0", 1)
+                msg = json.loads(raw)
+                if msg.get("id") == state["id"]:
+                    return msg
+            chunk = rd.read(65536)
+            if not chunk:
+                return None
+            state["buf"] += chunk
+    def token():
+        res = call("Storage.getCookies") or {}
+        for c in res.get("result", {}).get("cookies", []):
+            if c["name"] == "oauth_token" and c["domain"].endswith("soundcloud.com") and c["value"].count(".") == 2:
+                return c["value"]
+    tok = token()
+    if not tok:
+        call("Target.createTarget", {"url": "https://soundcloud.com/"})
+        for _ in range(10):
+            time.sleep(1)
+            tok = token()
+            if tok:
+                break
+    if not tok:
+        sys.exit(2)
+    print("BROWSER " + name)
+    print("TOKEN " + tok)
+except SystemExit:
+    raise
+except Exception:
+    sys.exit(3)
+finally:
+    if proc:
+        proc.terminate()
+        try:
+            proc.wait(5)
+        except Exception:
+            proc.kill()
+    shutil.rmtree(tmp, ignore_errors=True)
+)PY";
+#endif // Q_OS_LINUX
 
 } // namespace
 
@@ -103,107 +222,46 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		box->setWidth(st::boxWideWidth);
 
 		const auto content = box->verticalLayout();
-		content->add(
+		const auto side = st::boxRowPadding.left();
+		const auto status = content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				Tr("1. Откройте SoundCloud в браузере и войдите в аккаунт."),
+				Tr("Вход возьмётся из вашего браузера: достаточно один раз войти на soundcloud.com. Вводить ничего не нужно."),
 				st::boxLabel),
-			style::margins(st::boxRowPadding.left(), 0, st::boxRowPadding.right(), st::boxLittleSkip));
-		const auto openButton = box->addRow(
-			object_ptr<Ui::RoundButton>(
-				content,
-				rpl::single(Tr("Открыть SoundCloud в браузере")),
-				st::defaultLightButton),
-			style::margins(st::boxRowPadding.left(), 0, st::boxRowPadding.right(), st::boxLittleSkip));
-		openButton->setClickedCallback([] {
-			if (!OpenSoundCloudInBrowser()) {
-				Ui::Toast::Show(Tr("Не удалось открыть браузер."));
-			}
-		});
+			style::margins(side, 0, side, st::boxLittleSkip));
 
-		content->add(
+		// Ручной ввод спрятан: нужен, только если автоматика не сработала.
+		const auto manualLink = content->add(
+			object_ptr<Ui::LinkButton>(
+				content,
+				Tr("Токен вручную"),
+				st::defaultLinkButton),
+			style::margins(side, 0, side, st::boxLittleSkip));
+		const auto manual = content->add(
+			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+				content,
+				object_ptr<Ui::VerticalLayout>(content)));
+		manual->toggle(false, anim::type::instant);
+		const auto inner = manual->entity();
+		inner->add(
 			object_ptr<Ui::FlatLabel>(
-				content,
-				Tr("2. Скопируйте короткий скрипт и вставьте его в консоль SoundCloud. Он найдёт токен автоматически."),
+				inner,
+				Tr("Токен лежит в cookie oauth_token на soundcloud.com."),
 				st::boxLabel),
-			style::margins(st::boxRowPadding.left(), st::boxLittleSkip, st::boxRowPadding.right(), st::boxLittleSkip));
-
-		// Код для консоли браузера: печатает токен отдельной строкой.
-		// copy() в DevTools кладёт в буфер не всегда, поэтому нужен вывод.
-		const auto snippet = QString::fromUtf8(
-			R"JS((()=>{
-// Токен лежит в заголовке авторизации и в URL запросов к api-v2.
-// Ищем и там, и там; формат — JWT из трёх частей через точку.
-const JWT=/([A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/;
-const out=new Set();
-const add=(v)=>{if(!v)return;const m=String(v).match(JWT);if(m)out.add(m[1])};
-const done=()=>{if(!out.size)return false;const v=[...out].sort((a,b)=>b.length-a.length)[0];
-  console.log('TOKEN:',v);try{copy(v)}catch(e){}return true};
-const scanText=(t)=>{
-  if(!t)return;
-  const s=String(t);
-  const u=s.match(/oauth_token=([A-Za-z0-9_.%-]+)/);
-  if(u)add(decodeURIComponent(u[1]));
-  const j=s.match(/"(?:oauth_token|access_token)"\s*:\s*"([A-Za-z0-9_.-]{20,4096})"/);
-  if(j)add(j[1]);
-};
-// Заголовок Authorization у запросов.
-const of=window.fetch;
-window.fetch=function(...a){
-  try{const h=(a[1]&&a[1].headers)||(a[0]&&a[0].headers);
-    if(h&&h.get)add(h.get('Authorization')||h.get('authorization'));}catch(e){}
-  return of.apply(this,a).then(r=>{
-    try{r.clone().text().then(t=>{scanText(t);done()}).catch(()=>{})}catch(e){}
-    return r;
-  });
-};
-const oo=XMLHttpRequest.prototype.open;
-const os=XMLHttpRequest.prototype.send;
-XMLHttpRequest.prototype.open=function(m,u){this.__mu=u;return oo.apply(this,arguments)};
-XMLHttpRequest.prototype.send=function(){
-  this.addEventListener('load',()=>{try{scanText(this.responseText);done()}catch(e){}});
-  try{scanText(String(this.__mu))}catch(e){}
-  return os.apply(this,arguments);
-};
-try{scanText(document.cookie)}catch(e){}
-done();
-console.log('Перехват включён. Обновите страницу (F5) и дождитесь TOKEN: в консоли.');
-setTimeout(()=>{if(!done())console.log('TOKEN пока не найден: обновите страницу (F5) и прокрутите ленту.')},2000);
-})())JS");
-		const auto copySnippet = box->addRow(
-			object_ptr<Ui::RoundButton>(
-				content,
-				rpl::single(Tr("Скопировать код")),
-				st::defaultLightButton),
-			style::margins(st::boxRowPadding.left(), 0, st::boxRowPadding.right(), st::boxLittleSkip));
-		copySnippet->setClickedCallback([=] {
-			QGuiApplication::clipboard()->setText(snippet);
-			Ui::Toast::Show(Tr("Код скопирован."));
-		});
-
-		content->add(
-			object_ptr<Ui::FlatLabel>(
-				content,
-				Tr("3. Скопируйте строку после TOKEN: и вставьте её здесь."),
-				st::boxLabel),
-			style::margins(st::boxRowPadding.left(), st::boxLittleSkip, st::boxRowPadding.right(), st::boxLittleSkip));
-		const auto field = box->addRow(
+			style::margins(side, st::boxLittleSkip, side, st::boxLittleSkip));
+		const auto field = inner->add(
 			object_ptr<Ui::InputField>(
-				box,
+				inner,
 				st::defaultInputField,
 				rpl::single(Tr("Токен SoundCloud")),
 				TokenFromText(QGuiApplication::clipboard()->text())),
 			st::boxRowPadding);
-		const auto pasteButton = box->addRow(
+		const auto pasteButton = inner->add(
 			object_ptr<Ui::RoundButton>(
-				content,
+				inner,
 				rpl::single(Tr("Вставить из буфера")),
 				st::defaultLightButton),
-			style::margins(
-				st::boxRowPadding.left(),
-				0,
-				st::boxRowPadding.right(),
-				st::boxLittleSkip));
+			style::margins(side, st::boxLittleSkip, side, st::boxLittleSkip));
 		pasteButton->setClickedCallback([=] {
 			const auto fromClipboard = TokenFromText(
 				QGuiApplication::clipboard()->text());
@@ -214,37 +272,115 @@ setTimeout(()=>{if(!done())console.log('TOKEN пока не найден: обн
 			field->setText(fromClipboard);
 			field->setFocusFast();
 		});
-		box->setFocusCallback([=] { field->setFocusFast(); });
 
-		const auto submit = [=] {
-			const auto token = TokenFromText(field->getLastText());
-			if (token.isEmpty()) {
-				field->showError();
-				return;
+		manualLink->setClickedCallback([=] {
+			manual->toggle(!manual->toggled(), anim::type::normal);
+			if (manual->toggled()) {
+				field->setFocusFast();
 			}
-			const auto guardedBox = QPointer<Ui::GenericBox>(box);
+		});
+
+		const auto busy = std::make_shared<bool>(false);
+		const auto guarded = QPointer<Ui::GenericBox>(box);
+		const auto setStatus = [=](const QString &text) {
+			status->setText(text);
+		};
+		const auto login = [=](const QString &token) {
+			*busy = true;
+			setStatus(Tr("Проверяю вход…"));
 			Account::Login(token, [=](QString error) {
-				if (!guardedBox) {
+				*busy = false;
+				if (!guarded) {
 					return;
 				}
 				if (!error.isEmpty()) {
-					Ui::Toast::Show(error);
+					setStatus(error);
 					return;
 				}
-				guardedBox->closeBox();
+				guarded->closeBox();
 				finish(true);
 			});
 		};
-		field->submits() | rpl::on_next(submit, field->lifetime());
-		box->addButton(rpl::single(Tr("Подключить")), submit);
-		box->addButton(rpl::single(Tr("Отмена")), [=] { box->closeBox(); });
 
+#ifdef Q_OS_LINUX
+		const auto python = QStandardPaths::findExecutable(u"python3"_q);
+		const auto autoLogin = [=] {
+			*busy = true;
+			setStatus(Tr("Ищу вход в браузере…"));
+			const auto process = new QProcess(guarded.data());
+			process->setProgram(python);
+			process->setArguments({ u"-I"_q, u"-c"_q, QString::fromLatin1(kGrabScript) });
+			const auto timeout = new QTimer(process);
+			timeout->setSingleShot(true);
+			timeout->callOnTimeout([=] { process->terminate(); });
+			timeout->start(40 * 1000);
+			QObject::connect(process, &QProcess::finished, process, [=](int code) {
+				const auto output = QString::fromUtf8(
+					process->readAllStandardOutput());
+				process->deleteLater();
+				if (!guarded) {
+					return;
+				}
+				auto token = QString();
+				auto browser = QString();
+				for (const auto &line : output.split(u'\n')) {
+					if (line.startsWith(u"TOKEN "_q)) {
+						token = TokenFromText(line.mid(6));
+					} else if (line.startsWith(u"BROWSER "_q)) {
+						browser = line.mid(8).trimmed();
+					}
+				}
+				if (!token.isEmpty()) {
+					setStatus(Tr("Вход найден в %1.").arg(browser));
+					login(token);
+					return;
+				}
+				*busy = false;
+				if (code == 2) {
+					setStatus(Tr("В браузере нет входа в SoundCloud. Войдите на soundcloud.com и нажмите ещё раз."));
+					OpenSoundCloudInBrowser();
+				} else {
+					setStatus(Tr("Не получилось запустить браузер. Токен можно ввести вручную."));
+					manual->toggle(true, anim::type::normal);
+				}
+			});
+			process->start();
+		};
+#endif // Q_OS_LINUX
+
+		const auto submit = [=] {
+			if (*busy) {
+				return;
+			}
+			if (manual->toggled()) {
+				const auto token = TokenFromText(field->getLastText());
+				if (!token.isEmpty()) {
+					login(token);
+					return;
+				} else if (!field->getLastText().trimmed().isEmpty()) {
+					field->showError();
+					return;
+				}
+			}
+#ifdef Q_OS_LINUX
+			if (!python.isEmpty()) {
+				autoLogin();
+				return;
+			}
+			setStatus(Tr("Нужен python3. Токен можно ввести вручную."));
+#else // Q_OS_LINUX
+			setStatus(Tr("Автовход пока только на Linux. Введите токен вручную."));
+#endif // Q_OS_LINUX
+			manual->toggle(true, anim::type::normal);
+		};
+		field->submits() | rpl::on_next(submit, field->lifetime());
+		box->setFocusCallback([=] { field->setFocusFast(); });
+
+		box->addButton(rpl::single(Tr("Войти через браузер")), submit);
+		box->addButton(rpl::single(Tr("Отмена")), [=] { box->closeBox(); });
 		box->boxClosing() | rpl::on_next([=] {
 			crl::on_main([=] { finish(false); });
 		}, box->lifetime());
-
-		// Браузер сразу: человеку не нужно искать, где открыть.
-		OpenSoundCloudInBrowser();
 	}));
 }
 

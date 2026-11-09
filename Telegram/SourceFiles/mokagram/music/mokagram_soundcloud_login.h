@@ -3,13 +3,14 @@
 // of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
 // mokagram-id: 3e91a4c7
 // Mokagram: вход в SoundCloud через обычный браузер.
-// Встроенный вебвью в клиенте не работает, поэтому открываем soundcloud.com
-// во внешнем браузере, а токен человек приносит оттуда одной кнопкой.
+// Встроенный вебвью в клиенте не работает. На Linux токен забирается из куков
+// Chromium-браузера через headless-копию профиля, вручную его вводят
+// только если автоматика не сработала.
 #pragma once
 
 namespace Mokagram::Music {
 
-// Открывает браузер на SoundCloud и показывает окно вставки токена.
+// Показывает окно входа: автовход через браузер и ручной ввод токена.
 // onLoggedIn зовётся в главном потоке после успешного входа.
 void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed = nullptr);
 
