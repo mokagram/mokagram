@@ -51,6 +51,9 @@ namespace MotionProtocol {
 } // namespace MotionProtocol
 
 void RegisterMotionSettings();
+
+// Раздел «SoundCloud» в настройках: статус аккаунта, вход и отключение.
+void RegisterSoundCloudSettings();
 [[nodiscard]] rpl::producer<> MotionChanges();
 [[nodiscard]] Fn<void()> FetchMotion(
 	const QString &key,

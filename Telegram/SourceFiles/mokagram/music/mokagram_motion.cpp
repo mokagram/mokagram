@@ -2,6 +2,9 @@
 
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_soundcloud_login.h"
+#include "mokagram/music/mokagram_music_library.h"
 #include "rpl/event_stream.h"
 #include "ui/toast/toast.h"
 
@@ -581,6 +584,57 @@ private:
 namespace {
 rpl::lifetime AudioFilterLifetime;
 } // namespace
+
+namespace {
+
+// Подпись строки «SoundCloud» в настройках: статус входа и счётчик лайков.
+[[nodiscard]] QString SoundCloudStatus() {
+	const auto info = Account::User();
+	if (!Account::IsLoggedIn()) {
+		return QString::fromUtf8(Lang::Tr("Подключить"));
+	}
+	const auto count = int(LikedTracks().size());
+	return (info.username.isEmpty()
+		? QString::fromUtf8(Lang::Tr("Подключено"))
+		: (u"@"_q + info.username))
+		+ (count > 0
+			? u", "_q + QString::fromUtf8(
+				Lang::Tr("лайков: %1")).arg(count)
+			: QString());
+}
+
+} // namespace
+
+void SoundCloudSettingsRow() {
+	ShowSoundCloudLogin([] {
+		Settings::SetString(u"music.soundcloud_login"_q, SoundCloudStatus());
+		Ui::Toast::Show(QString::fromUtf8(Lang::Tr("SoundCloud подключён.")));
+	});
+}
+
+void RegisterSoundCloudSettings() {
+	// Строки рисует страница «Музыка» сама, поэтому в общем списке они скрыты.
+	Settings::Register({ .key = u"music.soundcloud_login"_q,
+		.title = QString::fromUtf8(Lang::Tr("Аккаунт SoundCloud")),
+		.description = QString::fromUtf8(Lang::Tr("Лайки из SoundCloud появляются в «Лайкнутых» и в рекомендациях, а лайки в mokaGram уходят в аккаунт. Вход открывается в отдельном окне браузера.")),
+		.kind = Settings::Kind::String,
+		.hidden = true,
+		.action = SoundCloudSettingsRow });
+	Settings::SetString(u"music.soundcloud_login"_q, SoundCloudStatus());
+	Settings::Register({ .key = u"music.soundcloud_logout"_q,
+		.title = QString::fromUtf8(Lang::Tr("Отключить SoundCloud")),
+		.description = QString::fromUtf8(Lang::Tr("Лайки, пришедшие из аккаунта, убираются из списка. Сами лайки в SoundCloud остаются.")),
+		.kind = Settings::Kind::String, .defaultValue = QString(),
+		.hidden = true,
+		.action = [] {
+			if (!Account::IsLoggedIn()) {
+				return;
+			}
+			Account::Logout();
+			Settings::SetString(u"music.soundcloud_login"_q, SoundCloudStatus());
+			Ui::Toast::Show(QString::fromUtf8(Lang::Tr("SoundCloud отключён.")));
+		} });
+}
 
 void RegisterMotionSettings() {
 	const auto add = [](Settings::Entry entry) {
