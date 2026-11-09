@@ -1691,10 +1691,6 @@ void CustomizeBox(
 
 	// Аккаунт SoundCloud живёт на странице «Музыка»: строка-кнопка входа и
 	// отключение. Статус строки обновляется вместе с аккаунтом.
-	const auto soundCloud = std::make_shared<Ui::SlideWrap<Ui::VerticalLayout>>(
-		content,
-		object_ptr<Ui::VerticalLayout>(content),
-		QMargins(kOuterSide, 0, kOuterSide, 0));
 	if (page == u"music"_q) {
 		Mokagram::Music::RegisterSoundCloudSettings();
 		auto entries = std::vector<Entry>();
@@ -1703,7 +1699,9 @@ void CustomizeBox(
 				entries.push_back(entry);
 			}
 		}
-		const auto inner = soundCloud->entity();
+		const auto inner = content->add(
+			object_ptr<Ui::VerticalLayout>(content),
+			QMargins(kOuterSide, 0, kOuterSide, 0));
 		const auto head = inner->add(
 			object_ptr<Ui::FlatLabel>(
 				inner,
@@ -1755,9 +1753,6 @@ void CustomizeBox(
 					? value
 					: U(Mokagram::Lang::Tr("Подключить")));
 		}, box->lifetime());
-		soundCloud->toggle(true, anim::type::instant);
-	} else {
-		soundCloud->toggle(false, anim::type::instant);
 	}
 
 	// Закреплённая шапка: закрыть, название, поиск и ниже чипы разделов.
