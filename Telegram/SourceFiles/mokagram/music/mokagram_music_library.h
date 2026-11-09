@@ -17,6 +17,10 @@ namespace Mokagram::Music {
 [[nodiscard]] bool IsLiked(const QString &trackId);
 void SetLiked(const Track &track, bool liked);
 [[nodiscard]] std::vector<Track> LikedTracks();
+// Лайки, пришедшие из аккаунта SoundCloud: их не отправляем обратно, а
+// снятый в аккаунте лайк убирается и локально. Возвращает число новых треков.
+[[nodiscard]] int MergeRemoteLikes(const std::vector<Track> &remote);
+void ClearRemoteLikes();
 [[nodiscard]] rpl::producer<> LikesChanged();
 
 struct Playlist {
@@ -58,6 +62,8 @@ void RecordListen(const Track &track, int listenedMs, bool finished);
 // Явная обратная связь из плеера. «Больше такого» усиливает вкус сильнее лайка,
 // блокировка автора навсегда убирает его из подборок и потока.
 void BoostTrack(const Track &track);
+// Поднять событие лайков наружу (после синхронизации с аккаунтом).
+void NotifyLikesChanged();
 void BlockArtist(const Track &track);
 void UnblockArtist(const QString &artistId);
 [[nodiscard]] bool IsArtistBlocked(const Track &track);

@@ -42,6 +42,7 @@ constexpr double kHalfLifeDays = 60.;
 struct Liked {
 	Track track;
 	qint64 at = 0;
+	bool remote = false; // пришёл из подключённого аккаунта SoundCloud
 };
 
 struct Listen {
@@ -69,6 +70,7 @@ struct Shown {
 
 struct Library {
 	std::vector<Liked> liked;      // новые сверху
+	std::vector<QString> remoteLikes; // всё, что сейчас лайкнуто в аккаунте SoundCloud
 	std::vector<Listen> history;   // старые сверху
 	std::vector<Liked> boosted;    // «больше такого», новые сверху
 	std::vector<Blocked> blocked;  // авторы, которых не предлагать
@@ -138,6 +140,9 @@ void Save() {
 	for (const auto &item : lib.liked) {
 		auto o = ToJson(item.track);
 		o.insert("at", double(item.at));
+		if (item.remote) {
+			o.insert("rem", true);
+		}
 		liked.push_back(o);
 	}
 	auto history = QJsonArray();
@@ -177,6 +182,8 @@ void Save() {
 	}
 	auto root = QJsonObject();
 	root.insert("liked", liked);
+	root.insert("remoteLikes", QJsonArray::fromStringList(
+		QStringList(lib.remoteLikes.begin(), lib.remoteLikes.end())));
 	root.insert("history", history);
 	root.insert("boosted", boosted);
 	root.insert("blocked", blocked);
@@ -258,11 +265,20 @@ Library &Lib() {
 					library.recent.push_back(std::move(item));
 				}
 			}
+			for (const auto &v : root.value("remoteLikes").toArray()) {
+				const auto id = v.toString();
+				if (!id.isEmpty()) {
+					library.remoteLikes.push_back(id);
+				}
+			}
 			for (const auto &v : root.value("liked").toArray()) {
 				const auto o = v.toObject();
 				auto track = FromJson(o);
 				if (track.id.isEmpty()) continue;
-				library.liked.push_back({ std::move(track), qint64(o.value("at").toDouble()) });
+				library.liked.push_back({
+					std::move(track),
+					qint64(o.value("at").toDouble()),
+					o.value("rem").toBool() });
 			}
 			for (const auto &v : root.value("history").toArray()) {
 				const auto o = v.toObject();
@@ -1350,15 +1366,32 @@ void SetLiked(const Track &track, bool liked) {
 	const auto i = std::find_if(lib.liked.begin(), lib.liked.end(), [&](const Liked &l) {
 		return l.track.id == track.id;
 	});
+	// Лайк из аккаунта снимаем и в аккаунте, но только если он ещё считается
+	// лайкнутым там: так повторная синхронизация не вернёт его обратно.
+	const auto inAccount = (std::find(
+		lib.remoteLikes.begin(),
+		lib.remoteLikes.end(),
+		track.id) != lib.remoteLikes.end());
 	if (liked && i == lib.liked.end()) {
 		auto copy = track;
 		copy.transcodingUrl.clear();
 		copy.authorization.clear();
-		lib.liked.insert(lib.liked.begin(), { std::move(copy), QDateTime::currentSecsSinceEpoch() });
+		const auto remote = inAccount;
+		lib.liked.insert(lib.liked.begin(), {
+			std::move(copy),
+			QDateTime::currentSecsSinceEpoch(),
+			remote });
 	} else if (!liked && i != lib.liked.end()) {
 		lib.liked.erase(i);
+		if (inAccount) {
+			std::erase(lib.remoteLikes, track.id);
+		}
 	} else {
 		return;
+	}
+	if (Music::Account::IsLoggedIn() && !IsTelegramId(track.id)) {
+		// Постановка лайка в аккаунт идёт фоном: сердечко отвечает мгновенно.
+		Music::Account::SetTrackLiked(track.id, liked);
 	}
 	Save();
 	lib.likesChanged.fire({});
@@ -1374,6 +1407,74 @@ std::vector<Track> LikedTracks() {
 
 rpl::producer<> LikesChanged() {
 	return Lib().likesChanged.events();
+}
+
+void NotifyLikesChanged() {
+	auto &lib = Lib();
+	lib.likesChanged.fire({});
+}
+
+int MergeRemoteLikes(const std::vector<Track> &remote) {
+	auto &lib = Lib();
+	auto remoteIds = std::vector<QString>();
+	remoteIds.reserve(remote.size());
+	for (const auto &track : remote) {
+		if (!track.id.isEmpty()) {
+			remoteIds.push_back(track.id);
+		}
+	}
+	// Всё, что сейчас лайкнуто в аккаунте, помним для снятия лайков.
+	lib.remoteLikes = remoteIds;
+	auto imported = 0;
+	for (const auto &track : remote) {
+		if (track.id.isEmpty() || IsTelegramId(track.id)) {
+			continue;
+		}
+		const auto i = std::find_if(lib.liked.begin(), lib.liked.end(), [&](const Liked &l) {
+			return l.track.id == track.id;
+		});
+		if (i == lib.liked.end()) {
+			auto copy = track;
+			copy.transcodingUrl.clear();
+			copy.authorization.clear();
+			lib.liked.insert(lib.liked.begin(), {
+				std::move(copy),
+				QDateTime::currentSecsSinceEpoch(),
+				true });
+			++imported;
+		} else if (!i->remote) {
+			// Свежие метаданные из аккаунта, позиция в списке остаётся.
+			auto fresh = *i;
+			fresh.track = track;
+			fresh.track.transcodingUrl.clear();
+			fresh.track.authorization.clear();
+			fresh.remote = true;
+			*i = std::move(fresh);
+		}
+	}
+	if (imported) {
+		lib.likesChanged.fire({});
+	}
+	Save();
+	return imported;
+}
+
+void ClearRemoteLikes() {
+	auto &lib = Lib();
+	auto removed = false;
+	for (auto i = lib.liked.begin(); i != lib.liked.end();) {
+		if (i->remote) {
+			i = lib.liked.erase(i);
+			removed = true;
+		} else {
+			++i;
+		}
+	}
+	lib.remoteLikes.clear();
+	if (removed) {
+		lib.likesChanged.fire({});
+	}
+	Save();
 }
 
 std::vector<Playlist> Playlists() {
@@ -1571,7 +1672,25 @@ bool HasTaste() {
 void BuildForYou(
 		int count,
 		Fn<void(std::vector<Track>, QString)> done) {
-	BuildImpl({}, count, false, std::move(done));
+	if (!Music::Account::IsLoggedIn()) {
+		BuildImpl({}, count, false, std::move(done));
+		return;
+	}
+	// Лайки аккаунта — главный сигнал вкуса: подтягиваем их до сборки подборки,
+	// а уже собранную отдаём, даже если синхронизация не удалась.
+	auto once = std::make_shared<bool>(false);
+	const auto finish = [once, done = std::move(done)](
+			std::vector<Track> tracks,
+			QString note) {
+		if (*once) {
+			return;
+		}
+		*once = true;
+		done(std::move(tracks), std::move(note));
+	};
+	Account::SyncLikes([once, count, finish = Fn<void(std::vector<Track>, QString)>(finish)](int, int, QString) {
+		BuildImpl({}, count, false, finish);
+	});
 }
 
 void BuildStream(
