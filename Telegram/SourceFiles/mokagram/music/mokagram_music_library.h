@@ -19,7 +19,11 @@ void SetLiked(const Track &track, bool liked);
 [[nodiscard]] std::vector<Track> LikedTracks();
 // Лайки, пришедшие из аккаунта SoundCloud: их не отправляем обратно, а
 // снятый в аккаунте лайк убирается и локально. Возвращает число новых треков.
-[[nodiscard]] int MergeRemoteLikes(const std::vector<Track> &remote);
+// complete = false, если список аккаунта загружен не до конца: тогда локальные
+// лайки не удаляем, чтобы не потерять то, что просто не попало в ответ.
+[[nodiscard]] int MergeRemoteLikes(
+	const std::vector<Track> &remote,
+	bool complete = true);
 void ClearRemoteLikes();
 [[nodiscard]] rpl::producer<> LikesChanged();
 

@@ -1374,10 +1374,11 @@ void SetLiked(const Track &track, bool liked) {
 	});
 	// Лайк из аккаунта снимаем и в аккаунте, но только если он ещё считается
 	// лайкнутым там: так повторная синхронизация не вернёт его обратно.
-	const auto inAccount = (std::find(
-		lib.remoteLikes.begin(),
-		lib.remoteLikes.end(),
-		track.id) != lib.remoteLikes.end());
+	const auto inAccount = (i != lib.liked.end() && i->remote)
+		|| (std::find(
+			lib.remoteLikes.begin(),
+			lib.remoteLikes.end(),
+			track.id) != lib.remoteLikes.end());
 	if (liked && i == lib.liked.end()) {
 		auto copy = track;
 		copy.transcodingUrl.clear();
@@ -1420,7 +1421,7 @@ void NotifyLikesChanged() {
 	lib.likesChanged.fire({});
 }
 
-int MergeRemoteLikes(const std::vector<Track> &remote) {
+int MergeRemoteLikes(const std::vector<Track> &remote, bool complete) {
 	auto &lib = Lib();
 	auto remoteIds = std::vector<QString>();
 	remoteIds.reserve(remote.size());
@@ -1429,8 +1430,11 @@ int MergeRemoteLikes(const std::vector<Track> &remote) {
 			remoteIds.push_back(track.id);
 		}
 	}
-	// Всё, что сейчас лайкнуто в аккаунте, помним для снятия лайков.
-	lib.remoteLikes = remoteIds;
+	// До последней страницы список аккаунта неполный: сохраняем предыдущий индекс.
+	if (complete) {
+		lib.remoteLikes = remoteIds;
+	}
+	auto remoteSet = std::set<QString>(remoteIds.begin(), remoteIds.end());
 	auto imported = 0;
 	for (const auto &track : remote) {
 		if (track.id.isEmpty() || IsTelegramId(track.id)) {
@@ -1458,7 +1462,19 @@ int MergeRemoteLikes(const std::vector<Track> &remote) {
 			*i = std::move(fresh);
 		}
 	}
-	if (imported) {
+	// Лайк сняли в аккаунте — убираем его и из локального списка.
+	auto removed = 0;
+	if (complete) {
+		for (auto i = lib.liked.begin(); i != lib.liked.end();) {
+			if (i->remote && !remoteSet.contains(i->track.id)) {
+				i = lib.liked.erase(i);
+				++removed;
+			} else {
+				++i;
+			}
+		}
+	}
+	if (imported || removed) {
 		lib.likesChanged.fire({});
 	}
 	Save();

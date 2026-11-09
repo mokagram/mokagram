@@ -6488,6 +6488,9 @@ protected:
 	}
 	void setTab(Tab tab) {
 		if (_tab == tab) {
+			if (tab == Tab::Library) {
+				syncLibrary();
+			}
 			return;
 		}
 		_homeEntrance.stop();
@@ -6533,7 +6536,7 @@ protected:
 		if (!Account::IsLoggedIn()
 			|| _librarySyncLoading
 			|| (_librarySyncSucceeded
-				&& crl::now() - _librarySyncSucceeded < 60 * 1000)) {
+				&& crl::now() - _librarySyncSucceeded < 15 * 1000)) {
 			return;
 		}
 		_librarySyncLoading = true;

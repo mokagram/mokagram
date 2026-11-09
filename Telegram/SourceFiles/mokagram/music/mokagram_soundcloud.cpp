@@ -1133,6 +1133,7 @@ struct SyncState {
 	std::vector<QString> pushed;
 	QString next;
 	int pages = 0;
+	int imported = 0;
 	QString error;
 	Fn<void(int, int, QString)> done;
 };
@@ -1316,6 +1317,9 @@ void SyncLikes(Fn<void(int remote, int pushed, QString error)> done) {
 				state->error = page.error;
 				state->next.clear();
 			} else {
+				state->imported += ::Mokagram::Music::MergeRemoteLikes(
+					page.tracks,
+					false);
 				for (auto &track : page.tracks) {
 					state->remote.push_back(std::move(track));
 				}
@@ -1339,11 +1343,16 @@ void SyncLikes(Fn<void(int remote, int pushed, QString error)> done) {
 				}
 				return;
 			}
-			const auto imported = ::Mokagram::Music::MergeRemoteLikes(remoteTracks);
+			const auto complete = state->next.isEmpty();
+			const auto imported = state->imported
+				+ ::Mokagram::Music::MergeRemoteLikes(remoteTracks, complete);
 			NotifyLikesChanged();
 			// 2) Локальные лайки, которых нет в аккаунте, — в аккаунт.
 			auto pushed = 0;
 			for (const auto &track : LikedTracks()) {
+				if (!complete) {
+					break;
+				}
 				if (pushed >= kMaxPushedLikes) {
 					break;
 				}
