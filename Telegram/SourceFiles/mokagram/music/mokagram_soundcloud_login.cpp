@@ -37,11 +37,12 @@ constexpr auto kSoundCloudUrl = "https://soundcloud.com/";
 	return QString::fromUtf8(Mokagram::Lang::Tr(text));
 }
 
-// Настоящий oauth_token SoundCloud: "2-293746-185937845-AbCd".
-// Заголовок JWT и прочие строки не подходят: у них нет ведущей группы цифр.
+// oauth_token SoundCloud — JWT: три части через точку, каждая из base64url.
+// Иногда встречается и старый вид "2-293746-185937845-AbCd".
 [[nodiscard]] QRegularExpression TokenPattern() {
 	return QRegularExpression(
-		u"^[0-9][0-9]*-[0-9]+-[0-9]+-[A-Za-z0-9_-]{6,}$"_q);
+		u"^([A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+		u"|[0-9][0-9]*-[0-9]+-[0-9]+-[A-Za-z0-9_-]{6,})$"_q);
 }
 
 // Токен приходит из консоли на странице SoundCloud: сам токен, JSON
@@ -55,7 +56,8 @@ constexpr auto kSoundCloudUrl = "https://soundcloud.com/";
 		return bare;
 	}
 	const auto pattern = QRegularExpression(
-		u"\"(?:oauth_token|access_token)\"\\s*:\\s*\"([0-9][A-Za-z0-9_-]{14,80})\""_q);
+		u"\"(?:oauth_token|access_token)\"\\s*:\\s*\""
+		u"([A-Za-z0-9_.-]{20,800})\""_q);
 	if (const auto found = pattern.match(trimmed); found.hasMatch()) {
 		return found.captured(1);
 	}
@@ -121,7 +123,7 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				Tr("2. На странице SoundCloud нажмите F12 для консоли, вставьте код ниже и нажмите Enter. Потом обновите страницу (F5): токен появится в консоли строкой TOKEN: 2-..."),
+				Tr("2. Скопируйте короткий скрипт и вставьте его в консоль SoundCloud. Он найдёт токен автоматически."),
 				st::boxLabel),
 			style::margins(st::boxRowPadding.left(), st::boxLittleSkip, st::boxRowPadding.right(), st::boxLittleSkip));
 
@@ -129,37 +131,44 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		// copy() в DevTools кладёт в буфер не всегда, поэтому нужен вывод.
 		const auto snippet = QString::fromUtf8(
 			R"JS((()=>{
-// Перехват сети: SoundCloud присылает токен в ответах api-v2.soundcloud.com.
-const M=/"(?:oauth_token|access_token)"\s*:\s*"([0-9][A-Za-z0-9_-]{14,80})"/;
-const done=(v)=>{console.log('TOKEN:',v);try{copy(v)}catch(e){}};
-const scan=(t)=>{if(!t)return false;const m=String(t).match(M);if(m){done(m[1]);return true}return false};
+// Токен лежит в заголовке авторизации и в URL запросов к api-v2.
+// Ищем и там, и там; формат — JWT из трёх частей через точку.
+const JWT=/([A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/;
+const out=new Set();
+const add=(v)=>{if(!v)return;const m=String(v).match(JWT);if(m)out.add(m[1])};
+const done=()=>{if(!out.size)return false;const v=[...out].sort((a,b)=>b.length-a.length)[0];
+  console.log('TOKEN:',v);try{copy(v)}catch(e){}return true};
+const scanText=(t)=>{
+  if(!t)return;
+  const s=String(t);
+  const u=s.match(/oauth_token=([A-Za-z0-9_.%-]+)/);
+  if(u)add(decodeURIComponent(u[1]));
+  const j=s.match(/"(?:oauth_token|access_token)"\s*:\s*"([A-Za-z0-9_.-]{20,800})"/);
+  if(j)add(j[1]);
+};
+// Заголовок Authorization у запросов.
 const of=window.fetch;
-window.fetch=function(...a){return of.apply(this,a).then(r=>{
-  try{r.clone().text().then(t=>scan(t)).catch(()=>{})}catch(e){}
-  return r;
-})};
+window.fetch=function(...a){
+  try{const h=(a[1]&&a[1].headers)||(a[0]&&a[0].headers);
+    if(h&&h.get)add(h.get('Authorization')||h.get('authorization'));}catch(e){}
+  return of.apply(this,a).then(r=>{
+    try{r.clone().text().then(t=>{scanText(t);done()}).catch(()=>{})}catch(e){}
+    return r;
+  });
+};
 const oo=XMLHttpRequest.prototype.open;
 const os=XMLHttpRequest.prototype.send;
 XMLHttpRequest.prototype.open=function(m,u){this.__mu=u;return oo.apply(this,arguments)};
 XMLHttpRequest.prototype.send=function(){
-  this.addEventListener('load',()=>{try{scan(this.responseText)}catch(e){}})  ;
-  try{scan(String(this.__mu))}catch(e){}
+  this.addEventListener('load',()=>{try{scanText(this.responseText);done()}catch(e){}});
+  try{scanText(String(this.__mu))}catch(e){}
   return os.apply(this,arguments);
 };
-// Уже загруженные данные: обходим кэш страницы заново.
-const url=new URL(location.href);url.search='';url.hash='';
-console.log('Перехват включён. Сейчас страница сама запросит данные SoundCloud.');
-setTimeout(()=>{
-  if(!scan(document.cookie)){console.log('Ждём запрос к api-v2.soundcloud.com: обновите страницу (F5), и токен появится выше.')}
-},1500);
+try{scanText(document.cookie)}catch(e){}
+done();
+console.log('Перехват включён. Обновите страницу (F5) и дождитесь TOKEN: в консоли.');
+setTimeout(()=>{if(!done())console.log('TOKEN пока не найден: обновите страницу (F5) и прокрутите ленту.')},2000);
 })())JS");
-		const auto snippetLabel = content->add(
-			object_ptr<Ui::FlatLabel>(
-				content,
-				snippet,
-				st::boxLabel),
-			style::margins(st::boxRowPadding.left(), 0, st::boxRowPadding.right(), st::boxLittleSkip));
-		snippetLabel->setSelectable(true);
 		const auto copySnippet = box->addRow(
 			object_ptr<Ui::RoundButton>(
 				content,
