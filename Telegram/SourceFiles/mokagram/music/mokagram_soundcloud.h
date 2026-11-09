@@ -125,4 +125,45 @@ void SetCover(uint64 documentId, QImage image);
 // Папка кэша скачанных треков.
 [[nodiscard]] QString CacheDir();
 
+namespace Account {
+
+// Аккаунт SoundCloud. Вход идёт в браузере через обычный OAuth сайта: после входа
+// токен остаётся в файле на диске (как client_id), чтобы лайки синхронизировались
+// при запуске. В запросах он заменяет client_id.
+struct Info {
+	QString id;
+	QString username;
+	QString avatarUrl;
+};
+
+[[nodiscard]] bool IsLoggedIn();
+[[nodiscard]] Info User();
+
+void Login(const QString &accessToken);
+void Logout();
+[[nodiscard]] rpl::producer<> Changes();
+
+// Лайки из аккаунта: страница по nextHref (пусто — с начала).
+struct LikesPage {
+	std::vector<Track> tracks;
+	QString next;
+	QString error;
+};
+
+void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done);
+
+// Двусторонняя синхронизация: новые лайки из аккаунта в локальные, локальные
+// лайки не из аккаунта отправляются туда же. Дальше поднимает LikesChanged.
+void SyncLikes(Fn<void(int remote, int pushed, QString error)> done = nullptr);
+
+// Ставит лайк в аккаунте при входе. Для локального лайка это фоновая операция.
+void SetTrackLiked(const QString &trackId, bool liked);
+
+// Локальные лайки, пришедшие из подключённого аккаунта: их не отправляем обратно,
+// а снятый в аккаунте лайк убирается и локально. Возвращает число новых треков.
+[[nodiscard]] int MergeRemoteLikes(const std::vector<Track> &remote);
+void ClearRemoteLikes();
+
+} // namespace Account
+
 } // namespace Mokagram::Music

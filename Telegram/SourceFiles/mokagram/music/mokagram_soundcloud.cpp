@@ -5,6 +5,7 @@
 #include "mokagram/music/mokagram_soundcloud.h"
 
 #include "mokagram/lang/mokagram_lang.h"
+#include "mokagram/music/mokagram_music_library.h"
 
 #include "core/application.h"
 #include "rpl/event_stream.h"
@@ -25,6 +26,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 
 namespace Mokagram::Music {
 namespace {
@@ -36,6 +38,8 @@ constexpr auto kMaxAudioBytes = 200 * 1024 * 1024; // предел на разм
 constexpr auto kMaxImageBytes = 32 * 1024 * 1024;  // предел на размер обложки
 constexpr auto kMaxHlsSegments = 512;              // предел числа сегментов HLS
 constexpr auto kUserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0";
+constexpr auto kMaxLikesPages = 50;   // предел страниц лайков при синхронизации
+constexpr auto kMaxPushedLikes = 200; // за один проход отправляем не больше
 
 QNetworkAccessManager &Net() {
 	static auto manager = new QNetworkAccessManager();
@@ -74,6 +78,45 @@ QString &ClientId() {
 			: QString();
 	}();
 	return id;
+}
+
+[[nodiscard]] QString SessionFile() {
+	return CacheDir() + u"/session.json"_q;
+}
+
+[[nodiscard]] bool ValidSessionToken(const QString &token) {
+	// oauth_token уходит в query: пускаем только символы, безопасные внутри URL.
+	return QRegularExpression(u"^[A-Za-z0-9_-]{16,256}$"_q).match(token).hasMatch();
+}
+
+// Токен входа; живёт в файле рядом с client_id, как и он.
+QString &AccountToken() {
+	static auto token = [] {
+		auto file = QFile(SessionFile());
+		if (!file.open(QIODevice::ReadOnly)) {
+			return QString();
+		}
+		const auto object = QJsonDocument::fromJson(file.readAll()).object();
+		const auto result = object.value("token").toString();
+		return ValidSessionToken(result) ? result : QString();
+	}();
+	return token;
+}
+
+void SaveSessionFile(const QString &token, const QJsonObject &user) {
+	QDir().mkpath(CacheDir());
+	auto file = QFile(SessionFile());
+	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+		return;
+	}
+	file.write(QJsonDocument(QJsonObject{
+		{ "token", token },
+		{ "user", user },
+	}).toJson(QJsonDocument::Compact));
+}
+
+void RemoveSessionFile() {
+	QFile::remove(SessionFile());
 }
 
 QNetworkReply *Get(const QUrl &url, qint64 limit = 0) {
@@ -163,19 +206,33 @@ void EnsureClientId(Fn<void(bool)> done, bool force = false) {
 	});
 }
 
+// client_id со страницы сайта нужен, только когда аккаунт не подключён.
+void EnsureAnyClientId(Fn<void(bool)> done, bool force) {
+	if (!AccountToken().isEmpty()) {
+		done(true);
+		return;
+	}
+	EnsureClientId(done, force);
+}
+
 // GET с автоматическим обновлением client_id при 401/403 (один повтор).
+// Если аккаунт подключён, вместо client_id уходит его oauth-токен.
 void ApiGet(
 		const QString &base,
 		QUrlQuery query,
 		Fn<void(QByteArray, QString)> done,
 		bool retried = false) {
-	EnsureClientId([=](bool ok) {
+	EnsureAnyClientId([=](bool ok) {
 		if (!ok) {
 			done({}, QString::fromUtf8(Mokagram::Lang::Tr("не удалось получить client_id SoundCloud")));
 			return;
 		}
 		auto copy = query;
-		copy.addQueryItem(u"client_id"_q, ClientId());
+		if (AccountToken().isEmpty()) {
+			copy.addQueryItem(u"client_id"_q, ClientId());
+		} else {
+			copy.addQueryItem(u"oauth_token"_q, AccountToken());
+		}
 		auto url = QUrl(base);
 		url.setQuery(copy);
 		const auto reply = Get(url);
@@ -186,7 +243,7 @@ void ApiGet(
 			const auto error = reply->error();
 			reply->deleteLater();
 			if ((status == 401 || status == 403) && !retried) {
-				EnsureClientId([=](bool refreshed) {
+				EnsureAnyClientId([=](bool refreshed) {
 					if (!refreshed) {
 						done({}, QString::fromUtf8(Mokagram::Lang::Tr("client_id SoundCloud устарел")));
 						return;
@@ -815,5 +872,240 @@ void Download(
 		});
 	});
 }
+
+namespace Account {
+namespace {
+
+rpl::event_stream<> &ChangesStream() {
+	static auto result = rpl::event_stream<>();
+	return result;
+}
+
+QJsonObject &UserObject() {
+	static auto result = []() -> QJsonObject {
+		auto file = QFile(SessionFile());
+		if (!file.open(QIODevice::ReadOnly)) {
+			return {};
+		}
+		return QJsonDocument::fromJson(file.readAll()).object()
+			.value("user").toObject();
+	}();
+	return result;
+}
+
+[[nodiscard]] Info ParseUser(const QJsonObject &object) {
+	if (object.isEmpty()) {
+		return {};
+	}
+	auto result = Info();
+	result.id = QString::number(object.value("id").toVariant().toLongLong());
+	result.username = object.value("username").toString();
+	result.avatarUrl = object.value("avatar_url").toString();
+	if (result.avatarUrl.isEmpty()) {
+		result.avatarUrl = object.value("permalink_url").toString();
+	}
+	return result;
+}
+
+void FetchUser(Fn<void(bool)> done) {
+	ApiGet(
+		QString::fromLatin1(kApi) + u"/me"_q,
+		QUrlQuery(),
+		[=](QByteArray data, QString error) {
+			if (!error.isEmpty() || data.isEmpty()) {
+				done(false);
+				return;
+			}
+			UserObject() = QJsonDocument::fromJson(data).object();
+			SaveSessionFile(AccountToken(), UserObject());
+			ChangesStream().fire({});
+			done(true);
+		});
+}
+
+[[nodiscard]] bool ValidApiUrl(const QString &url) {
+	const auto parsed = QUrl(url);
+	return parsed.isValid()
+		&& parsed.scheme() == u"https"_q
+		&& parsed.host() == u"api-v2.soundcloud.com"_q;
+}
+
+[[nodiscard]] QString LikesUrl(const QString &userId, const QString &next) {
+	if (!next.isEmpty()) {
+		return ValidApiUrl(next) ? next : QString();
+	}
+	return ValidApiUrl(QString::fromLatin1(kApi))
+		? QString::fromLatin1(kApi) + u"/users/"_q + userId + u"/likes"_q
+		: QString();
+}
+
+struct SyncState {
+	std::vector<Track> remote;
+	std::vector<QString> pushed;
+	QString next;
+	int pages = 0;
+	QString error;
+	Fn<void(int, int, QString)> done;
+};
+
+} // namespace
+
+bool IsLoggedIn() {
+	return !AccountToken().isEmpty();
+}
+
+Info User() {
+	return ParseUser(UserObject());
+}
+
+void Login(const QString &accessToken) {
+	const auto token = accessToken.trimmed();
+	if (!ValidSessionToken(token)) {
+		return;
+	}
+	if (AccountToken() != token) {
+		AccountToken() = token;
+		UserObject() = QJsonObject();
+	}
+	SaveSessionFile(AccountToken(), UserObject());
+	ChangesStream().fire({});
+	FetchUser([](bool) {});
+	if (AccountToken().isEmpty()) {
+		return;
+	}
+	// Сразу подтягиваем лайки, чтобы лента не ждала следующего запуска.
+	SyncLikes(nullptr);
+}
+
+void Logout() {
+	AccountToken().clear();
+	UserObject() = QJsonObject();
+	RemoveSessionFile();
+	ChangesStream().fire({});
+	::Mokagram::Music::ClearRemoteLikes();
+}
+
+rpl::producer<> Changes() {
+	return ChangesStream().events();
+}
+
+void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done) {
+	const auto info = User();
+	if (!IsLoggedIn() || info.id.isEmpty()) {
+		done({ .error = QString::fromUtf8(Mokagram::Lang::Tr("нет аккаунта SoundCloud")) });
+		return;
+	}
+	const auto url = LikesUrl(info.id, nextHref);
+	if (url.isEmpty()) {
+		done({ .error = QString::fromUtf8(Mokagram::Lang::Tr("некорректная ссылка SoundCloud")) });
+		return;
+	}
+	ApiGet(url, QUrlQuery(), [=](QByteArray data, QString error) {
+		auto result = LikesPage();
+		if (!error.isEmpty()) {
+			result.error = error;
+			done(std::move(result));
+			return;
+		}
+		const auto root = QJsonDocument::fromJson(data).object();
+		for (const auto &value : root.value("collection").toArray()) {
+			// Лайк бывает и треком, и плейлистом: берём только треки.
+			auto track = ParseTrack(value.toObject());
+			if (!track.id.isEmpty() && !track.title.isEmpty()) {
+				result.tracks.push_back(std::move(track));
+			}
+		}
+		const auto next = root.value("next_href").toString();
+		result.next = ValidApiUrl(next) ? next : QString();
+		done(std::move(result));
+	});
+}
+
+void SetTrackLiked(const QString &trackId, bool liked) {
+	if (!IsLoggedIn() || !ValidTrackId(trackId)) {
+		return;
+	}
+	const auto info = User();
+	if (info.id.isEmpty()) {
+		return;
+	}
+	const auto url = QString::fromLatin1(kApi)
+		+ u"/users/"_q + info.id + u"/track-likes/"_q + trackId;
+	auto request = QNetworkRequest(QUrl(url));
+	request.setRawHeader("User-Agent", kUserAgent);
+	request.setTransferTimeout(20000);
+	// PUT / DELETE /users/{id}/track-likes/{track}: id ставит лайк, удаляет его.
+	const auto reply = liked
+		? Net().put(request, QByteArray())
+		: Net().deleteResource(request);
+	QObject::connect(reply, &QNetworkReply::finished, reply, [=] {
+		reply->deleteLater();
+	});
+}
+
+void SyncLikes(Fn<void(int remote, int pushed, QString error)> done) {
+	auto state = std::make_shared<SyncState>();
+	state->done = std::move(done);
+	if (!IsLoggedIn()) {
+		if (state->done) {
+			state->done(0, 0, QString());
+		}
+		return;
+	}
+	const auto load = std::make_shared<Fn<void()>>();
+	*load = [=] {
+		// Лимит страниц: применяем собранное, не ждём бесконечности.
+		++state->pages;
+		LoadLikes(state->next, [=](LikesPage page) {
+			if (!page.error.isEmpty()) {
+				state->error = page.error;
+				state->next.clear();
+			} else {
+				for (auto &track : page.tracks) {
+					state->remote.push_back(std::move(track));
+				}
+				state->next = page.next;
+			}
+			if (!state->next.isEmpty() && state->pages < kMaxLikesPages) {
+				(*load)();
+				return;
+			}
+			// 1) Лайки из аккаунта — в локальные.
+			auto remoteIds = std::set<QString>();
+			auto remoteTracks = std::vector<Track>();
+			for (const auto &track : state->remote) {
+				if (remoteIds.insert(track.id).second) {
+					remoteTracks.push_back(track);
+				}
+			}
+			if (!state->error.isEmpty()) {
+				if (state->done) {
+					state->done(0, 0, state->error);
+				}
+				return;
+			}
+			const auto imported = ::Mokagram::Music::MergeRemoteLikes(remoteTracks);
+			NotifyLikesChanged();
+			// 2) Локальные лайки, которых нет в аккаунте, — в аккаунт.
+			auto pushed = 0;
+			for (const auto &track : LikedTracks()) {
+				if (pushed >= kMaxPushedLikes) {
+					break;
+				}
+				if (track.id.isEmpty() || remoteIds.contains(track.id)) {
+					continue;
+				}
+				SetTrackLiked(track.id, true);
+				++pushed;
+			}
+			if (state->done) {
+				state->done(imported, pushed, QString());
+			}
+		});
+	};
+	(*load)();
+}
+
+} // namespace Account
 
 } // namespace Mokagram::Music
