@@ -37,15 +37,25 @@ constexpr auto kSoundCloudUrl = "https://soundcloud.com/";
 	return QString::fromUtf8(Mokagram::Lang::Tr(text));
 }
 
-// Токен прилетает в clipboard из консоли на странице SoundCloud:
-// JSON {"oauth_token":"..."} или сам токен, иногда в base64.
+// Настоящий oauth_token SoundCloud: "2-293746-185937845-AbCd".
+// Заголовок JWT и прочие строки не подходят: у них нет ведущей группы цифр.
+[[nodiscard]] QRegularExpression TokenPattern() {
+	return QRegularExpression(
+		u"^[0-9][0-9]*-[0-9]+-[0-9]+-[A-Za-z0-9_-]{6,}$"_q);
+}
+
+// Токен приходит из консоли на странице SoundCloud: сам токен, JSON
+// {"oauth_token":"..."} или строка "TOKEN: ..."; редко — в base64.
 [[nodiscard]] QString TokenFromText(const QString &text) {
 	const auto trimmed = text.trimmed();
-	if (QRegularExpression(u"^[A-Za-z0-9_-]{16,256}$"_q).match(trimmed).hasMatch()) {
-		return trimmed;
+	const auto bare = trimmed.startsWith(u"TOKEN:"_q)
+		? trimmed.mid(6).trimmed()
+		: trimmed;
+	if (TokenPattern().match(bare).hasMatch() && bare.size() <= 256) {
+		return bare;
 	}
 	const auto pattern = QRegularExpression(
-		u"\"oauth_token\"\\s*:\\s*\"([A-Za-z0-9_-]{16,256})\""_q);
+		u"\"(?:oauth_token|access_token)\"\\s*:\\s*\"([0-9][A-Za-z0-9_-]{14,80})\""_q);
 	if (const auto found = pattern.match(trimmed); found.hasMatch()) {
 		return found.captured(1);
 	}
@@ -119,7 +129,7 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		// copy() в DevTools кладёт в буфер не всегда, поэтому нужен вывод.
 		const auto snippet = QString::fromUtf8(
 			R"JS((()=>{
-const M=/oauth_token["'\s\\]{0,6}[:=]["'\s\\]{0,6}([A-Za-z0-9_-]{16,256})/;
+const M=/"(?:oauth_token|access_token)"\s*:\s*"([0-9][A-Za-z0-9_-]{14,80})"/;
 const out=new Set();
 const add=(t)=>{if(!t)return;const m=String(t).match(M);if(m)out.add(m[1]);};
 try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);add(k);add(localStorage.getItem(k))}}catch(e){}
@@ -133,16 +143,15 @@ dbs.then(list=>Promise.all(list.map(db=>new Promise(r=>{
     const d=q.result;const names=[...d.objectStoreNames];
     if(!names.length)return r();
     const tx=d.transaction(names,'readonly');
-    const jobs=names.map(n=>new Promise(r2=>{
+    Promise.all(names.map(n=>new Promise(r2=>{
       try{const all=tx.objectStore(n).getAll();all.onerror=()=>r2();
         all.onsuccess=()=>{try{add(JSON.stringify(all.result))}catch(e){}r2()}}catch(e){r2()}
-    }));
-    Promise.all(jobs).then(()=>{d.close();r()});
+    }))).then(()=>{d.close();r()});
   };
 })))).then(()=>{
-  const v=[...out][0];
+  const v=[...out].sort((a,b)=>b.length-a.length)[0];
   if(v){console.log('TOKEN:',v);try{copy(v)}catch(e){}}
-  else{console.log('TOKEN NOT FOUND. Проверьте, что вы вошли в SoundCloud.')}
+  else{console.log('TOKEN NOT FOUND: откройте soundcloud.com, войдите и повторите на этой вкладке')}
 });
 })())JS");
 		const auto snippetLabel = content->add(
