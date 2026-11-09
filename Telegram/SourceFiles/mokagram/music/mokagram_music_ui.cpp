@@ -771,8 +771,8 @@ void StartRadio(
 		if (const auto controller = QueueState().controller.get()) {
 			controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr(
 				result.error.isEmpty()
-					? "Не найден подходящий трек для радио."
-					: "Не удалось загрузить радио. Попробуйте ещё раз.")));
+					? Mokagram::Lang::Tr("Не найден подходящий трек для радио.")
+					: Mokagram::Lang::Tr("Не удалось загрузить радио. Попробуйте ещё раз."))));
 		}
 	});
 }
@@ -2893,7 +2893,9 @@ public:
 		setPointerCursor(true);
 		setFocusPolicy(Qt::NoFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr(
-			forward ? "Вперёд" : "Назад")));
+			forward
+				? Mokagram::Lang::Tr("Вперёд")
+				: Mokagram::Lang::Tr("Назад"))));
 		setClickedCallback(std::move(action));
 	}
 
@@ -6480,6 +6482,28 @@ protected:
 		}
 	}
 
+	// Похожее по звучанию: жанр и слова из названия трека, а не его автор.
+	void loadHomeSimilar(const Track &seed, int generation) {
+		_homeSimilarTracks.clear();
+		_homeSimilarLoading = true;
+		auto avoid = std::vector<Track>();
+		avoid.push_back(seed);
+		for (const auto &track : _homeAlbumTracks) {
+			avoid.push_back(track);
+		}
+		for (const auto &track : _homeArtistTracks) {
+			avoid.push_back(track);
+		}
+		BuildSimilar(seed, avoid, 24, crl::guard(this, [=](std::vector<Track> tracks, QString) {
+			if (generation != _homeAlbumGeneration) {
+				return;
+			}
+			_homeSimilarLoading = false;
+			_homeSimilarTracks = std::move(tracks);
+			if (_tab == Tab::Home && _homeAlbumOpen) rebuildTab();
+		}));
+	}
+
 	void openHomeArtist(Track track) {
 		if (!_homeReturnToArtist) _homeArtistFeedScroll = _tabScroll->scrollTop();
 		_homeReturnToArtist = false;
@@ -6496,6 +6520,7 @@ protected:
 		_homeAlbumLoading = false;
 		loadHomeAccent(art, generation);
 		loadHomeArtist(track.artist, track.artistId, {}, {}, generation);
+		loadHomeSimilar(track, generation);
 		relayout();
 		rebuildTab();
 		_tabScroll->scrollToY(0);
@@ -6509,6 +6534,7 @@ protected:
 		const auto generation = ++_homeAlbumGeneration;
 		loadHomeAccent(track.artworkUrl, generation);
 		loadHomeArtist(track.artist, track.artistId, track.id, {}, generation);
+		loadHomeSimilar(track, generation);
 		_homeAlbum = { {}, track.title, track.artist, track.artworkUrl, 1 };
 		_homeAlbumTracks = { std::move(track) };
 		_homeAlbumLoading = false;
@@ -6751,6 +6777,24 @@ protected:
 						crl::guard(this, [=](Album album) { openHomeAlbum(std::move(album)); }),
 						crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); }),
 						false, std::make_shared<int>(0)));
+				}
+				// Не только автор: то же звучание у других исполнителей.
+				if (!_homeSimilarTracks.empty() || _homeSimilarLoading) {
+					const auto above = !_homeArtistAlbums.empty() || !_homeArtistTracks.empty();
+					if (!_homeSimilarTracks.empty()) {
+						_tabList->add(object_ptr<Ui::FlatLabel>(
+							_tabList,
+							tr("Похожее по звучанию"),
+							st::boxLabel), QMargins(20, above ? 28 : 20, 20, 8));
+						_tabList->add(object_ptr<HomeMixedGrid>(
+							_tabList, _controller, _homeSimilarTracks, std::vector<Album>(),
+							crl::guard(this, [=](Album album) { openHomeAlbum(std::move(album)); }),
+							crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); }),
+							false, std::make_shared<int>(0)));
+					} else {
+						_tabList->add(object_ptr<HomeLoadingView>(
+							_tabList, tr("Ищу похожее по звучанию…")));
+					}
 				}
 				break;
 			}
@@ -7587,6 +7631,9 @@ private:
 	std::vector<Track> _homeAlbumTracks;
 	std::vector<Track> _homeArtistTracks;
 	std::vector<Album> _homeArtistAlbums;
+	// Похожее по звучанию: отдельный ряд от автора играющего трека.
+	std::vector<Track> _homeSimilarTracks;
+	bool _homeSimilarLoading = false;
 	QColor _homeAccent;
 	Album _homeAlbum;
 	Track _homeArtistSeed;
@@ -8372,7 +8419,8 @@ void TogetherWho(not_null<Window::SessionController*> controller) {
 				continue;
 			}
 			names.push_back(item.title.startsWith('*')
-				? item.title.mid(1) + QString::fromUtf8(" (хозяин)")
+				? item.title.mid(1)
+					+ QString::fromUtf8(Mokagram::Lang::Tr(" (хозяин)"))
 				: item.title);
 		}
 		strong->show(Ui::MakeInformBox(
@@ -8447,7 +8495,8 @@ void TogetherRefreshPeople() {
 				continue;
 			}
 			names.push_back(item.title.startsWith('*')
-				? item.title.mid(1) + QString::fromUtf8(" (хозяин)")
+				? item.title.mid(1)
+					+ QString::fromUtf8(Mokagram::Lang::Tr(" (хозяин)"))
 				: item.title);
 		}
 		t.people->setText(
