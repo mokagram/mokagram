@@ -9,6 +9,7 @@
 #include "mokagram/misc/mokagram_misc.h"
 
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_soundcloud_login.h"
 #include "mokagram/music/mokagram_music_canvas.h"
 #include "mokagram/music/mokagram_music_library.h"
 #include "mokagram/music/mokagram_lyrics.h"
@@ -1513,6 +1514,115 @@ private:
 	[[nodiscard]] QRect refreshRect() const {
 		return QRect(width() - 110, 0, 110 - 8, height());
 	}
+
+};
+
+// Шапка раздела «Лайкнутые»: вход в SoundCloud и состояние аккаунта.
+// Лайки аккаунта и локальные — один список, поэтому вход живёт прямо здесь.
+class SoundCloudAccountBar final : public Ui::AbstractButton {
+public:
+	SoundCloudAccountBar(QWidget *parent, Fn<void()> login, Fn<void()> logout)
+	: AbstractButton(parent)
+	, _login(std::move(login))
+	, _logout(std::move(logout)) {
+		resize(width(), style::ConvertScale(56));
+		setPointerCursor(true);
+		setFocusPolicy(Qt::TabFocus);
+		refresh();
+		setClickedCallback([=] {
+			if (Mokagram::Music::Account::IsLoggedIn()) {
+				_logout();
+			} else {
+				_login();
+			}
+		});
+		Mokagram::Music::Account::Changes() | rpl::on_next([=] {
+			refresh();
+		}, lifetime());
+		LikesChanged() | rpl::on_next([=] {
+			refresh();
+		}, lifetime());
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto r = rect().adjusted(0, 0, -1, -1);
+		p.setPen(Qt::NoPen);
+		p.setBrush(isOver() ? st::windowBgOver->c : st::windowBgRipple->c);
+		p.drawRoundedRect(r, s(12), s(12));
+		if (hasFocus()) {
+			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
+			p.setBrush(Qt::NoBrush);
+			p.drawRoundedRect(r.adjusted(s(2), s(2), -s(2), -s(2)), s(10), s(10));
+		}
+		// Значок SoundCloud: оранжевый кружок.
+		const auto badge = QRect(
+			s(12),
+			(height() - s(32)) / 2,
+			s(32),
+			s(32));
+		p.setBrush(QColor(0xFF, 0x55, 0x00));
+		p.drawEllipse(badge);
+		auto font = st::semiboldFont->f;
+		font.setPixelSize(s(15));
+		p.setFont(font);
+		p.setPen(Qt::white);
+		p.drawText(badge, Qt::AlignCenter, u"☁"_q);
+
+		auto titleFont = st::semiboldFont->f;
+		titleFont.setPixelSize(s(14));
+		p.setFont(titleFont);
+		p.setPen(st::windowFg);
+		const auto textLeft = badge.right() + s(12);
+		const auto textRight = width() - s(12);
+		p.drawText(
+			QRect(textLeft, s(8), textRight - textLeft, s(20)),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			_logged
+				? QString::fromUtf8(Mokagram::Lang::Tr("SoundCloud"))
+				: QString::fromUtf8(Mokagram::Lang::Tr("Подключить SoundCloud")));
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		p.drawText(
+			QRect(textLeft, s(28), textRight - textLeft, s(18)),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			_note);
+		p.setPen(isOver() ? st::windowFg : st::windowSubTextFg);
+		p.drawText(
+			QRect(textLeft, s(8), textRight - textLeft, s(20)),
+			Qt::AlignVCenter | Qt::AlignRight,
+			_logged
+				? QString::fromUtf8(Mokagram::Lang::Tr("Отключить"))
+				: QString());
+	}
+
+private:
+	void refresh() {
+		_logged = Mokagram::Music::Account::IsLoggedIn();
+		const auto info = Mokagram::Music::Account::User();
+		const auto count = int(LikedTracks().size());
+		if (!_logged) {
+			_note = QString::fromUtf8(Mokagram::Lang::Tr(
+				"Лайки и рекомендации из вашего аккаунта"));
+		} else {
+			const auto who = info.username.isEmpty()
+				? QString::fromUtf8(Mokagram::Lang::Tr("Аккаунт подключён"))
+				: (u"@"_q + info.username);
+			_note = (count > 0)
+				? (who + u" · "_q + QString::fromUtf8(
+					Mokagram::Lang::Tr("лайков: %1")).arg(count))
+				: who;
+		}
+		update();
+	}
+
+	Fn<void()> _login;
+	Fn<void()> _logout;
+	QString _note;
+	bool _logged = false;
 
 };
 
@@ -9627,6 +9737,18 @@ void ShowMusicBoxWith(
 						[=] { crl::on_main(box, [=] { (*closeAlbum)(); }); },
 						[=] { PlayAll(albums->openedTracks); }),
 					QMargins(10, 0, 16, 6));
+			}
+			if (queue.tab == 1 && !queue.telegramSearch) {
+				list->add(
+					object_ptr<SoundCloudAccountBar>(
+						list,
+						[=] {
+							ShowSoundCloudLogin(nullptr);
+						},
+						[=] {
+							Mokagram::Music::Account::Logout();
+						}),
+					QMargins(10, 4, 10, 10));
 			}
 			if (queue.tab == 2 && !queue.forYou.empty()) {
 				list->add(
