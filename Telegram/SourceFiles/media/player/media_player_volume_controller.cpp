@@ -24,12 +24,31 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QGuiApplication>
 
 namespace Media::Player {
+namespace {
+
+// Mokagram: слайдер громкости в стиле клиента: тонкая дорожка #323232,
+// акцентная заливка и круглый бегунок.
+[[nodiscard]] const style::MediaSlider &VolumeSliderStyle() {
+	static const auto result = [] {
+		auto result = st::mediaPlayerPanelPlayback;
+		result.width = style::ConvertScale(4);
+		result.seekSize = QSize(style::ConvertScale(14), style::ConvertScale(14));
+		result.activeFg = st::windowActiveTextFg;
+		result.activeFgOver = st::windowActiveTextFg;
+		result.inactiveFg = st::windowBgOver;
+		result.inactiveFgOver = st::windowBgOver;
+		return result;
+	}();
+	return result;
+}
+
+} // namespace
 
 VolumeController::VolumeController(
 	QWidget *parent,
 	not_null<Window::SessionController*> controller)
 : RpWidget(parent)
-, _slider(this, st::mediaPlayerPanelPlayback) {
+, _slider(this, VolumeSliderStyle()) {
 	_slider->setMoveByWheel(true);
 	_slider->setChangeProgressCallback([=](float64 volume) {
 		applyVolumeChange(volume);

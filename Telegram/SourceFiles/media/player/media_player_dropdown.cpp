@@ -390,11 +390,12 @@ void Dropdown::paintEvent(QPaintEvent *e) {
 
 	// draw shadow
 	auto shadowedRect = rect().marginsRemoved(getMargin());
-	// Mokagram: круглая панель, без тени-трапеции.
+	// Mokagram: панель-пилюля цвета карточек клиента, без рамки и тени.
 	auto hq = PainterHighQualityEnabler(p);
-	p.setPen(QPen(QColor(255, 255, 255, 22), 1.));
-	p.setBrush(st::menuBg);
-	p.drawRoundedRect(QRectF(shadowedRect).adjusted(0.5, 0.5, -0.5, -0.5), 13, 13);
+	p.setPen(Qt::NoPen);
+	p.setBrush(st::windowBg);
+	const auto radius = std::min(shadowedRect.width(), shadowedRect.height()) / 2.;
+	p.drawRoundedRect(QRectF(shadowedRect), radius, radius);
 }
 
 void Dropdown::enterEventHook(QEnterEvent *e) {
