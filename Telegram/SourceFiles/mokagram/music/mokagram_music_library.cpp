@@ -213,6 +213,10 @@ void Save() {
 		auto item = QJsonObject();
 		item.insert("id", playlist.id);
 		item.insert("name", playlist.name);
+		if (playlist.remote) {
+			item.insert("remote", true);
+			item.insert("source", playlist.sourceId);
+		}
 		item.insert("tracks", tracks);
 		playlists.push_back(item);
 	}
@@ -238,6 +242,8 @@ Library &Lib() {
 				auto playlist = Playlist();
 				playlist.id = o.value("id").toString();
 				playlist.name = o.value("name").toString();
+				playlist.remote = o.value("remote").toBool();
+				playlist.sourceId = o.value("source").toString();
 				if (playlist.id.isEmpty() || playlist.name.trimmed().isEmpty()) continue;
 				for (const auto &value : o.value("tracks").toArray()) {
 					auto track = FromJson(value.toObject());
@@ -1566,6 +1572,51 @@ void RemovePlaylistTrack(const QString &id, const QString &trackId) {
 		std::erase_if(playlist.tracks, [&](const Track &t) { return t.id == trackId; });
 		if (old != playlist.tracks.size()) { Save(); lib.playlistsChanged.fire({}); }
 		return;
+	}
+}
+
+void MergeRemotePlaylists(
+		const std::vector<RemotePlaylist> &remote,
+		bool complete) {
+	auto &lib = Lib();
+	auto changed = false;
+	auto remoteIds = std::set<QString>();
+	for (const auto &incoming : remote) {
+		if (incoming.id.isEmpty() || incoming.name.trimmed().isEmpty()) continue;
+		remoteIds.insert(incoming.id);
+		auto found = std::find_if(lib.playlists.begin(), lib.playlists.end(),
+			[&](const Playlist &playlist) {
+				return playlist.remote && playlist.sourceId == incoming.id;
+			});
+		if (found == lib.playlists.end()) {
+			Playlist playlist;
+			playlist.id = u"soundcloud:"_q + incoming.id;
+			playlist.name = incoming.name.trimmed();
+			playlist.tracks = incoming.tracks;
+			playlist.remote = true;
+			playlist.sourceId = incoming.id;
+			lib.playlists.push_back(std::move(playlist));
+			changed = true;
+		} else if (found->name != incoming.name.trimmed()
+			|| found->tracks.size() != incoming.tracks.size()) {
+			found->name = incoming.name.trimmed();
+			found->tracks = incoming.tracks;
+			changed = true;
+		}
+	}
+	if (complete) {
+		for (auto i = lib.playlists.begin(); i != lib.playlists.end();) {
+			if (i->remote && !remoteIds.contains(i->sourceId)) {
+				i = lib.playlists.erase(i);
+				changed = true;
+			} else {
+				++i;
+			}
+		}
+	}
+	if (changed) {
+		Save();
+		lib.playlistsChanged.fire({});
 	}
 }
 

@@ -31,6 +31,15 @@ struct Playlist {
 	QString id;
 	QString name;
 	std::vector<Track> tracks;
+	// Плейлист, импортированный из лайкнутых sets SoundCloud.
+	bool remote = false;
+	QString sourceId;
+};
+
+struct RemotePlaylist {
+	QString id;
+	QString name;
+	std::vector<Track> tracks;
 };
 
 [[nodiscard]] std::vector<Playlist> Playlists();
@@ -40,6 +49,7 @@ void DeletePlaylist(const QString &id);
 void AddPlaylistTrack(const QString &id, const Track &track);
 void AddPlaylistTracks(const QString &id, const std::vector<Track> &tracks);
 void RemovePlaylistTrack(const QString &id, const QString &trackId);
+void MergeRemotePlaylists(const std::vector<RemotePlaylist> &playlists, bool complete);
 [[nodiscard]] rpl::producer<> PlaylistsChanged();
 
 struct RecentItem {
