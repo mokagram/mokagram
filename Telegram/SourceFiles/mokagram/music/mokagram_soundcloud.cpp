@@ -1256,6 +1256,12 @@ void SetTrackLiked(const QString &trackId, bool liked) {
 	request.setRawHeader(
 		"Authorization",
 		QByteArray("OAuth ") + AccountToken().toUtf8());
+	// Без браузерных заголовков запись лайка упирается в защиту DataDome (403).
+	request.setRawHeader("Accept", "application/json, text/javascript, */*; q=0.01");
+	request.setRawHeader("Accept-Language", "en-US,en;q=0.5");
+	request.setRawHeader("Content-Type", "application/json");
+	request.setRawHeader("Origin", "https://soundcloud.com");
+	request.setRawHeader("Referer", "https://soundcloud.com/");
 	request.setAttribute(
 		QNetworkRequest::RedirectPolicyAttribute,
 		QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -1267,7 +1273,7 @@ void SetTrackLiked(const QString &trackId, bool liked) {
 		const auto status = reply->attribute(
 			QNetworkRequest::HttpStatusCodeAttribute).toInt();
 		reply->deleteLater();
-		if (status != 403) {
+		if (status != 401 && status != 403 && status != 404) {
 			return;
 		}
 		const auto info = User();
@@ -1278,8 +1284,9 @@ void SetTrackLiked(const QString &trackId, bool liked) {
 			if (!ok) {
 				return;
 			}
+			// api-v2 сайта: users/{id}/track_likes/{track}, PUT ставит лайк.
 			auto url = QUrl(QString::fromLatin1(kApi)
-				+ u"/users/"_q + info.id + u"/track-likes/"_q + trackId);
+				+ u"/users/"_q + info.id + u"/track_likes/"_q + trackId);
 			auto query = QUrlQuery();
 			query.addQueryItem(u"client_id"_q, ClientId());
 			url.setQuery(query);
@@ -1288,6 +1295,11 @@ void SetTrackLiked(const QString &trackId, bool liked) {
 			legacyRequest.setRawHeader(
 				"Authorization",
 				QByteArray("OAuth ") + AccountToken().toUtf8());
+			legacyRequest.setRawHeader("Accept", "application/json, text/javascript, */*; q=0.01");
+			legacyRequest.setRawHeader("Accept-Language", "en-US,en;q=0.5");
+			legacyRequest.setRawHeader("Content-Type", "application/json");
+			legacyRequest.setRawHeader("Origin", "https://soundcloud.com");
+			legacyRequest.setRawHeader("Referer", "https://soundcloud.com/");
 			legacyRequest.setTransferTimeout(20000);
 			const auto legacyReply = liked
 				? Net().put(legacyRequest, QByteArray())
