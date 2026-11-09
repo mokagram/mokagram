@@ -1023,8 +1023,11 @@ void BuildSimilarImpl(SimilarContext context, Fn<void(std::vector<Track>, QStrin
 	}
 	// Пустой ответ поиска не должен останавливать остальные запросы, поэтому
 	// считаем ответы вручную, а сбор кандидатов идёт там же, в collector.
-	auto pending = std::make_shared<int>(int(seed.id.isEmpty() ? 0 : 1)
-		+ std::min(int(queries.size()), 6));
+	// Счётчики выставляем до запуска: ответ может прийти синхронно (кеш client_id).
+	const auto relatedJobs = int(seed.id.isEmpty() ? 0 : 1);
+	const auto searchJobs = std::min(int(queries.size()), 6);
+	const auto jobs = relatedJobs + searchJobs;
+	auto pending = std::make_shared<int>(jobs);
 	auto found = std::make_shared<bool>(false);
 	const auto settle = [=] {
 		if (--*pending == 0 && !*found) {
@@ -1032,22 +1035,25 @@ void BuildSimilarImpl(SimilarContext context, Fn<void(std::vector<Track>, QStrin
 				"Не нашлось похожего по звучанию. Попробуйте позже.")));
 		}
 	};
-	const auto gather = [=](std::vector<Track> list, double weight) {
-		if (list.empty()) {
-			settle();
-			return;
-		}
-		*found = true;
-		Gather(collector, std::move(list), weight, false);
-	};
+	collector->pending = jobs;
 	if (!seed.id.isEmpty()) {
 		Related(seed.id, 40, [=](std::vector<Track> list) {
-			gather(std::move(list), 1.5);
+			if (!list.empty()) {
+				*found = true;
+				Gather(collector, std::move(list), 1.5, false);
+			} else {
+				settle();
+			}
 		});
 	}
-	for (auto i = 0; i != std::min(int(queries.size()), 6); ++i) {
+	for (auto i = 0; i != searchJobs; ++i) {
 		SearchLimited(queries[i], 20, [=](std::vector<Track> list) {
-			gather(std::move(list), 0.6);
+			if (!list.empty()) {
+				*found = true;
+				Gather(collector, std::move(list), 0.6, false);
+			} else {
+				settle();
+			}
 		});
 	}
 }
