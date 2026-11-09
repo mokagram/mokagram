@@ -1525,7 +1525,8 @@ public:
 	: AbstractButton(parent)
 	, _login(std::move(login))
 	, _logout(std::move(logout)) {
-		resize(width(), style::ConvertScale(56));
+		// Высоту задаёт раскладка: resize() в конструкторе дал бы нулевую
+		// высоту и кнопка не ловила бы клики.
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
 		refresh();
@@ -1545,6 +1546,11 @@ public:
 	}
 
 protected:
+	int resizeGetHeight(int newWidth) override {
+		// Строка «Подключить SoundCloud» рисуется сама и высоту держит сама.
+		return style::ConvertScale(64);
+	}
+
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
@@ -1586,10 +1592,14 @@ protected:
 				: QString::fromUtf8(Mokagram::Lang::Tr("Подключить SoundCloud")));
 		p.setFont(st::normalFont);
 		p.setPen(st::windowSubTextFg);
+		const auto noteFont = QFontMetrics(st::normalFont->f);
 		p.drawText(
 			QRect(textLeft, s(28), textRight - textLeft, s(18)),
 			Qt::AlignVCenter | Qt::AlignLeft,
-			_note);
+			noteFont.elidedText(
+				_note,
+				Qt::ElideRight,
+				textRight - textLeft));
 		p.setPen(isOver() ? st::windowFg : st::windowSubTextFg);
 		p.drawText(
 			QRect(textLeft, s(8), textRight - textLeft, s(20)),
@@ -1606,7 +1616,7 @@ private:
 		const auto count = int(LikedTracks().size());
 		if (!_logged) {
 			_note = QString::fromUtf8(Mokagram::Lang::Tr(
-				"Лайки и рекомендации из вашего аккаунта"));
+				"Лайки и рекомендации из аккаунта"));
 		} else {
 			const auto who = info.username.isEmpty()
 				? QString::fromUtf8(Mokagram::Lang::Tr("Аккаунт подключён"))
@@ -7023,6 +7033,12 @@ protected:
 			}
 			break;
 		case Tab::Library: {
+			// Аккаунт первым: лайки из SoundCloud и свои — один список.
+			_tabList->add(object_ptr<SoundCloudAccountBar>(
+				_tabList,
+				[=] { ShowSoundCloudLogin(nullptr); },
+				[=] { Mokagram::Music::Account::Logout(); }),
+				QMargins(12, 4, 12, 8));
 			const auto liked = LikedTracks();
 			if (liked.empty()) {
 				_tabNote = tr("Пока пусто. Нажми сердечко у трека, и он появится здесь.");
