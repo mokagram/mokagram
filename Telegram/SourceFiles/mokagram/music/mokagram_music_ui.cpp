@@ -94,6 +94,8 @@
 #include "styles/style_media_player.h"
 #include "styles/style_widgets.h"
 
+#include <map>
+#include <QtSvg/QSvgRenderer>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
@@ -1295,25 +1297,28 @@ void QueueRemove(int index) {
 	queue.changes.fire({});
 }
 
+// Сердце из Ionicons (MIT): ion:heart и ion:heart-outline, viewBox 512x512.
 void DrawHeart(QPainter &p, const QRectF &r, bool filled, const QColor &color) {
-	auto path = QPainterPath();
-	const auto w = r.width();
-	const auto h = r.height();
-	const auto x = r.x();
-	const auto y = r.y();
-	path.moveTo(x + w * 0.5, y + h * 0.92);
-	path.cubicTo(x - w * 0.15, y + h * 0.55, x + w * 0.05, y + h * 0.05, x + w * 0.5, y + h * 0.30);
-	path.cubicTo(x + w * 0.95, y + h * 0.05, x + w * 1.15, y + h * 0.55, x + w * 0.5, y + h * 0.92);
-	p.save();
-	if (filled) {
-		p.setPen(Qt::NoPen);
-		p.setBrush(color);
-	} else {
-		p.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-		p.setBrush(Qt::NoBrush);
+	static auto cache = std::map<std::pair<bool, QRgb>, std::unique_ptr<QSvgRenderer>>();
+	auto &renderer = cache[{ filled, color.rgba() }];
+	if (!renderer) {
+		const auto paint = color.name(QColor::HexRgb).toLatin1();
+		const auto opacity = QByteArray::number(color.alphaF(), 'f', 3);
+		const auto shape = filled
+			? QByteArray("<path fill=\"") + paint + "\" fill-opacity=\"" + opacity
+				+ "\" d=\"M256 448a32 32 0 0 1-18-5.57c-78.59-53.35-112.62-89.93-131.39-112.8c-40-48.75-59.15-98.8-58.61-153C48.63 114.52 98.46 64 159.08 64c44.08 0 74.61 24.83 92.39 45.51a6 6 0 0 0 9.06 0C278.31 88.81 308.84 64 352.92 64c60.62 0 110.45 50.52 111.08 112.64c.54 54.21-18.63 104.26-58.61 153c-18.77 22.87-52.8 59.45-131.39 112.8a32 32 0 0 1-18 5.56\"/>"
+			: QByteArray("<path fill=\"none\" stroke=\"") + paint + "\" stroke-opacity=\"" + opacity
+				+ "\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M352.92 80C288 80 256 144 256 144s-32-64-96.92-64c-52.76 0-94.54 44.14-95.08 96.81c-1.1 109.33 86.73 187.08 183 252.42a16 16 0 0 0 18 0c96.26-65.34 184.09-143.09 183-252.42c-.54-52.67-42.32-96.81-95.08-96.81\"/>";
+		renderer = std::make_unique<QSvgRenderer>(
+			QByteArray("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\">")
+			+ shape + "</svg>");
 	}
-	p.drawPath(path);
-	p.restore();
+	const auto side = std::min(r.width(), r.height());
+	renderer->render(&p, QRectF(
+		r.center().x() - side / 2,
+		r.center().y() - side / 2,
+		side,
+		side));
 }
 
 [[nodiscard]] const QColor &HeartColor() {
