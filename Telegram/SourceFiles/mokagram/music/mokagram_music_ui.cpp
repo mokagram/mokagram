@@ -5686,9 +5686,9 @@ public:
 				scheduleHomeMoreIfNeeded();
 			}
 		}, lifetime());
-		const auto names = std::array<const char*, 6>{
-			"Сейчас играет", "Главная", "Поиск", "Библиотека", "Плейлисты", "Очередь" };
-		for (auto i = 0; i != 6; ++i) {
+		const auto names = std::array<const char*, 7>{
+			"Сейчас играет", "Главная", "Для вас", "Поиск", "Библиотека", "Плейлисты", "Очередь" };
+		for (auto i = 0; i != int(_nav.size()); ++i) {
 			const auto item = Ui::CreateChild<NavItem>(
 				this,
 				QString::fromUtf8(Mokagram::Lang::Tr(names[i])),
@@ -6090,7 +6090,7 @@ protected:
 			update(layout.bar);
 		}
 	}
-	enum class Tab { Now, Home, Search, Library, Playlists, Queue };
+	enum class Tab { Now, Home, ForYou, Search, Library, Playlists, Queue };
 	struct Layout {
 		bool verticalNav = false;
 		bool showRight = false;
@@ -6175,7 +6175,7 @@ protected:
 		} else {
 			const auto contentWidth = std::max(width() - 2 * margin, 0);
 			result.center = QRect((width() - contentWidth) / 2, top, contentWidth, areaHeight);
-			result.scrollTop = result.center.y() + ((_tab == Tab::Home || _tab == Tab::Library || _tab == Tab::Queue || _tab == Tab::Playlists)
+			result.scrollTop = result.center.y() + ((_tab == Tab::Home || _tab == Tab::ForYou || _tab == Tab::Library || _tab == Tab::Queue || _tab == Tab::Playlists)
 				? 0
 				: (_tab == Tab::Search)
 				? ((!_searchChats && contentWidth < s(500)) ? s(172) : s(124))
@@ -6597,7 +6597,7 @@ protected:
 		_homeReturnToArtist = false;
 		_nav[1]->setActiveColor(Qt::white);
 		++_homeAlbumGeneration;
-		for (auto i = 0; i != 6; ++i) {
+		for (auto i = 0; i != int(_nav.size()); ++i) {
 			_nav[i]->setActive(i == int(tab));
 		}
 		if (tab == Tab::Library) {
@@ -6607,6 +6607,22 @@ protected:
 		auto event = QResizeEvent(size(), size());
 		resizeEvent(&event);
 		refresh();
+	}
+	void loadForYou() {
+		if (_forYouLoading) {
+			return;
+		}
+		_forYouLoading = true;
+		BuildForYou(30, crl::guard(this, [=](std::vector<Track> tracks, QString note) {
+			auto &queue = QueueState();
+			queue.forYou = std::move(tracks);
+			queue.forYouNote = std::move(note);
+			_forYouLoading = false;
+			_forYouLoaded = true;
+			if (_tab == Tab::ForYou) {
+				rebuildTab();
+			}
+		}));
 	}
 	void syncLibrary() {
 		if (!Account::IsLoggedIn()
@@ -6630,6 +6646,7 @@ protected:
 			switch (_tab) {
 			case Tab::Now: return "Сейчас играет";
 			case Tab::Home: return "Главная";
+			case Tab::ForYou: return "Для вас";
 			case Tab::Search: return "Поиск";
 			case Tab::Library: return "Любимые";
 			case Tab::Playlists: return "Плейлисты";
@@ -7147,6 +7164,34 @@ protected:
 				section(tr("Избранное"), 2, liked);
 			}
 		} break;
+		case Tab::ForYou: {
+			const auto &queue = QueueState();
+			if (_forYouLoading || (queue.forYou.empty() && !_forYouLoaded)) {
+				_tabList->add(object_ptr<HomeLoadingView>(
+					_tabList, tr("Подбираю музыку под ваш вкус…")));
+				if (!_forYouLoading) {
+					crl::on_main(this, [=] { loadForYou(); });
+				}
+			} else if (queue.forYou.empty()) {
+				const auto message = queue.forYouNote.isEmpty()
+					? tr("Добавьте треки в избранное, чтобы получить рекомендации.")
+					: queue.forYouNote;
+				_tabList->add(object_ptr<HomeRetryView>(_tabList, message, crl::guard(this, [=] {
+					loadForYou();
+					rebuildTab();
+				})));
+			} else {
+				_tabList->add(object_ptr<PicksBar>(
+					_tabList,
+					[=] { PlayAll(QueueState().forYou); },
+					[=] {
+						loadForYou();
+						rebuildTab();
+					}), QMargins(style::ConvertScale(16), style::ConvertScale(4),
+						style::ConvertScale(16), style::ConvertScale(10)));
+				addRows(queue.forYou);
+			}
+		} break;
 		case Tab::Search:
 			if (emptySearch) {
 				break;
@@ -7341,7 +7386,7 @@ protected:
 
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
 		if (_tab != Tab::Now && !(_tab == Tab::Home && _homeAlbumOpen)) {
-			if (_tab != Tab::Home && _tab != Tab::Library
+			if (_tab != Tab::Home && _tab != Tab::ForYou && _tab != Tab::Library
 				&& _tab != Tab::Playlists && _tab != Tab::Search && _tab != Tab::Queue) {
 				p.setFont(labelFont(19, true));
 				p.setPen(Qt::white);
@@ -7846,7 +7891,7 @@ private:
 	HomeEdgeFade *_topFade = nullptr;
 	HomeEdgeFade *_bottomFade = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
-	std::array<NavItem*, 6> _nav = {};
+	std::array<NavItem*, 7> _nav = {};
 	Ui::Animations::Simple _navSlide;
 	Ui::Animations::Simple _homeEntrance;
 	QLineEdit *_searchField = nullptr;
@@ -7871,6 +7916,8 @@ private:
 	bool _searchChats = false;
 	Tab _tab = Tab::Now;
 	Tab _rebuiltTab = Tab::Queue;
+	bool _forYouLoading = false;
+	bool _forYouLoaded = false;
 	bool _librarySyncLoading = false;
 	crl::time _librarySyncSucceeded = 0;
 	QString _tabNote;
