@@ -100,6 +100,13 @@ struct LoginState {
 	bool done = false;
 };
 
+// Окно входа одно на всё приложение: строка «Лайкнутых» пересоздаётся
+// на каждое обновление списка, и без этого открывалось бы новое окно.
+std::weak_ptr<LoginState> &ActiveLogin() {
+	static auto result = std::weak_ptr<LoginState>();
+	return result;
+}
+
 void Finish(LoginState *state, bool success) {
 	if (state->done) {
 		return;
@@ -134,7 +141,21 @@ void Finish(LoginState *state, bool success) {
 } // namespace
 
 void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
+	// Уже открыто: поднимаем то же окно, а не плодим новые.
+	if (const auto existing = ActiveLogin().lock()) {
+		if (const auto window = existing->window) {
+			if (window->isMinimized()) {
+				window->showNormal();
+			} else if (window->isHidden()) {
+				window->show();
+			}
+			window->raise();
+			window->activateWindow();
+			return;
+		}
+	}
 	auto state = std::make_shared<LoginState>();
+	ActiveLogin() = state;
 	state->onLoggedIn = std::move(onLoggedIn);
 	state->onClosed = std::move(onClosed);
 
@@ -144,6 +165,9 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 	window->setTitle(QString::fromUtf8(Mokagram::Lang::Tr("Вход в SoundCloud")));
 	window->setMinimumSize(QSize(s(420), s(560)));
 	window->setGeometry(QRect(160, 120, s(520), s(720)));
+	// Настоящее отдельное окно поверх мессенджера, а не вкладка внутри него.
+	window->setAttribute(Qt::WA_QuitOnClose, false);
+	window->setWindowFlag(Qt::Window, true);
 
 	const auto body = window->body();
 	auto token = std::string(32, ' ');
@@ -161,6 +185,7 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		});
 	const auto raw = state->webview.get();
 	if (!raw->valid() || !raw->widget()) {
+		ActiveLogin().reset();
 		state->webview.reset();
 		state->window.reset();
 		Ui::Toast::Show(QString::fromUtf8(Mokagram::Lang::Tr(
@@ -172,10 +197,14 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 	const auto getToken = [raw] {
 		raw->eval(QByteArray(kTokenScript));
 	};
-	body->sizeValue() | rpl::on_next([=](QSize) {
+	const auto layoutWebview = [=] {
 		if (const auto widget = raw->widget()) {
 			widget->setGeometry(body->rect());
+			widget->show();
 		}
+	};
+	body->sizeValue() | rpl::on_next([=](QSize) {
+		layoutWebview();
 	}, body->lifetime());
 
 	raw->setMessageHandler([=](Webview::Message message) {
@@ -227,6 +256,7 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		"};");
 	raw->navigate(QString::fromLatin1(kLoginPage));
 	window->show();
+	layoutWebview();
 	window->raise();
 	window->activateWindow();
 }
