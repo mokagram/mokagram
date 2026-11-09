@@ -129,7 +129,7 @@ namespace Account {
 
 // Аккаунт SoundCloud. Вход идёт в браузере через обычный OAuth сайта: после входа
 // токен остаётся в файле на диске (как client_id), чтобы лайки синхронизировались
-// при запуске. В запросах он заменяет client_id.
+// при запуске. В API-запросах передаётся в заголовке Authorization.
 struct Info {
 	QString id;
 	QString username;
@@ -139,7 +139,7 @@ struct Info {
 [[nodiscard]] bool IsLoggedIn();
 [[nodiscard]] Info User();
 
-void Login(const QString &accessToken);
+void Login(const QString &accessToken, Fn<void(QString)> done);
 void Logout();
 [[nodiscard]] rpl::producer<> Changes();
 

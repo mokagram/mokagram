@@ -86,13 +86,13 @@ QString &ClientId() {
 
 [[nodiscard]] bool ValidSessionToken(const QString &token) {
 	// oauth_token SoundCloud — JWT из трёх частей через точку. Иногда бывает
-	// старый вид "2-293746-185937845-AbCd". Токен уходит в query, поэтому
+	// старый вид "2-293746-185937845-AbCd". Токен уходит в Authorization, поэтому
 	// пускаем только безопасные символы и ограничиваем длину.
 	if (token.isEmpty() || token.size() > 800) {
 		return false;
 	}
 	static const auto pattern = QRegularExpression(
-		u"^([A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+		u"^([A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"
 		u"|[0-9][0-9]*-[0-9]+-[0-9]+-[A-Za-z0-9_-]{6,})$"_q);
 	return pattern.match(token).hasMatch();
 }
@@ -127,9 +127,17 @@ void RemoveSessionFile() {
 	QFile::remove(SessionFile());
 }
 
-QNetworkReply *Get(const QUrl &url, qint64 limit = 0) {
+QNetworkReply *Get(
+		const QUrl &url,
+		qint64 limit = 0,
+		const QString &accessToken = QString()) {
 	auto request = QNetworkRequest(url);
 	request.setRawHeader("User-Agent", kUserAgent);
+	if (!accessToken.isEmpty()) {
+		request.setRawHeader(
+			"Authorization",
+			QByteArray("OAuth ") + accessToken.toUtf8());
+	}
 	request.setAttribute(
 		QNetworkRequest::RedirectPolicyAttribute,
 		QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -215,13 +223,12 @@ void EnsureClientId(Fn<void(bool)> done, bool force = false) {
 }
 
 // client_id нужен всегда: по нему API отдаёт список треков и поток.
-// oauth-токен аккаунта лишь добавляется к запросу, когда он есть.
+// OAuth-токен аккаунта передаётся в заголовке Authorization.
 void EnsureAnyClientId(Fn<void(bool)> done, bool force) {
 	EnsureClientId(done, force);
 }
 
 // GET с автоматическим обновлением client_id при 401/403 (один повтор).
-// client_id уходит всегда, вместе с ним, если есть, oauth-токен аккаунта.
 void ApiGet(
 		const QString &base,
 		QUrlQuery query,
@@ -236,12 +243,10 @@ void ApiGet(
 		if (!ClientId().isEmpty()) {
 			copy.addQueryItem(u"client_id"_q, ClientId());
 		}
-		if (!AccountToken().isEmpty()) {
-			copy.addQueryItem(u"oauth_token"_q, AccountToken());
-		}
 		auto url = QUrl(base);
 		url.setQuery(copy);
-		const auto reply = Get(url);
+		// SoundCloud moved access tokens to the Authorization header.
+		const auto reply = Get(url, 0, AccountToken());
 		QObject::connect(reply, &QNetworkReply::finished, [=] {
 			const auto status = reply->attribute(
 				QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -933,19 +938,24 @@ QJsonObject &UserObject() {
 	return result;
 }
 
-void FetchUser(Fn<void(bool)> done) {
+void FetchUser(Fn<void(QString)> done) {
 	ApiGet(
 		QString::fromLatin1(kApi) + u"/me"_q,
 		QUrlQuery(),
 		[=](QByteArray data, QString error) {
 			if (!error.isEmpty() || data.isEmpty()) {
-				done(false);
+				done(error.isEmpty()
+					? u"SoundCloud вернул пустой профиль."_q
+					: error);
 				return;
 			}
-			UserObject() = QJsonDocument::fromJson(data).object();
-			SaveSessionFile(AccountToken(), UserObject());
-			ChangesStream().fire({});
-			done(true);
+			const auto profile = QJsonDocument::fromJson(data).object();
+			if (profile.isEmpty()) {
+				done(u"SoundCloud вернул некорректный профиль."_q);
+				return;
+			}
+			UserObject() = profile;
+			done(QString());
 		});
 }
 
@@ -984,23 +994,35 @@ Info User() {
 	return ParseUser(UserObject());
 }
 
-void Login(const QString &accessToken) {
+void Login(const QString &accessToken, Fn<void(QString)> done) {
 	const auto token = accessToken.trimmed();
 	if (!ValidSessionToken(token)) {
+		done(u"Некорректный токен SoundCloud."_q);
 		return;
 	}
-	if (AccountToken() != token) {
-		AccountToken() = token;
-		UserObject() = QJsonObject();
-	}
-	SaveSessionFile(AccountToken(), UserObject());
-	ChangesStream().fire({});
-	FetchUser([](bool) {});
-	if (AccountToken().isEmpty()) {
-		return;
-	}
-	// Сразу подтягиваем лайки, чтобы лента не ждала следующего запуска.
-	SyncLikes(nullptr);
+	const auto previousToken = AccountToken();
+	const auto previousUser = UserObject();
+	AccountToken() = token;
+	UserObject() = QJsonObject();
+	FetchUser([=](QString error) {
+		if (!error.isEmpty()) {
+			AccountToken() = previousToken;
+			UserObject() = previousUser;
+			if (previousToken.isEmpty()) {
+				RemoveSessionFile();
+			} else {
+				SaveSessionFile(previousToken, previousUser);
+			}
+			ChangesStream().fire({});
+			done(error);
+			return;
+		}
+		SaveSessionFile(AccountToken(), UserObject());
+		ChangesStream().fire({});
+		// Сразу подтягиваем лайки, чтобы лента не ждала следующего запуска.
+		SyncLikes(nullptr);
+		done(QString());
+	});
 }
 
 void Logout() {

@@ -23,6 +23,7 @@
 #include "window/window_session_controller.h"
 
 #include <QtCore/QRegularExpression>
+#include <QtCore/QPointer>
 #include <QtCore/QUrl>
 #include <QtGui/QClipboard>
 #include <QtGui/QDesktopServices>
@@ -41,7 +42,7 @@ constexpr auto kSoundCloudUrl = "https://soundcloud.com/";
 // Иногда встречается и старый вид "2-293746-185937845-AbCd".
 [[nodiscard]] QRegularExpression TokenPattern() {
 	return QRegularExpression(
-		u"^([A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+		u"^([A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"
 		u"|[0-9][0-9]*-[0-9]+-[0-9]+-[A-Za-z0-9_-]{6,})$"_q);
 }
 
@@ -221,9 +222,18 @@ setTimeout(()=>{if(!done())console.log('TOKEN пока не найден: обн
 				field->showError();
 				return;
 			}
-			Account::Login(token);
-			box->closeBox();
-			finish(true);
+			const auto guardedBox = QPointer<Ui::GenericBox>(box);
+			Account::Login(token, [=](QString error) {
+				if (!guardedBox) {
+					return;
+				}
+				if (!error.isEmpty()) {
+					Ui::Toast::Show(error);
+					return;
+				}
+				guardedBox->closeBox();
+				finish(true);
+			});
 		};
 		field->submits() | rpl::on_next(submit, field->lifetime());
 		box->addButton(rpl::single(Tr("Подключить")), submit);
