@@ -87,21 +87,28 @@ constexpr auto kSoundCloudPath = "M23.999 14.165c-.052 1.796-1.612 3.169-3.4 3.1
 }
 
 #ifdef Q_OS_LINUX
-// Достаёт oauth_token SoundCloud из куков браузера на Chromium: копирует
-// базу куков во временный профиль и просит headless-браузер отдать их через
-// DevTools по каналу (без портов). Расшифровывает куки сам браузер.
+// Достаёт oauth_token SoundCloud из куков любого браузера. Chromium-семейство:
+// копия профиля, headless-браузер сам расшифровывает куки и отдаёт их через
+// DevTools по каналу (без портов). Firefox-семейство: куки без шифрования,
+// читаются из копии cookies.sqlite.
 // Вывод: строка "BROWSER <имя>", затем "TOKEN <jwt>". Код 2: входа нет.
 constexpr auto kGrabScript = R"PY(
 import glob, json, os, shutil, signal, sqlite3, subprocess, sys, tempfile, time
 signal.signal(signal.SIGTERM, lambda *a: sys.exit(1))
 home = os.path.expanduser("~")
+cfg = os.path.join(home, ".config")
+CHROMIUM_EPOCH = 11644473600
+
 def norm(text):
     return "".join(ch for ch in text.lower() if ch.isalnum())
-# Любой Chromium-браузер: профили ищем по самим данным (Local State и куки
-# SoundCloud), исполняемый файл берём из .desktop-файлов системы.
+
+def is_jwt(value):
+    return isinstance(value, str) and value.count(".") == 2 and len(value) > 40
+
 def desktop_binaries():
     found = {}
-    dirs = [os.path.join(home, ".local/share/applications"), "/usr/share/applications", "/var/lib/flatpak/exports/share/applications"]
+    dirs = [os.path.join(home, ".local/share/applications"), "/usr/share/applications",
+            "/var/lib/flatpak/exports/share/applications"]
     for d in dirs:
         for f in glob.glob(os.path.join(d, "*.desktop")):
             try:
@@ -116,6 +123,7 @@ def desktop_binaries():
             except Exception:
                 pass
     return found
+
 def find_binary(rootname, binaries):
     key = norm(rootname)
     best = None
@@ -129,16 +137,30 @@ def find_binary(rootname, binaries):
     if best:
         return best[1]
     return shutil.which(os.path.basename(rootname)) or shutil.which(os.path.basename(rootname).lower())
+
+def copy_db(path, tmp):
+    # База открыта браузером: копируем вместе с журналом и читаем копию.
+    dst = os.path.join(tmp, "db-" + str(abs(hash(path))))
+    os.makedirs(dst, exist_ok=True)
+    target = os.path.join(dst, os.path.basename(path))
+    shutil.copy(path, target)
+    for ext in ("-wal", "-shm", "-journal"):
+        if os.path.isfile(path + ext):
+            shutil.copy(path + ext, target + ext)
+    return target
+
+# Кандидаты: (срок годности токена в unix-секундах, вид, имя браузера, данные).
+cands = []
 binaries = desktop_binaries()
+
+# Chromium-семейство: профили по Local State, браузер по .desktop (куки зашифрованы).
 roots = []
-for pattern in (os.path.join(home, ".config/*"), os.path.join(home, ".config/*/*"), os.path.join(home, ".var/app/*/config/*")):
+for pattern in (os.path.join(cfg, "*"), os.path.join(cfg, "*/*"), os.path.join(home, ".var/app/*/config/*")):
     for root in glob.glob(pattern):
         if os.path.isfile(os.path.join(root, "Local State")):
             roots.append(root)
-cands = []
 for root in roots:
-    name = os.path.basename(root)
-    rootname = os.path.relpath(root, os.path.join(home, ".config")) if root.startswith(os.path.join(home, ".config")) else name
+    rootname = os.path.relpath(root, cfg) if root.startswith(cfg) else os.path.basename(root)
     binary = find_binary(rootname, binaries)
     if not binary:
         continue
@@ -153,29 +175,58 @@ for root in roots:
                 c.close()
             except Exception:
                 continue
-            if row and row[0] is not None:
-                cands.append((row[0], os.path.basename(binary), binary, prof, sub))
-if not cands:
-    sys.exit(2)
-cands.sort(reverse=True)
-_, name, binary, prof, sub = cands[0]
+            if row and row[0]:
+                cands.append((row[0] / 1e6 - CHROMIUM_EPOCH, "chromium", os.path.basename(binary).title(), (binary, prof, sub)))
+
+# Firefox-семейство: cookies.sqlite без шифрования (Firefox, Zen, LibreWolf, Floorp, Waterfox).
+ff = set()
+for pattern in (os.path.join(home, ".*/*/cookies.sqlite"), os.path.join(home, ".*/*/*/cookies.sqlite"),
+                os.path.join(cfg, "*/*/cookies.sqlite"), os.path.join(cfg, "*/*/*/cookies.sqlite"),
+                os.path.join(home, ".var/app/*/.*/*/*/cookies.sqlite"),
+                os.path.join(home, "snap/*/common/.*/*/*/cookies.sqlite")):
+    ff.update(glob.glob(pattern))
+for db in sorted(ff):
+    rel = os.path.relpath(db, home).split(os.sep)
+    label = next((x.strip(".") for x in rel if x not in (".config", ".var", "app", "snap", "common") and x.startswith(".") or x in ("mozilla",)), "firefox")
+    label = "Firefox" if label.lower() in ("mozilla", "firefox") else label.title()
+    cands.append((0, "firefox", label, db))
+
 tmp = tempfile.mkdtemp(prefix="moka-sc-")
 proc = None
-try:
-    dst = os.path.join(tmp, "Default", sub)
-    os.makedirs(os.path.dirname(dst))
+failed = False
+
+def firefox_token(db):
+    path = copy_db(db, tmp)
+    c = sqlite3.connect(path)
+    try:
+        rows = c.execute("select value, expiry from moz_cookies where host like '%soundcloud.com' and name = 'oauth_token'").fetchall()
+    except Exception:
+        return None, 0
+    finally:
+        c.close()
+    best = (None, 0)
+    for value, expiry in rows:
+        expiry = expiry / 1000 if expiry and expiry > 1e11 else expiry
+        if is_jwt(value) and expiry >= best[1]:
+            best = (value, expiry)
+    return best
+
+def chromium_token(binary, prof, sub):
+    global proc
+    dst = os.path.join(tmp, "profile", "Default", sub)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
     a = sqlite3.connect("file:" + os.path.join(prof, sub) + "?mode=ro", uri=True)
     b = sqlite3.connect(dst)
     a.backup(b); b.close(); a.close()
     ls = os.path.join(os.path.dirname(prof), "Local State")
     if os.path.isfile(ls):
-        shutil.copy(ls, os.path.join(tmp, "Local State"))
+        shutil.copy(ls, os.path.join(tmp, "profile", "Local State"))
     r_in, w_in = os.pipe()
     r_out, w_out = os.pipe()
     def prep():
         os.dup2(r_in, 3); os.dup2(w_out, 4)
     proc = subprocess.Popen(
-        [binary, "--headless=new", "--user-data-dir=" + tmp, "--remote-debugging-pipe",
+        [binary, "--headless=new", "--user-data-dir=" + os.path.join(tmp, "profile"), "--remote-debugging-pipe",
          "--no-first-run", "--no-default-browser-check", "--disable-gpu",
          "--disable-extensions", "--password-store=gnome-libsecret", "about:blank"],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -201,20 +252,51 @@ try:
     def token():
         res = call("Storage.getCookies") or {}
         for c in res.get("result", {}).get("cookies", []):
-            if c["name"] == "oauth_token" and c["domain"].endswith("soundcloud.com") and c["value"].count(".") == 2:
+            if c["name"] == "oauth_token" and c["domain"].endswith("soundcloud.com") and is_jwt(c["value"]):
                 return c["value"]
     tok = token()
     if not tok:
+        # Токен в куке протух: страница обновит его по refresh-токену.
         call("Target.createTarget", {"url": "https://soundcloud.com/"})
         for _ in range(10):
             time.sleep(1)
             tok = token()
             if tok:
                 break
-    if not tok:
-        sys.exit(2)
-    print("BROWSER " + name)
-    print("TOKEN " + tok)
+    proc.terminate()
+    try:
+        proc.wait(5)
+    except Exception:
+        proc.kill()
+    proc = None
+    return tok
+
+try:
+    # Сначала те, где токен свежее; Firefox читается без запуска браузера.
+    ready = []
+    for expiry, kind, label, data in cands:
+        if kind == "firefox":
+            try:
+                token, expiry = firefox_token(data)
+            except Exception:
+                continue
+            if token:
+                ready.append((expiry, "firefox", label, token))
+        else:
+            ready.append((expiry, kind, label, data))
+    ready.sort(key=lambda r: r[0], reverse=True)
+    for expiry, kind, label, data in ready:
+        try:
+            tok = data if kind == "firefox" else chromium_token(*data)
+        except Exception:
+            failed = True
+            continue
+        if tok:
+            print("BROWSER " + label)
+            print("TOKEN " + tok)
+            sys.exit(0)
+        failed = True
+    sys.exit(3 if failed else 2)
 except SystemExit:
     raise
 except Exception:
