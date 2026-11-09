@@ -193,10 +193,16 @@ setTimeout(()=>{if(!done())console.log('TOKEN пока не найден: обн
 				rpl::single(Tr("Токен SoundCloud")),
 				TokenFromText(QGuiApplication::clipboard()->text())),
 			st::boxRowPadding);
-		const auto pasteButton = Ui::CreateChild<Ui::RoundButton>(
-			box,
-			rpl::single(Tr("Вставить из буфера")),
-			st::defaultLightButton);
+		const auto pasteButton = box->addRow(
+			object_ptr<Ui::RoundButton>(
+				content,
+				rpl::single(Tr("Вставить из буфера")),
+				st::defaultLightButton),
+			style::margins(
+				st::boxRowPadding.left(),
+				0,
+				st::boxRowPadding.right(),
+				st::boxLittleSkip));
 		pasteButton->setClickedCallback([=] {
 			const auto fromClipboard = TokenFromText(
 				QGuiApplication::clipboard()->text());
