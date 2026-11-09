@@ -53,12 +53,12 @@ constexpr auto kSoundCloudUrl = "https://soundcloud.com/";
 	const auto bare = trimmed.startsWith(u"TOKEN:"_q)
 		? trimmed.mid(6).trimmed()
 		: trimmed;
-	if (TokenPattern().match(bare).hasMatch() && bare.size() <= 800) {
+	if (TokenPattern().match(bare).hasMatch() && bare.size() <= 4096) {
 		return bare;
 	}
 	const auto pattern = QRegularExpression(
 		u"\"(?:oauth_token|access_token)\"\\s*:\\s*\""
-		u"([A-Za-z0-9_.-]{20,800})\""_q);
+		u"([A-Za-z0-9_.-]{20,4096})\""_q);
 	if (const auto found = pattern.match(trimmed); found.hasMatch()) {
 		return found.captured(1);
 	}
@@ -144,7 +144,7 @@ const scanText=(t)=>{
   const s=String(t);
   const u=s.match(/oauth_token=([A-Za-z0-9_.%-]+)/);
   if(u)add(decodeURIComponent(u[1]));
-  const j=s.match(/"(?:oauth_token|access_token)"\s*:\s*"([A-Za-z0-9_.-]{20,800})"/);
+  const j=s.match(/"(?:oauth_token|access_token)"\s*:\s*"([A-Za-z0-9_.-]{20,4096})"/);
   if(j)add(j[1]);
 };
 // Заголовок Authorization у запросов.

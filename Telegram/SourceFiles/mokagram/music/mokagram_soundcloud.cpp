@@ -88,7 +88,7 @@ QString &ClientId() {
 	// oauth_token SoundCloud — JWT из трёх частей через точку. Иногда бывает
 	// старый вид "2-293746-185937845-AbCd". Токен уходит в Authorization, поэтому
 	// пускаем только безопасные символы и ограничиваем длину.
-	if (token.isEmpty() || token.size() > 800) {
+	if (token.isEmpty() || token.size() > 4096) {
 		return false;
 	}
 	static const auto pattern = QRegularExpression(
