@@ -154,7 +154,6 @@ struct Queue {
 	bool telegramSearch = false;
 	PeerId selectedChat;
 	// Умный поток: очередь сама пополняется, пока играет.
-	bool personalStream = false;
 	bool stream = false;
 	bool refilling = false;
 	bool waiting = false;            // очередь кончилась, ждём пополнения
@@ -476,8 +475,7 @@ bool RecordCurrentListen(bool finished) {
 }
 
 bool StreamEnabled() {
-	return QueueState().personalStream
-		|| Mokagram::Settings::Bool(u"music.smart_stream"_q);
+	return Mokagram::Settings::Bool(u"music.smart_stream"_q);
 }
 
 // Убирает из хвоста очереди то, что добавил подборщик (после позиции from).
@@ -1727,7 +1725,7 @@ private:
 
 };
 
-void PlayAll(const std::vector<Track> &tracks, bool personal = false) {
+void PlayAll(const std::vector<Track> &tracks) {
 	auto &queue = QueueState();
 	if (tracks.empty()) {
 		return;
@@ -1736,7 +1734,6 @@ void PlayAll(const std::vector<Track> &tracks, bool personal = false) {
 	queue.radio.reset();
 	queue.pendingRadio.reset();
 	queue.tracks = tracks;
-	queue.personalStream = personal;
 	queue.stream = StreamEnabled();
 	queue.refilling = false;
 	queue.waiting = false;
@@ -5587,92 +5584,6 @@ private:
 	bool _loading = false;
 };
 
-class MyVibeView final : public Ui::RpWidget {
-public:
-	MyVibeView(QWidget *parent, int availableHeight, Fn<void()> activate)
-	: RpWidget(parent)
-	, _availableHeight(availableHeight)
-	, _button(Ui::CreateChild<Ui::RoundButton>(this,
-		rpl::single(text("Включить мою волну")), Mokagram::BoxParts::PillActive())) {
-		_button->setClickedCallback(std::move(activate));
-		const auto tracks = LikedTracks();
-		for (auto i = 0; i < std::min(int(tracks.size()), 4); ++i) {
-			LoadImage(ArtUrl(tracks[i].artworkUrl, u"t500x500"_q),
-				crl::guard(this, [=](QImage image) {
-					_covers[i] = std::move(image);
-					update();
-				}));
-		}
-	}
-
-	void setState(bool loading, bool active, bool playing, const QString &note) {
-		const auto label = text(loading ? "Подбираю музыку под ваш вкус…"
-			: active ? (playing ? "Приостановить волну" : "Продолжить волну")
-			: "Включить мою волну");
-		if (_buttonText != label) {
-			_buttonText = label;
-			_button->setText(rpl::single(label));
-		}
-		_button->setDisabled(loading);
-		_note = note;
-		update();
-	}
-
-protected:
-	int resizeGetHeight(int newWidth) override {
-		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto height = std::max(_availableHeight, s(490));
-		const auto side = std::min(s(240), std::max(newWidth - s(48), 0));
-		_art = QRect((newWidth - side) / 2, std::max(s(24), (height - side - s(200)) / 2), side, side);
-		_button->resize(std::min(s(320), std::max(newWidth - s(48), 0)), s(44));
-		_button->move((newWidth - _button->width()) / 2, _art.bottom() + s(112));
-		return height;
-	}
-	void paintEvent(QPaintEvent *) override {
-		const auto s = [](int v) { return style::ConvertScale(v); };
-		auto p = QPainter(this);
-		auto hq = PainterHighQualityEnabler(p);
-		auto clip = QPainterPath();
-		clip.addRoundedRect(_art, s(28), s(28));
-		p.save();
-		p.setClipPath(clip);
-		p.fillRect(_art, st::windowBg);
-		for (auto i = 0; i != 4; ++i) {
-			if (_covers[i].isNull()) continue;
-			const auto half = _art.width() / 2;
-			const auto target = QRect(_art.x() + (i % 2) * half,
-				_art.y() + (i / 2) * half, half, half);
-			const auto edge = std::min(_covers[i].width(), _covers[i].height());
-			p.drawImage(target, _covers[i], QRect((_covers[i].width() - edge) / 2,
-				(_covers[i].height() - edge) / 2, edge, edge));
-		}
-		p.restore();
-		auto title = st::semiboldFont->f;
-		title.setPixelSize(s(32));
-		p.setFont(title);
-		p.setPen(st::windowFg);
-		p.drawText(QRect(s(16), _art.bottom() + s(22), width() - s(32), s(44)),
-			Qt::AlignCenter, text("Моя волна"));
-		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
-		p.drawText(QRect(s(24), _art.bottom() + s(70), width() - s(48), s(32)),
-			Qt::AlignCenter | Qt::TextWordWrap, text("Ваш вкус. Знакомые треки и новые открытия."));
-		p.drawText(QRect(s(24), _art.bottom() + s(170), width() - s(48), s(64)),
-			Qt::AlignHCenter | Qt::TextWordWrap, _note);
-	}
-
-private:
-	static QString text(const char *key) {
-		return QString::fromUtf8(Mokagram::Lang::Tr(key));
-	}
-	int _availableHeight = 0;
-	Ui::RoundButton *_button = nullptr;
-	QRect _art;
-	std::array<QImage, 4> _covers;
-	QString _note;
-	QString _buttonText;
-};
-
 class FullscreenPlayer final : public Ui::RpWidget {
 public:
 	FullscreenPlayer(
@@ -5775,9 +5686,9 @@ public:
 				scheduleHomeMoreIfNeeded();
 			}
 		}, lifetime());
-		const auto names = std::array<const char*, 7>{
-			"Сейчас играет", "Главная", "Для вас", "Поиск", "Библиотека", "Плейлисты", "Очередь" };
-		for (auto i = 0; i != int(_nav.size()); ++i) {
+		const auto names = std::array<const char*, 6>{
+			"Сейчас играет", "Главная", "Поиск", "Библиотека", "Плейлисты", "Очередь" };
+		for (auto i = 0; i != 6; ++i) {
 			const auto item = Ui::CreateChild<NavItem>(
 				this,
 				QString::fromUtf8(Mokagram::Lang::Tr(names[i])),
@@ -6179,7 +6090,7 @@ protected:
 			update(layout.bar);
 		}
 	}
-	enum class Tab { Now, Home, ForYou, Search, Library, Playlists, Queue };
+	enum class Tab { Now, Home, Search, Library, Playlists, Queue };
 	struct Layout {
 		bool verticalNav = false;
 		bool showRight = false;
@@ -6264,7 +6175,7 @@ protected:
 		} else {
 			const auto contentWidth = std::max(width() - 2 * margin, 0);
 			result.center = QRect((width() - contentWidth) / 2, top, contentWidth, areaHeight);
-			result.scrollTop = result.center.y() + ((_tab == Tab::Home || _tab == Tab::ForYou || _tab == Tab::Library || _tab == Tab::Queue || _tab == Tab::Playlists)
+			result.scrollTop = result.center.y() + ((_tab == Tab::Home || _tab == Tab::Library || _tab == Tab::Queue || _tab == Tab::Playlists)
 				? 0
 				: (_tab == Tab::Search)
 				? ((!_searchChats && contentWidth < s(500)) ? s(172) : s(124))
@@ -6686,7 +6597,7 @@ protected:
 		_homeReturnToArtist = false;
 		_nav[1]->setActiveColor(Qt::white);
 		++_homeAlbumGeneration;
-		for (auto i = 0; i != int(_nav.size()); ++i) {
+		for (auto i = 0; i != 6; ++i) {
 			_nav[i]->setActive(i == int(tab));
 		}
 		if (tab == Tab::Library) {
@@ -6696,24 +6607,6 @@ protected:
 		auto event = QResizeEvent(size(), size());
 		resizeEvent(&event);
 		refresh();
-	}
-	void loadForYou() {
-		if (_forYouLoading) {
-			return;
-		}
-		_forYouLoading = true;
-		BuildForYou(30, crl::guard(this, [=](std::vector<Track> tracks, QString note) {
-			auto &queue = QueueState();
-			queue.forYou = std::move(tracks);
-			queue.forYouNote = std::move(note);
-			_forYouLoading = false;
-			if (!queue.forYou.empty()) {
-				PlayAll(queue.forYou, true);
-			}
-			if (_tab == Tab::ForYou) {
-				rebuildTab();
-			}
-		}));
 	}
 	void syncLibrary() {
 		if (!Account::IsLoggedIn()
@@ -6737,7 +6630,6 @@ protected:
 			switch (_tab) {
 			case Tab::Now: return "Сейчас играет";
 			case Tab::Home: return "Главная";
-			case Tab::ForYou: return "Для вас";
 			case Tab::Search: return "Поиск";
 			case Tab::Library: return "Любимые";
 			case Tab::Playlists: return "Плейлисты";
@@ -7009,7 +6901,6 @@ protected:
 		const auto keep = (_rebuiltTab == _tab) ? _tabScroll->scrollTop() : 0;
 		_rebuiltTab = _tab;
 		_searchResultWidgets.clear();
-		_vibe = nullptr;
 		_tabList->clear();
 		_tabNote.clear();
 		if (_tab != Tab::Playlists) {
@@ -7256,18 +7147,6 @@ protected:
 				section(tr("Избранное"), 2, liked);
 			}
 		} break;
-		case Tab::ForYou: {
-			_vibe = _tabList->add(object_ptr<MyVibeView>(
-				_tabList, _tabScroll->height(), crl::guard(this, [=] {
-					if (QueueState().personalStream && QueueState().stream) {
-						Media::Player::instance()->playPause(AudioMsgId::Type::Song);
-					} else {
-						loadForYou();
-						refresh();
-					}
-				})));
-			refresh();
-		} break;
 		case Tab::Search:
 			if (emptySearch) {
 				break;
@@ -7462,7 +7341,7 @@ protected:
 
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
 		if (_tab != Tab::Now && !(_tab == Tab::Home && _homeAlbumOpen)) {
-			if (_tab != Tab::Home && _tab != Tab::ForYou && _tab != Tab::Library
+			if (_tab != Tab::Home && _tab != Tab::Library
 				&& _tab != Tab::Playlists && _tab != Tab::Search && _tab != Tab::Queue) {
 				p.setFont(labelFont(19, true));
 				p.setPen(Qt::white);
@@ -7790,14 +7669,6 @@ private:
 	}
 
 	void refresh() {
-		if (_vibe) {
-			const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
-			const auto playing = !Media::Player::IsPausedOrPausing(state.state)
-				&& !Media::Player::IsStoppedOrStopping(state.state);
-			_vibe->setState(_forYouLoading,
-				QueueState().personalStream && QueueState().stream, playing,
-				_forYouLoading ? QString() : QueueState().forYouNote);
-		}
 		_backdrop.refresh([=] {
 			update();
 			_view->update();
@@ -7975,7 +7846,7 @@ private:
 	HomeEdgeFade *_topFade = nullptr;
 	HomeEdgeFade *_bottomFade = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
-	std::array<NavItem*, 7> _nav = {};
+	std::array<NavItem*, 6> _nav = {};
 	Ui::Animations::Simple _navSlide;
 	Ui::Animations::Simple _homeEntrance;
 	QLineEdit *_searchField = nullptr;
@@ -8000,8 +7871,6 @@ private:
 	bool _searchChats = false;
 	Tab _tab = Tab::Now;
 	Tab _rebuiltTab = Tab::Queue;
-	bool _forYouLoading = false;
-	MyVibeView *_vibe = nullptr;
 	bool _librarySyncLoading = false;
 	crl::time _librarySyncSucceeded = 0;
 	QString _tabNote;
