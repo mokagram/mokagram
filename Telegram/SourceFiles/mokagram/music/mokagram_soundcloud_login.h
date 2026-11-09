@@ -8,11 +8,17 @@
 // только если автоматика не сработала.
 #pragma once
 
+class QPainter;
+class QRectF;
+
 namespace Mokagram::Music {
 
 // Показывает окно входа: автовход через браузер и ручной ввод токена.
 // onLoggedIn зовётся в главном потоке после успешного входа.
 void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed = nullptr);
+
+// Круглый оранжевый значок SoundCloud со знаком: облако и столбики звука.
+void PaintSoundCloudBadge(QPainter &p, const QRectF &r);
 
 // Открыть страницу SoundCloud в системном браузере.
 [[nodiscard]] bool OpenSoundCloudInBrowser();

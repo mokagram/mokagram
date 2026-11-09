@@ -6,22 +6,29 @@
 
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 
 #include "core/application.h"
 #include "lang/lang_keys.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/toast/toast.h"
+#include "ui/painter.h"
+#include "ui/rp_widget.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
+#include "ui/wrap/vertical_layout.h"
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "main/main_session.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
+
+#include <array>
 
 #include <QtCore/QPointer>
 #include <QtCore/QProcess>
@@ -31,6 +38,7 @@
 #include <QtCore/QUrl>
 #include <QtGui/QClipboard>
 #include <QtGui/QDesktopServices>
+#include <QtGui/QPainterPath>
 #include <QtGui/QGuiApplication>
 
 namespace Mokagram::Music {
@@ -193,6 +201,54 @@ finally:
 
 } // namespace
 
+void PaintSoundCloudBadge(QPainter &p, const QRectF &r) {
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(Qt::NoPen);
+	p.setBrush(QColor(0xFF, 0x55, 0x00));
+	p.drawEllipse(r);
+
+	// Знак: пять столбиков звука слева и облако справа.
+	const auto w = r.width() * 0.62;
+	const auto h = w * 0.56;
+	const auto mark = QRectF(
+		r.center().x() - w / 2,
+		r.center().y() - h / 2,
+		w,
+		h);
+	p.setBrush(Qt::white);
+	const auto bar = w * 0.052;
+	const auto heights = std::array<double, 5>{ 0.40, 0.58, 0.70, 0.52, 0.66 };
+	for (auto i = 0; i != 5; ++i) {
+		const auto bh = h * heights[i];
+		const auto x = mark.left() + w * 0.015 + i * w * 0.085;
+		p.drawRoundedRect(
+			QRectF(x, mark.bottom() - bh - h * 0.12, bar, bh),
+			bar / 2,
+			bar / 2);
+	}
+	// Облако справа: основание, левая стенка и два бугра.
+	const auto x0 = mark.left() + w * 0.46;
+	const auto cw = mark.right() - x0;
+	p.drawRoundedRect(
+		QRectF(x0, mark.top() + h * 0.22, cw * 0.075, h * 0.78),
+		cw * 0.0375,
+		cw * 0.0375);
+	p.drawRoundedRect(
+		QRectF(x0 + cw * 0.04, mark.top() + h * 0.42, cw * 0.96, h * 0.58),
+		h * 0.24,
+		h * 0.24);
+	p.drawEllipse(QRectF(
+		x0 + cw * 0.16,
+		mark.top() + h * 0.12,
+		h * 0.64,
+		h * 0.64));
+	p.drawEllipse(QRectF(
+		mark.right() - h * 0.84,
+		mark.top(),
+		h * 0.84,
+		h * 0.84));
+}
+
 bool OpenSoundCloudInBrowser() {
 	return QDesktopServices::openUrl(QUrl(QString::fromLatin1(kSoundCloudUrl)));
 }
@@ -218,67 +274,85 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 	};
 
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(rpl::single(Tr("Вход в SoundCloud")));
-		box->setWidth(st::boxWideWidth);
-
+		Plugins::RoundedWindow(box);
+		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto content = box->verticalLayout();
-		const auto side = st::boxRowPadding.left();
-		const auto status = content->add(
+
+		// Шапка как в окне «Информация о сообщении»: закрыть и название.
+		const auto header = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(s(10), s(10), s(10), 0));
+		header->resize(header->width(), s(40));
+		const auto close = Plugins::MakeHeaderButton(
+			header,
+			true,
+			[=] { box->closeBox(); });
+		const auto title = Ui::CreateChild<Ui::FlatLabel>(
+			header,
+			Tr("Вход в SoundCloud"),
+			st::boxTitle);
+		header->widthValue() | rpl::on_next([=](int width) {
+			close->moveToLeft(0, 0);
+			title->moveToLeft((width - title->width()) / 2, s(6));
+		}, header->lifetime());
+		Ui::AddSkip(content, s(8));
+
+		// Карточка: значок и одна строка, она же показывает ход входа.
+		const auto card = content->add(
+			object_ptr<Ui::VerticalLayout>(content),
+			QMargins(s(14), s(4), s(14), 0));
+		card->paintOn([=](QPainter &p) {
+			BoxParts::PaintCard(p, card->rect());
+		});
+		const auto badge = card->add(
+			object_ptr<Ui::RpWidget>(card),
+			QMargins(0, s(22), 0, 0));
+		badge->resize(badge->width(), s(72));
+		badge->paintOn([=](QPainter &p) {
+			const auto size = s(72);
+			PaintSoundCloudBadge(p, QRectF(
+				(badge->width() - size) / 2.,
+				0.,
+				size,
+				size));
+		});
+		static const auto centered = [] {
+			auto result = st::boxLabel;
+			result.align = style::al_top;
+			return result;
+		}();
+		const auto status = card->add(
 			object_ptr<Ui::FlatLabel>(
-				content,
-				Tr("Вход возьмётся из вашего браузера: достаточно один раз войти на soundcloud.com. Вводить ничего не нужно."),
-				st::boxLabel),
-			style::margins(side, 0, side, st::boxLittleSkip));
+				card,
+				Tr("Возьмём вход из вашего браузера. Достаточно один раз войти на soundcloud.com."),
+				centered),
+			QMargins(s(24), s(16), s(24), s(22)));
 
 		// Ручной ввод спрятан: нужен, только если автоматика не сработала.
-		const auto manualLink = content->add(
-			object_ptr<Ui::LinkButton>(
-				content,
-				Tr("Токен вручную"),
-				st::defaultLinkButton),
-			style::margins(side, 0, side, st::boxLittleSkip));
 		const auto manual = content->add(
 			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 				content,
 				object_ptr<Ui::VerticalLayout>(content)));
 		manual->toggle(false, anim::type::instant);
-		const auto inner = manual->entity();
-		inner->add(
+		const auto manualCard = manual->entity()->add(
+			object_ptr<Ui::VerticalLayout>(manual->entity()),
+			QMargins(s(14), s(8), s(14), 0));
+		manualCard->paintOn([=](QPainter &p) {
+			BoxParts::PaintCard(p, manualCard->rect());
+		});
+		manualCard->add(
 			object_ptr<Ui::FlatLabel>(
-				inner,
+				manualCard,
 				Tr("Токен лежит в cookie oauth_token на soundcloud.com."),
-				st::boxLabel),
-			style::margins(side, st::boxLittleSkip, side, st::boxLittleSkip));
-		const auto field = inner->add(
+				st::boxDividerLabel),
+			QMargins(s(16), s(14), s(16), 0));
+		const auto field = manualCard->add(
 			object_ptr<Ui::InputField>(
-				inner,
-				st::defaultInputField,
+				manualCard,
+				BoxParts::CardField(st::defaultInputField),
 				rpl::single(Tr("Токен SoundCloud")),
 				TokenFromText(QGuiApplication::clipboard()->text())),
-			st::boxRowPadding);
-		const auto pasteButton = inner->add(
-			object_ptr<Ui::RoundButton>(
-				inner,
-				rpl::single(Tr("Вставить из буфера")),
-				st::defaultLightButton),
-			style::margins(side, st::boxLittleSkip, side, st::boxLittleSkip));
-		pasteButton->setClickedCallback([=] {
-			const auto fromClipboard = TokenFromText(
-				QGuiApplication::clipboard()->text());
-			if (fromClipboard.isEmpty()) {
-				Ui::Toast::Show(Tr("В буфере обмена нет токена."));
-				return;
-			}
-			field->setText(fromClipboard);
-			field->setFocusFast();
-		});
-
-		manualLink->setClickedCallback([=] {
-			manual->toggle(!manual->toggled(), anim::type::normal);
-			if (manual->toggled()) {
-				field->setFocusFast();
-			}
-		});
+			QMargins(0, s(4), 0, s(6)));
 
 		const auto busy = std::make_shared<bool>(false);
 		const auto guarded = QPointer<Ui::GenericBox>(box);
@@ -374,10 +448,59 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 			manual->toggle(true, anim::type::normal);
 		};
 		field->submits() | rpl::on_next(submit, field->lifetime());
-		box->setFocusCallback([=] { field->setFocusFast(); });
 
-		box->addButton(rpl::single(Tr("Войти через браузер")), submit);
-		box->addButton(rpl::single(Tr("Отмена")), [=] { box->closeBox(); });
+		// Две пилюли на всю ширину, как кнопка «Копировать» в эталоне.
+		static const auto stMain = [] {
+			auto result = st::defaultActiveButton;
+			result.height = style::ConvertScale(44);
+			result.textTop = style::ConvertScale(12);
+			result.radius = style::ConvertScale(22);
+			result.fullRadius = true;
+			return result;
+		}();
+		static const auto stSecond = [] {
+			auto result = BoxParts::PillLight();
+			result.height = style::ConvertScale(44);
+			result.textTop = style::ConvertScale(12);
+			result.radius = style::ConvertScale(22);
+			return result;
+		}();
+		const auto addPill = [=](
+				const style::RoundButton &st,
+				const QString &text,
+				Fn<void()> callback,
+				QMargins margins) {
+			const auto row = content->add(
+				object_ptr<Ui::RpWidget>(content),
+				margins);
+			row->resize(row->width(), st.height);
+			const auto button = Ui::CreateChild<Ui::RoundButton>(
+				row,
+				rpl::single(text),
+				st);
+			row->widthValue() | rpl::on_next([=](int width) {
+				button->setFullWidth(width);
+				button->moveToLeft(0, 0);
+			}, row->lifetime());
+			button->setClickedCallback(std::move(callback));
+			return button;
+		};
+		addPill(
+			stMain,
+			Tr("Войти через браузер"),
+			submit,
+			QMargins(s(14), s(12), s(14), 0));
+		addPill(
+			stSecond,
+			Tr("Токен вручную"),
+			[=] {
+				manual->toggle(!manual->toggled(), anim::type::normal);
+				if (manual->toggled()) {
+					field->setFocusFast();
+				}
+			},
+			QMargins(s(14), s(8), s(14), s(14)));
+
 		box->boxClosing() | rpl::on_next([=] {
 			crl::on_main([=] { finish(false); });
 		}, box->lifetime());

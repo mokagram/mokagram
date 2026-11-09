@@ -171,6 +171,7 @@
 	{ "Автовход пока только на Linux. Введите токен вручную.", "Automatic sign-in is Linux-only for now. Enter the token manually." },
 	{ "Войти через браузер", "Sign in via browser" },
 	{ "Токен вручную", "Enter token manually" },
+	{ "Возьмём вход из вашего браузера. Достаточно один раз войти на soundcloud.com.", "We will take the sign-in from your browser. Just sign in at soundcloud.com once." },
 	{ "Вход в SoundCloud", "Sign in to SoundCloud" },
 	{ "Не удалось открыть окно браузера.", "Couldn't open the browser window." },
 	{ "нет аккаунта SoundCloud", "no SoundCloud account" },
