@@ -1377,3 +1377,8 @@
 	{ "стирает всё", "wipes everything" },
 	{ "удаляет прокси", "removes proxies" },
 	{ "чистит кэш", "clears cache" },
+	{ "Панель", "Bar" },
+	{ "Расположение", "Position" },
+	{ "Значки", "Icons" },
+	{ "Скрытые значки панели", "Hidden bar icons" },
+	{ "Порядок значков панели", "Bar icons order" },

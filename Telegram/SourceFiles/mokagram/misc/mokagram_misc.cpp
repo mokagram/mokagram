@@ -723,6 +723,26 @@ void RegisterSettings() {
 		.category = u"look"_q,
 		.sectionIcon = u"palette"_q,
 	});
+	// Какие значки показывать в закреплённой панели и в каком порядке
+	// (имена через перевод строки). Правится окном по ПКМ на панели.
+	Settings::Register({
+		.key = u"look.bar_hidden"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Боковое меню")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Скрытые значки панели")),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString(),
+		.category = u"look"_q,
+		.hidden = true,
+	});
+	Settings::Register({
+		.key = u"look.bar_order"_q,
+		.section = QString::fromUtf8(Mokagram::Lang::Tr("Боковое меню")),
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Порядок значков панели")),
+		.kind = Settings::Kind::String,
+		.defaultValue = QString(),
+		.category = u"look"_q,
+		.hidden = true,
+	});
 	Settings::Register({
 		.key = u"privacy.lock_all"_q,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Приватный режим")),

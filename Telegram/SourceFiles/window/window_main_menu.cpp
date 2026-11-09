@@ -74,6 +74,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "ui/unread_badge_paint.h"
 #include "ui/vertical_list.h"
+#include "ui/wrap/vertical_layout_reorder.h"
+#include "ui/layers/generic_box.h"
+#include "base/algorithm.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/menu/menu_action.h"
@@ -194,6 +197,48 @@ private:
 
 };
 
+// Mokagram: какие значки показаны в панели и в каком порядке.
+// Имя значка это его подпись, списки хранятся через перевод строки.
+[[nodiscard]] QStringList BarList(const QString &key) {
+	const auto value = Mokagram::Settings::String(key);
+	return value.isEmpty() ? QStringList() : value.split(QChar('\n'));
+}
+
+void SaveBarList(const QString &key, const QStringList &list) {
+	Mokagram::Settings::SetString(key, list.join(QChar('\n')));
+}
+
+struct BarItem {
+	QString id;
+	QString text;
+	const style::icon *icon = nullptr;
+};
+
+// Имя значка панели не зависит от языка: по значку пункта меню.
+[[nodiscard]] QString BarIconName(const style::icon *icon) {
+	const auto names = std::vector<std::pair<const style::icon*, QString>>{
+		{ &st::menuIconProfile, u"profile"_q },
+		{ &st::menuIconGroups, u"groups"_q },
+		{ &st::menuIconChannel, u"channel"_q },
+		{ &st::menuIconSavedMessages, u"saved"_q },
+		{ &st::menuIconBotCommands, u"plugins"_q },
+		{ &st::menuIconSoundOn, u"music"_q },
+		{ &st::menuIconTopics, u"feed"_q },
+		{ &st::menuIconAdd, u"story"_q },
+		{ &st::menuIconPin, u"pin"_q },
+		{ &st::menuIconRestore, u"restore"_q },
+		{ &st::menuIconSettings, u"settings"_q },
+		{ &st::menuIconLock, u"lock"_q },
+		{ &st::menuIconNightMode, u"night"_q },
+	};
+	for (const auto &[pointer, name] : names) {
+		if (pointer == icon) {
+			return name;
+		}
+	}
+	return QString();
+}
+
 // Кнопка-значок одного пункта меню в горизонтальной панели.
 class BarButton final : public Ui::AbstractButton {
 public:
@@ -212,6 +257,12 @@ public:
 	}
 	void refresh() {
 		update();
+	}
+	void setId(const QString &id) {
+		_id = id;
+	}
+	[[nodiscard]] const QString &id() const {
+		return _id;
 	}
 	// Появление: 0 прозрачна и мала, 1 на месте.
 	void setReveal(double value) {
@@ -295,6 +346,7 @@ private:
 	const style::icon *_icon = nullptr;
 	Fn<bool()> _toggled;
 	double _reveal = 0.;
+	QString _id;
 	bool _wasOn = false;
 	Ui::Animations::Simple _hover;
 	Ui::Animations::Simple _press;
@@ -439,6 +491,221 @@ private:
 	}
 };
 
+// Mokagram: ручка перетаскивания строки в окне панели.
+class BarGrip final : public Ui::RpWidget {
+public:
+	explicit BarGrip(not_null<Ui::RpWidget*> parent) : RpWidget(parent) {
+		setCursor(style::cur_sizeall);
+		resize(style::ConvertScale(32), style::ConvertScale(32));
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = Painter(this);
+		st::usernamesReorderIcon.paintInCenter(p, rect());
+	}
+	void mousePressEvent(QMouseEvent *e) override {
+	}
+
+};
+
+// Строка значка в окне панели: значок, подпись, переключатель, ручка.
+class BarRow final : public Ui::RpWidget {
+public:
+	BarRow(
+		QWidget *parent,
+		const BarItem &item,
+		bool shown,
+		Fn<void()> changed)
+	: RpWidget(parent)
+	, _item(item)
+	, _shown(shown) {
+		_switch = Mokagram::BoxParts::MakeSwitch(this, shown, [=](bool on) {
+			_shown = on;
+			update();
+			changed();
+		});
+		_grip = Ui::CreateChild<BarGrip>(this);
+	}
+
+	[[nodiscard]] const QString &id() const {
+		return _item.id;
+	}
+	[[nodiscard]] bool shown() const {
+		return _shown;
+	}
+	[[nodiscard]] Ui::RpWidget *grip() const {
+		return _grip;
+	}
+
+private:
+	int resizeGetHeight(int newWidth) override {
+		return style::ConvertScale(52);
+	}
+	void resizeEvent(QResizeEvent *e) override {
+		const auto side = style::ConvertScale(12);
+		_grip->move(
+			width() - side - _grip->width(),
+			(height() - _grip->height()) / 2);
+		_switch->move(
+			_grip->x() - style::ConvertScale(8) - _switch->width(),
+			(height() - _switch->height()) / 2);
+	}
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		p.setOpacity(_shown ? 1. : 0.45);
+		const auto side = style::ConvertScale(18);
+		const auto icon = _item.icon;
+		if (icon) {
+			icon->paint(
+				p,
+				QPoint(side, (height() - icon->height()) / 2),
+				width(),
+				st::menuIconFg->c);
+		}
+		const auto left = side
+			+ (icon ? icon->width() : 0)
+			+ style::ConvertScale(14);
+		const auto available = _switch->x() - style::ConvertScale(8) - left;
+		p.setPen(st::windowFg);
+		p.setFont(st::normalFont);
+		p.drawText(
+			QRect(left, 0, available, height()),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			st::normalFont->elided(_item.text, available));
+	}
+
+	const BarItem _item;
+	bool _shown = true;
+	QPointer<Ui::AbstractButton> _switch;
+	QPointer<BarGrip> _grip;
+
+};
+
+// Окно по ПКМ на панели: сторона закрепления, показ и порядок значков.
+void ShowBarBox(
+		not_null<SessionController*> controller,
+		std::vector<BarItem> items) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		namespace BP = Mokagram::BoxParts;
+		BP::RoundLayer(box);
+		box->setStyle(BP::PillButtonsBox());
+		box->setTitle(rpl::single(QString::fromUtf8(
+			Mokagram::Lang::Tr("Панель"))));
+		const auto content = box->verticalLayout();
+		const auto outer = BP::kOuterSide;
+
+		Ui::AddSubsectionTitle(
+			content,
+			rpl::single(QString::fromUtf8(
+				Mokagram::Lang::Tr("Расположение"))));
+		const auto place = content->add(
+			object_ptr<Ui::RpWidget>(content),
+			QMargins(outer, 0, outer, 0));
+		place->resize(place->width(), style::ConvertScale(64));
+		place->paintRequest(
+		) | rpl::on_next([=](QRect clip) {
+			auto p = QPainter(place);
+			BP::PaintCard(p, place->rect());
+		}, place->lifetime());
+		auto docks = std::vector<DockButton*>();
+		for (const auto side : { 0, 1, 2, 3 }) {
+			docks.push_back(Ui::CreateChild<DockButton>(place, side, 40));
+		}
+		place->sizeValue(
+		) | rpl::on_next([=](QSize size) {
+			const auto gap = style::ConvertScale(12);
+			const auto one = docks.front()->width();
+			const auto total = int(docks.size()) * one
+				+ (int(docks.size()) - 1) * gap;
+			auto x = (size.width() - total) / 2;
+			for (const auto dock : docks) {
+				dock->move(x, (size.height() - dock->height()) / 2);
+				x += one + gap;
+			}
+		}, place->lifetime());
+
+		Ui::AddSkip(content);
+		Ui::AddSubsectionTitle(
+			content,
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Значки"))));
+		const auto list = content->add(
+			object_ptr<Ui::VerticalLayout>(content),
+			QMargins(outer, 0, outer, 0));
+		list->paintRequest(
+		) | rpl::on_next([=](QRect clip) {
+			auto p = QPainter(list);
+			BP::PaintCard(p, list->rect());
+		}, list->lifetime());
+
+		struct Rows {
+			std::vector<BarRow*> rows;
+			std::unique_ptr<Ui::VerticalLayoutReorder> reorder;
+		};
+		const auto state = list->lifetime().make_state<Rows>();
+		const auto save = [=] {
+			auto order = QStringList();
+			auto hidden = QStringList();
+			for (const auto row : state->rows) {
+				order.push_back(row->id());
+				if (!row->shown()) {
+					hidden.push_back(row->id());
+				}
+			}
+			SaveBarList(u"look.bar_order"_q, order);
+			SaveBarList(u"look.bar_hidden"_q, hidden);
+		};
+		const auto hidden = BarList(u"look.bar_hidden"_q);
+		const auto order = BarList(u"look.bar_order"_q);
+		const auto position = [&](const BarItem &item) {
+			const auto index = order.indexOf(item.id);
+			return (index < 0) ? int(order.size()) : index;
+		};
+		auto sorted = items;
+		std::stable_sort(sorted.begin(), sorted.end(), [&](
+				const BarItem &a,
+				const BarItem &b) {
+			return position(a) < position(b);
+		});
+		for (const auto &item : sorted) {
+			state->rows.push_back(list->add(object_ptr<BarRow>(
+				list,
+				item,
+				!hidden.contains(item.id),
+				save)));
+		}
+		state->reorder = std::make_unique<Ui::VerticalLayoutReorder>(list);
+		state->reorder->setMouseEventProxy([=](int i) {
+			return state->rows[i]->grip();
+		});
+		state->reorder->start();
+		state->reorder->updates(
+		) | rpl::on_next([=](Ui::VerticalLayoutReorder::Single data) {
+			using Step = Ui::VerticalLayoutReorder::State;
+			if (data.state == Step::Applied) {
+				base::reorder(
+					state->rows,
+					data.oldPosition,
+					data.newPosition);
+				save();
+			}
+		}, list->lifetime());
+
+		Ui::AddSkip(content);
+
+		box->addButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Готово"))),
+			[=] { box->closeBox(); });
+		box->addLeftButton(
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Сбросить"))),
+			[=] {
+				SaveBarList(u"look.bar_order"_q, QStringList());
+				SaveBarList(u"look.bar_hidden"_q, QStringList());
+				box->closeBox();
+			});
+	}));
+}
+
 class DockBar final : public Ui::RpWidget {
 public:
 	DockBar(QWidget *parent, int side)
@@ -455,6 +722,13 @@ public:
 				&& S::Int(u"look.menu_side"_q) == _side)) {
 				close();
 			}
+		}, lifetime());
+		Mokagram::Settings::Changed(
+		) | rpl::filter([](const QString &key) {
+			return key == u"look.bar_hidden"_q || key == u"look.bar_order"_q;
+		}) | rpl::on_next([=] {
+			layoutChildren(_docksAnim.value(_docksOpen ? 1. : 0.));
+			update();
 		}, lifetime());
 		_collapse.setCallback([=] { setDocksOpen(false); });
 		_slide.start(
@@ -487,8 +761,33 @@ public:
 	void toggleDocks() {
 		setDocksOpen(!_docksOpen);
 	}
+	// ПКМ по пустому месту панели.
+	void setContextCallback(Fn<void()> callback) {
+		_context = std::move(callback);
+	}
 
 private:
+	// Значки в порядке из настроек, скрытые не входят.
+	[[nodiscard]] std::vector<QPointer<BarButton>> ordered() const {
+		const auto hidden = BarList(u"look.bar_hidden"_q);
+		const auto order = BarList(u"look.bar_order"_q);
+		auto result = std::vector<QPointer<BarButton>>();
+		for (const auto &button : _buttons) {
+			if (button && !hidden.contains(button->id())) {
+				result.push_back(button);
+			}
+		}
+		const auto position = [&](const QPointer<BarButton> &button) {
+			const auto index = order.indexOf(button->id());
+			return (index < 0) ? int(order.size()) : index;
+		};
+		std::stable_sort(result.begin(), result.end(), [&](
+				const QPointer<BarButton> &a,
+				const QPointer<BarButton> &b) {
+			return position(a) < position(b);
+		});
+		return result;
+	}
 	void setDocksOpen(bool open) {
 		if (_docksOpen == open) {
 			return;
@@ -576,12 +875,7 @@ private:
 		const auto skip = style::ConvertScale(4);
 		const auto margin = skip * 3;
 		const auto full = style::ConvertScale(44);
-		auto total = 0;
-		for (const auto &button : _buttons) {
-			if (button) {
-				++total;
-			}
-		}
+		const auto total = int(ordered().size());
 		const auto from = (_account ? _account->x() + _account->width() : margin) + skip;
 		const auto to = width() - margin - (_burger ? _burger->width() : 0) - skip;
 		const auto row = total * full + std::max(total - 1, 0) * skip;
@@ -659,12 +953,13 @@ private:
 		const auto from = (_account ? _account->x() + _account->width() : margin) + skip;
 		const auto to = burgerLeft - skip;
 		const auto span = std::max(to - from, 0);
-		auto total = 0;
+		const auto list = ordered();
 		for (const auto &button : _buttons) {
-			if (button) {
-				++total;
+			if (button && std::find(list.begin(), list.end(), button) == list.end()) {
+				button->hide();
 			}
 		}
+		const auto total = int(list.size());
 		auto size = full;
 		auto gap = skip;
 		auto capacity = total;
@@ -683,7 +978,7 @@ private:
 			from,
 			std::max(to - itemsWidth, from));
 		auto index = 0;
-		for (const auto &button : _buttons) {
+		for (const auto &button : list) {
 			if (!button) {
 				continue;
 			}
@@ -721,6 +1016,19 @@ private:
 	void resizeEvent(QResizeEvent *e) override {
 		layoutChildren(_docksAnim.value(_docksOpen ? 1. : 0.));
 	}
+	void mousePressEvent(QMouseEvent *e) override {
+		_rightPressed = (e->button() == Qt::RightButton);
+		e->accept();
+	}
+	void mouseReleaseEvent(QMouseEvent *e) override {
+		if (e->button() == Qt::RightButton
+			&& _rightPressed
+			&& rect().contains(e->pos())
+			&& _context) {
+			_context();
+		}
+		_rightPressed = false;
+	}
 	void paintEvent(QPaintEvent *e) override {
 		// Прямая плашка без скруглений.
 		auto p = QPainter(this);
@@ -731,6 +1039,8 @@ private:
 	bool _closing = false;
 	bool _docksOpen = false;
 	bool _dropdown = false;
+	bool _rightPressed = false;
+	Fn<void()> _context;
 	QPointer<Ui::RpWidget> _pill;
 	Ui::Animations::Simple _slide;
 	Ui::Animations::Simple _docksAnim;
@@ -1355,6 +1665,7 @@ not_null<Ui::RpWidget*> MainMenu::createDockBar(QWidget *parent, int side) {
 			toggle
 				? Fn<bool()>([=] { return source && source->toggled(); })
 				: Fn<bool()>());
+		button->setId(entry.id);
 		button->show();
 		const auto alt = entry.alt;
 		button->clicks(
@@ -1388,6 +1699,15 @@ not_null<Ui::RpWidget*> MainMenu::createDockBar(QWidget *parent, int side) {
 		}
 	}, burger->lifetime());
 	bar->setBurger(burger);
+	bar->setContextCallback([=] {
+		auto items = std::vector<BarItem>();
+		for (const auto &entry : _barEntries) {
+			if (entry.button) {
+				items.push_back({ entry.id, entry.text, entry.icon });
+			}
+		}
+		ShowBarBox(_controller, std::move(items));
+	});
 	const auto account = Ui::CreateChild<AccountBarButton>(
 		bar,
 		&_controller->session());
@@ -1488,6 +1808,24 @@ void MainMenu::setupMenu() {
 		rpl::duplicate(text) | rpl::take(1) | rpl::on_next([&](QString value) {
 			entry.text = std::move(value);
 		}, lifetime());
+		{
+			auto id = BarIconName(entry.icon);
+			if (id.isEmpty()) {
+				id = u"t:"_q + entry.text;
+			}
+			const auto base = id;
+			auto n = 1;
+			const auto taken = [&](const QString &check) {
+				return std::any_of(
+					_barEntries.begin(),
+					_barEntries.end(),
+					[&](const BarEntry &e) { return e.id == check; });
+			};
+			while (taken(id)) {
+				id = base + u"#"_q + QString::number(++n);
+			}
+			entry.id = id;
+		}
 		const auto button = _menu->add(
 			CreateButtonWithIcon(
 				_menu,
@@ -1549,7 +1887,7 @@ void MainMenu::setupMenu() {
 		});
 		addAction(
 			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Лента"))),
-			{ &st::menuIconChannel }
+			{ &st::menuIconTopics }
 		)->setClickedCallback([=] {
 			Mokagram::Feed::Show(controller);
 		});

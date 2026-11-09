@@ -65,6 +65,7 @@ private:
 	class ResetScaleButton;
 
 	struct BarEntry {
+		QString id; // не зависит от языка
 		QString text;
 		const style::icon *icon = nullptr;
 		QPointer<Ui::SettingsButton> button;
