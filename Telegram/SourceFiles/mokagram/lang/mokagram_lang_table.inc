@@ -143,6 +143,7 @@
 	{ "лайков: %1", "likes: %1" },
 	{ "SoundCloud подключён.", "SoundCloud connected." },
 	{ "1. Откройте SoundCloud в браузере и войдите в аккаунт.", "1. Open SoundCloud in your browser and sign in." },
+	{ "2. Скопируйте короткий скрипт и вставьте его в консоль SoundCloud. Он найдёт токен автоматически.", "2. Copy the short script and paste it into the SoundCloud console. It will find the token automatically." },
 	{ "2. На странице SoundCloud нажмите F12, вставьте код ниже в консоль и скопируйте результат.", "2. On the SoundCloud page press F12, paste the code below into the console and copy the result." },
 	{ "3. Вставьте сюда токен из буфера обмена.", "3. Paste the token from the clipboard here." },
 	{ "Не удалось открыть браузер.", "Couldn't open the browser." },

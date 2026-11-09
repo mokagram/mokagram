@@ -1297,6 +1297,33 @@ void DrawHeart(QPainter &p, const QRectF &r, bool filled, const QColor &color) {
 	p.restore();
 }
 
+void DrawSoundCloudMark(QPainter &p, const QRectF &r) {
+	const auto mark = r.adjusted(
+		r.width() * 0.2,
+		r.height() * 0.2,
+		-r.width() * 0.2,
+		-r.height() * 0.2);
+	QPainterPath shape;
+	shape.moveTo(mark.left(), mark.bottom());
+	shape.lineTo(mark.left(), mark.top() + mark.height() * 0.55);
+	shape.cubicTo(
+		mark.left(), mark.top() + mark.height() * 0.18,
+		mark.left() + mark.width() * 0.28, mark.top(),
+		mark.left() + mark.width() * 0.48, mark.top() + mark.height() * 0.22);
+	shape.cubicTo(
+		mark.left() + mark.width() * 0.62, mark.top() + mark.height() * 0.05,
+		mark.right(), mark.top() + mark.height() * 0.2,
+		mark.right(), mark.top() + mark.height() * 0.58);
+	shape.lineTo(mark.right(), mark.bottom());
+	shape.closeSubpath();
+
+	p.save();
+	p.setPen(Qt::NoPen);
+	p.setBrush(Qt::white);
+	p.drawPath(shape);
+	p.restore();
+}
+
 [[nodiscard]] const QColor &HeartColor() {
 	static const auto color = QColor(255, 77, 109);
 	return color;
@@ -1564,19 +1591,15 @@ protected:
 			p.setBrush(Qt::NoBrush);
 			p.drawRoundedRect(r.adjusted(s(2), s(2), -s(2), -s(2)), s(10), s(10));
 		}
-		// Значок SoundCloud: оранжевый кружок.
+		// Значок SoundCloud: фирменная форма вместо символа из системного шрифта.
 		const auto badge = QRect(
 			s(12),
 			(height() - s(32)) / 2,
 			s(32),
 			s(32));
-		p.setBrush(QColor(0xFF, 0x55, 0x00));
+		p.setBrush(QColor(0xF2, 0x6F, 0x23));
 		p.drawEllipse(badge);
-		auto font = st::semiboldFont->f;
-		font.setPixelSize(s(15));
-		p.setFont(font);
-		p.setPen(Qt::white);
-		p.drawText(badge, Qt::AlignCenter, u"☁"_q);
+		DrawSoundCloudMark(p, badge);
 
 		auto titleFont = st::semiboldFont->f;
 		titleFont.setPixelSize(s(14));
