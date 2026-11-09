@@ -43,6 +43,7 @@
 #include "base/call_delayed.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/music/mokagram_motion.h"
 #include "mokagram/music/mokagram_music_ui.h"
 #include "data/data_user.h"
 #include "dialogs/dialogs_row.h"
@@ -1687,6 +1688,77 @@ void CustomizeBox(
 			strong->showToast(text);
 		}
 	};
+
+	// Аккаунт SoundCloud живёт на странице «Музыка»: строка-кнопка входа и
+	// отключение. Статус строки обновляется вместе с аккаунтом.
+	const auto soundCloud = std::make_shared<Ui::SlideWrap<Ui::VerticalLayout>>(
+		content,
+		object_ptr<Ui::VerticalLayout>(content),
+		QMargins(kOuterSide, 0, kOuterSide, 0));
+	if (page == u"music"_q) {
+		Mokagram::Music::RegisterSoundCloudSettings();
+		auto entries = std::vector<Entry>();
+		for (const auto &entry : Entries()) {
+			if (entry.key.startsWith(u"music.soundcloud_"_q)) {
+				entries.push_back(entry);
+			}
+		}
+		const auto inner = soundCloud->entity();
+		const auto head = inner->add(
+			object_ptr<Ui::FlatLabel>(
+				inner,
+				U(Mokagram::Lang::Tr("SOUNDCLOUD")),
+				HeadLabelStyle()),
+			QMargins(kPad, 20, kPad, 6));
+		MakeTransparent(head);
+		const auto card = inner->add(object_ptr<Ui::VerticalLayout>(inner));
+		PaintGroupBg(card);
+		const auto grey = Categories().back().color;
+		auto first = true;
+		for (const auto &entry : entries) {
+			if (!entry.action) {
+				continue;
+			}
+			const auto action = entry.action;
+			AddActionRow(
+				card,
+				entry.key.endsWith(u"_logout"_q)
+					? entry.title
+					: (Mokagram::Music::Account::IsLoggedIn()
+						? U(Mokagram::Lang::Tr("Аккаунт SoundCloud подключён"))
+						: entry.title),
+				entry.description,
+				entry.key.endsWith(u"_logout"_q)
+					? st::menuIconDelete
+					: st::menuIconProfile,
+				grey,
+				first,
+				[=] {
+					action();
+				},
+				entry.key.endsWith(u"_logout"_q)
+					? QString()
+					: QString::fromUtf8("🔗"));
+			first = false;
+		}
+		Mokagram::Music::Account::Changes(
+		) | rpl::on_next([=] {
+			auto value = QString::fromUtf8(
+				Mokagram::Lang::Tr("Подключено"));
+			const auto info = Mokagram::Music::Account::User();
+			if (!info.username.isEmpty()) {
+				value = u"@"_q + info.username;
+			}
+			SetString(
+				u"music.soundcloud_login"_q,
+				Mokagram::Music::Account::IsLoggedIn()
+					? value
+					: U(Mokagram::Lang::Tr("Подключить")));
+		}, box->lifetime());
+		soundCloud->toggle(true, anim::type::instant);
+	} else {
+		soundCloud->toggle(false, anim::type::instant);
+	}
 
 	// Закреплённая шапка: закрыть, название, поиск и ниже чипы разделов.
 	const auto pinned = box->setPinnedToTopContent(
