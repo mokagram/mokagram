@@ -1315,33 +1315,6 @@ void DrawHeart(QPainter &p, const QRectF &r, bool filled, const QColor &color) {
 	p.restore();
 }
 
-void DrawSoundCloudMark(QPainter &p, const QRectF &r) {
-	const auto mark = r.adjusted(
-		r.width() * 0.2,
-		r.height() * 0.2,
-		-r.width() * 0.2,
-		-r.height() * 0.2);
-	QPainterPath shape;
-	shape.moveTo(mark.left(), mark.bottom());
-	shape.lineTo(mark.left(), mark.top() + mark.height() * 0.55);
-	shape.cubicTo(
-		mark.left(), mark.top() + mark.height() * 0.18,
-		mark.left() + mark.width() * 0.28, mark.top(),
-		mark.left() + mark.width() * 0.48, mark.top() + mark.height() * 0.22);
-	shape.cubicTo(
-		mark.left() + mark.width() * 0.62, mark.top() + mark.height() * 0.05,
-		mark.right(), mark.top() + mark.height() * 0.2,
-		mark.right(), mark.top() + mark.height() * 0.58);
-	shape.lineTo(mark.right(), mark.bottom());
-	shape.closeSubpath();
-
-	p.save();
-	p.setPen(Qt::NoPen);
-	p.setBrush(Qt::white);
-	p.drawPath(shape);
-	p.restore();
-}
-
 [[nodiscard]] const QColor &HeartColor() {
 	static const auto color = QColor(255, 77, 109);
 	return color;
@@ -1575,11 +1548,12 @@ public:
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
 		refresh();
+		setMouseTracking(true);
 		setClickedCallback([=] {
-			if (Mokagram::Music::Account::IsLoggedIn()) {
-				_logout();
-			} else {
+			if (!Mokagram::Music::Account::IsLoggedIn()) {
 				_login();
+			} else if (_pill.contains(mapFromGlobal(QCursor::pos()))) {
+				_logout();
 			}
 		});
 		Mokagram::Music::Account::Changes() | rpl::on_next([=] {
@@ -1592,41 +1566,60 @@ public:
 
 protected:
 	int resizeGetHeight(int newWidth) override {
-		// Строка «Подключить SoundCloud» рисуется сама и высоту держит сама.
-		return style::ConvertScale(64);
+		return style::ConvertScale(72);
 	}
 
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto r = rect().adjusted(0, 0, -1, -1);
+		const auto r = rect();
 		p.setPen(Qt::NoPen);
-		p.setBrush(isOver() ? st::windowBgOver->c : st::windowBgRipple->c);
-		p.drawRoundedRect(r, s(12), s(12));
+		p.setBrush(_logged || !isOver() ? st::windowBg->c : st::windowBgOver->c);
+		p.drawRoundedRect(r, s(22), s(22));
 		if (hasFocus()) {
 			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
 			p.setBrush(Qt::NoBrush);
-			p.drawRoundedRect(r.adjusted(s(2), s(2), -s(2), -s(2)), s(10), s(10));
+			p.drawRoundedRect(r.adjusted(s(2), s(2), -s(2), -s(2)), s(20), s(20));
 		}
-		// Значок SoundCloud: фирменная форма вместо символа из системного шрифта.
 		const auto badge = QRect(
-			s(12),
-			(height() - s(32)) / 2,
-			s(32),
-			s(32));
-		p.setBrush(QColor(0xF2, 0x6F, 0x23));
-		p.drawEllipse(badge);
-		DrawSoundCloudMark(p, badge);
+			s(14),
+			(height() - s(44)) / 2,
+			s(44),
+			s(44));
+		Mokagram::Music::PaintSoundCloudBadge(p, badge);
 
 		auto titleFont = st::semiboldFont->f;
-		titleFont.setPixelSize(s(14));
+		titleFont.setPixelSize(s(15));
 		p.setFont(titleFont);
 		p.setPen(st::windowFg);
-		const auto textLeft = badge.right() + s(12);
-		const auto textRight = width() - s(12);
+		const auto textLeft = badge.right() + s(14);
+		_pill = QRect();
+		auto textRight = width() - s(16);
+		if (_logged) {
+			// «Отключить» пилюлей справа: отключает только она, не вся плашка.
+			const auto label = QString::fromUtf8(
+				Mokagram::Lang::Tr("Отключить"));
+			const auto metrics = QFontMetrics(st::normalFont->f);
+			const auto pillWidth = metrics.horizontalAdvance(label) + s(28);
+			_pill = QRect(
+				width() - s(14) - pillWidth,
+				(height() - s(34)) / 2,
+				pillWidth,
+				s(34));
+			const auto over = _pillOver;
+			p.setPen(Qt::NoPen);
+			p.setBrush(over ? st::windowBgRipple->c : st::windowBgOver->c);
+			p.drawRoundedRect(_pill, s(17), s(17));
+			p.setFont(st::normalFont);
+			p.setPen(over ? st::windowFg : st::windowSubTextFg);
+			p.drawText(_pill, Qt::AlignCenter, label);
+			textRight = _pill.left() - s(12);
+			p.setFont(titleFont);
+			p.setPen(st::windowFg);
+		}
 		p.drawText(
-			QRect(textLeft, s(8), textRight - textLeft, s(20)),
+			QRect(textLeft, s(15), textRight - textLeft, s(20)),
 			Qt::AlignVCenter | Qt::AlignLeft,
 			_logged
 				? QString::fromUtf8(Mokagram::Lang::Tr("SoundCloud"))
@@ -1635,19 +1628,29 @@ protected:
 		p.setPen(st::windowSubTextFg);
 		const auto noteFont = QFontMetrics(st::normalFont->f);
 		p.drawText(
-			QRect(textLeft, s(28), textRight - textLeft, s(18)),
+			QRect(textLeft, s(37), textRight - textLeft, s(18)),
 			Qt::AlignVCenter | Qt::AlignLeft,
 			noteFont.elidedText(
 				_note,
 				Qt::ElideRight,
 				textRight - textLeft));
-		p.setPen(isOver() ? st::windowFg : st::windowSubTextFg);
-		p.drawText(
-			QRect(textLeft, s(8), textRight - textLeft, s(20)),
-			Qt::AlignVCenter | Qt::AlignRight,
-			_logged
-				? QString::fromUtf8(Mokagram::Lang::Tr("Отключить"))
-				: QString());
+	}
+
+	void mouseMoveEvent(QMouseEvent *e) override {
+		Ui::AbstractButton::mouseMoveEvent(e);
+		const auto over = _pill.contains(e->pos());
+		if (_pillOver != over) {
+			_pillOver = over;
+			update();
+		}
+	}
+
+	void leaveEventHook(QEvent *e) override {
+		Ui::AbstractButton::leaveEventHook(e);
+		if (_pillOver) {
+			_pillOver = false;
+			update();
+		}
 	}
 
 private:
@@ -1673,6 +1676,8 @@ private:
 	Fn<void()> _login;
 	Fn<void()> _logout;
 	QString _note;
+	QRect _pill;
+	bool _pillOver = false;
 	bool _logged = false;
 
 };
