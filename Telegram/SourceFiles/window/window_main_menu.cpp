@@ -422,6 +422,23 @@ private:
 
 // Горизонтальная панель меню у верхнего или нижнего края области чата.
 // Её высота в раскладке задаётся свойством "moka-progress" (0..1), оно анимируется.
+// Выпадашка бургера в узкой панели: пилюля под панелью с кнопками закрепления.
+class DockPill final : public Ui::RpWidget {
+public:
+	explicit DockPill(QWidget *parent) : RpWidget(parent) {
+		setAttribute(Qt::WA_TransparentForMouseEvents, false);
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(rect(), height() / 2., height() / 2.);
+	}
+};
+
 class DockBar final : public Ui::RpWidget {
 public:
 	DockBar(QWidget *parent, int side)
@@ -448,6 +465,12 @@ public:
 			anim::easeOutCubic);
 	}
 
+	~DockBar() {
+		if (_pill) {
+			_pill->deleteLater();
+		}
+	}
+
 	void add(not_null<BarButton*> button) {
 		_buttons.push_back(QPointer<BarButton>(button.get()));
 	}
@@ -471,6 +494,10 @@ private:
 			return;
 		}
 		_docksOpen = open;
+		if (open) {
+			_dropdown = needsDropdown();
+			attachDocks();
+		}
 		for (const auto &dock : _docks) {
 			if (dock && open) {
 				dock->show();
@@ -495,6 +522,9 @@ private:
 				if (dock) {
 					dock->hide();
 				}
+			}
+			if (_pill) {
+				_pill->hide();
 			}
 		}
 		layoutChildren(value);
@@ -539,6 +569,76 @@ private:
 		if (_closing && !_slide.animating()) {
 			deleteLater();
 		}
+	}
+	// Свободного места справа от ряда не хватает на кнопки закрепления: они
+	// открываются вниз отдельной пилюлей, а не наезжают на значки.
+	[[nodiscard]] bool needsDropdown() const {
+		const auto skip = style::ConvertScale(4);
+		const auto margin = skip * 3;
+		const auto full = style::ConvertScale(44);
+		auto total = 0;
+		for (const auto &button : _buttons) {
+			if (button) {
+				++total;
+			}
+		}
+		const auto from = (_account ? _account->x() + _account->width() : margin) + skip;
+		const auto to = width() - margin - (_burger ? _burger->width() : 0) - skip;
+		const auto row = total * full + std::max(total - 1, 0) * skip;
+		const auto dockWidth = _docks.empty() || !_docks.front()
+			? style::ConvertScale(32)
+			: _docks.front()->width();
+		const auto docks = int(_docks.size()) * (dockWidth + skip);
+		return (to - from) - row < docks;
+	}
+	// Кнопки закрепления живут в пилюле (узкая панель) или прямо в панели.
+	void attachDocks() {
+		if (_dropdown && !_pill) {
+			_pill = Ui::CreateChild<DockPill>(parentWidget());
+			_pill->hide();
+		}
+		const auto target = _dropdown
+			? static_cast<QWidget*>(_pill.data())
+			: static_cast<QWidget*>(this);
+		for (const auto &dock : _docks) {
+			if (dock && dock->parentWidget() != target) {
+				dock->setParent(target);
+				dock->hide();
+			}
+		}
+	}
+	void layoutPill(double value) {
+		if (!_pill || !_burger) {
+			return;
+		}
+		const auto skip = style::ConvertScale(4);
+		const auto pad = skip * 2;
+		auto widthSum = pad;
+		auto heightMax = 0;
+		for (const auto &dock : _docks) {
+			if (dock) {
+				widthSum += dock->width() + skip;
+				heightMax = std::max(heightMax, dock->height());
+			}
+		}
+		widthSum += pad - skip;
+		const auto fullHeight = heightMax + pad * 2;
+		auto x = pad;
+		for (const auto &dock : _docks) {
+			if (dock) {
+				dock->move(x, pad);
+				x += dock->width() + skip;
+			}
+		}
+		const auto shown = int(base::SafeRound(fullHeight * value));
+		const auto right = this->x() + _burger->x() + _burger->width();
+		_pill->setGeometry(
+			right - widthSum,
+			this->y() + height() + skip,
+			widthSum,
+			std::max(shown, 0));
+		_pill->setVisible(shown > 0);
+		_pill->raise();
 	}
 	void layoutChildren(double docksOpen) {
 		const auto skip = style::ConvertScale(4);
@@ -596,6 +696,10 @@ private:
 			button->move(x, (height() - size) / 2);
 			x += size + gap;
 		}
+		if (_dropdown) {
+			layoutPill(docksOpen);
+			return;
+		}
 		// Четыре кнопки закрепления выезжают влево из бургера.
 		auto offset = 0;
 		for (const auto &dock : _docks) {
@@ -607,6 +711,11 @@ private:
 			dock->move(
 				int(base::SafeRound(burgerLeft + (target - burgerLeft) * docksOpen)),
 				(height() - dock->height()) / 2);
+		}
+	}
+	void moveEvent(QMoveEvent *e) override {
+		if (_dropdown) {
+			layoutPill(_docksAnim.value(_docksOpen ? 1. : 0.));
 		}
 	}
 	void resizeEvent(QResizeEvent *e) override {
@@ -621,6 +730,8 @@ private:
 	const int _side = 2;
 	bool _closing = false;
 	bool _docksOpen = false;
+	bool _dropdown = false;
+	QPointer<Ui::RpWidget> _pill;
 	Ui::Animations::Simple _slide;
 	Ui::Animations::Simple _docksAnim;
 	base::Timer _collapse;
