@@ -1550,7 +1550,7 @@ public:
 		setFocusPolicy(Qt::TabFocus);
 		_refreshButton = Ui::CreateChild<Ui::RoundButton>(
 			this,
-			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Обновить интеграцию"))),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Обновить"))),
 			Mokagram::BoxParts::PillLight());
 		_disconnectButton = Ui::CreateChild<Ui::RoundButton>(
 			this,
@@ -1577,7 +1577,6 @@ public:
 		setClickedCallback([=] {
 			if (!Mokagram::Music::Account::IsLoggedIn()) {
 				_login();
-
 			}
 		});
 		Mokagram::Music::Account::Changes() | rpl::on_next([=] {

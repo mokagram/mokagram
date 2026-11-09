@@ -658,7 +658,6 @@
 	{ "Нужна перезагрузка", "Restart required" },
 	{ "Нужны имя из букв и цифр и существующая команда", "A name of letters and digits and an existing command are required" },
 	{ "Обновить", "Update" },
-	{ "Обновить интеграцию", "Refresh" },
 	{ "Обновляем…", "Refreshing…" },
 	{ "Обновление не установлено: ", "Update not installed: " },
 	{ "Обновление скачалось с ошибкой, попробуйте позже.", "The update downloaded with an error, try again later." },
