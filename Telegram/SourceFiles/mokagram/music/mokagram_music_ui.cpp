@@ -3688,11 +3688,18 @@ protected:
 		p.setPen(Qt::NoPen);
 		p.setBrush(QColor(0x36, 0x36, 0x36));
 		p.drawRoundedRect(bar, s(2), s(2));
+		// Сегмент въезжает слева и уезжает вправо за край полоски, поэтому на
+		// стыке цикла нет скачка в начало.
 		const auto segment = bar.width() * 0.3;
 		const auto phase = _started ? std::fmod((crl::now() - _started) / 1400., 1.) : 0.;
-		const auto x = bar.left() + (bar.width() - segment) * phase;
+		const auto x = bar.left() - segment + (bar.width() + segment) * phase;
+		p.save();
+		auto clip = QPainterPath();
+		clip.addRoundedRect(bar, s(2), s(2));
+		p.setClipPath(clip);
 		p.setBrush(st::windowActiveTextFg);
 		p.drawRoundedRect(QRectF(x, bar.top(), segment, bar.height()), s(2), s(2));
+		p.restore();
 		for (auto i = 0; i != 6; ++i) {
 			const auto left = gap + (i % columns) * (cardWidth + gap);
 			const auto top = s(56) + (i / columns) * (cardHeight + gap);
