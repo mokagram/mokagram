@@ -2866,7 +2866,7 @@ public:
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Исполнитель")) + u": "_q + _track.artist);
 		setClickedCallback([=] { open(_track); });
 		const auto url = _track.artistArtworkUrl.isEmpty() ? _track.artworkUrl : _track.artistArtworkUrl;
-		LoadImage(ArtUrl(url, u"t500x500"_q), crl::guard(this, [=](QImage image) {
+		LoadImage(ArtUrl(url, u"t200x200"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
 			_scaledArt = QImage();
 			update();
@@ -3152,10 +3152,13 @@ public:
 		auto albumIndex = 0;
 		auto artistIndex = 0;
 		const auto limit = _expanded ? tracks.size() + albums.size() + artists.size() : size_t(12);
+		const auto artistKey = (artists.empty() ? 0ULL : artists.front().artistId.toULongLong())
+			+ (tracks.empty() ? 0ULL : tracks.front().id.toULongLong());
+		const auto artistSlot = 1 + int(artistKey % 4);
 		while (_items.size() < limit
 			&& (trackIndex < int(tracks.size()) || albumIndex < int(albums.size()) || artistIndex < int(artists.size()))) {
 			if (artistIndex < int(artists.size()) && openArtist
-				&& ((_items.size() % 4) == 1 || (trackIndex >= int(tracks.size()) && albumIndex >= int(albums.size())))) {
+				&& ((_items.size() % 4) == artistSlot || (trackIndex >= int(tracks.size()) && albumIndex >= int(albums.size())))) {
 				_items.push_back(Ui::CreateChild<HomeArtistCard>(_content, artists[artistIndex++], openArtist));
 			} else if (albumIndex < int(albums.size())
 				&& ((_items.size() % 3) == 2 || (trackIndex >= int(tracks.size()) && artistIndex >= int(artists.size())))) {
@@ -5621,6 +5624,11 @@ public:
 			_nav[i] = item;
 		}
 		_nav[0]->setActive(true);
+		Account::Changes() | rpl::on_next([=] {
+			if (_tab == Tab::Library) {
+				syncLibrary();
+			}
+		}, lifetime());
 		_searchField = Ui::CreateChild<QLineEdit>(this);
 		_searchField->setFrame(false);
 		_searchField->installEventFilter(this);
@@ -6513,10 +6521,30 @@ protected:
 		for (auto i = 0; i != 6; ++i) {
 			_nav[i]->setActive(i == int(tab));
 		}
+		if (tab == Tab::Library) {
+			syncLibrary();
+		}
 		rebuildTab();
 		auto event = QResizeEvent(size(), size());
 		resizeEvent(&event);
 		refresh();
+	}
+	void syncLibrary() {
+		if (!Account::IsLoggedIn()
+			|| _librarySyncLoading
+			|| (_librarySyncSucceeded
+				&& crl::now() - _librarySyncSucceeded < 60 * 1000)) {
+			return;
+		}
+		_librarySyncLoading = true;
+		Account::SyncLikes(crl::guard(this, [=](int, int, QString error) {
+			_librarySyncLoading = false;
+			if (error.isEmpty()) {
+				_librarySyncSucceeded = crl::now();
+			} else if (_tab == Tab::Library) {
+				_controller->showToast(error);
+			}
+		}));
 	}
 	[[nodiscard]] QString tabTitle() const {
 		const auto text = [&]() -> const char* {
@@ -7764,6 +7792,8 @@ private:
 	bool _searchChats = false;
 	Tab _tab = Tab::Now;
 	Tab _rebuiltTab = Tab::Queue;
+	bool _librarySyncLoading = false;
+	crl::time _librarySyncSucceeded = 0;
 	QString _tabNote;
 	QString _openedPlaylist;
 	bool _heartOwn = false;
