@@ -121,7 +121,7 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				Tr("2. На странице SoundCloud нажмите F12, вставьте код ниже в консоль. Он напечатает токен под ним."),
+				Tr("2. На странице SoundCloud нажмите F12 для консоли, вставьте код ниже и нажмите Enter. Потом обновите страницу (F5): токен появится в консоли строкой TOKEN: 2-..."),
 				st::boxLabel),
 			style::margins(st::boxRowPadding.left(), st::boxLittleSkip, st::boxRowPadding.right(), st::boxLittleSkip));
 
@@ -129,30 +129,29 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		// copy() в DevTools кладёт в буфер не всегда, поэтому нужен вывод.
 		const auto snippet = QString::fromUtf8(
 			R"JS((()=>{
+// Перехват сети: SoundCloud присылает токен в ответах api-v2.soundcloud.com.
 const M=/"(?:oauth_token|access_token)"\s*:\s*"([0-9][A-Za-z0-9_-]{14,80})"/;
-const out=new Set();
-const add=(t)=>{if(!t)return;const m=String(t).match(M);if(m)out.add(m[1]);};
-try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);add(k);add(localStorage.getItem(k))}}catch(e){}
-try{for(let i=0;i<sessionStorage.length;i++){const k=sessionStorage.key(i);add(k);add(sessionStorage.getItem(k))}}catch(e){}
-add(document.cookie);
-const dbs=indexedDB.databases?indexedDB.databases():Promise.resolve([]);
-dbs.then(list=>Promise.all(list.map(db=>new Promise(r=>{
-  const q=indexedDB.open(db.name);
-  q.onerror=()=>r();
-  q.onsuccess=()=>{
-    const d=q.result;const names=[...d.objectStoreNames];
-    if(!names.length)return r();
-    const tx=d.transaction(names,'readonly');
-    Promise.all(names.map(n=>new Promise(r2=>{
-      try{const all=tx.objectStore(n).getAll();all.onerror=()=>r2();
-        all.onsuccess=()=>{try{add(JSON.stringify(all.result))}catch(e){}r2()}}catch(e){r2()}
-    }))).then(()=>{d.close();r()});
-  };
-})))).then(()=>{
-  const v=[...out].sort((a,b)=>b.length-a.length)[0];
-  if(v){console.log('TOKEN:',v);try{copy(v)}catch(e){}}
-  else{console.log('TOKEN NOT FOUND: откройте soundcloud.com, войдите и повторите на этой вкладке')}
-});
+const done=(v)=>{console.log('TOKEN:',v);try{copy(v)}catch(e){}};
+const scan=(t)=>{if(!t)return false;const m=String(t).match(M);if(m){done(m[1]);return true}return false};
+const of=window.fetch;
+window.fetch=function(...a){return of.apply(this,a).then(r=>{
+  try{r.clone().text().then(t=>scan(t)).catch(()=>{})}catch(e){}
+  return r;
+})};
+const oo=XMLHttpRequest.prototype.open;
+const os=XMLHttpRequest.prototype.send;
+XMLHttpRequest.prototype.open=function(m,u){this.__mu=u;return oo.apply(this,arguments)};
+XMLHttpRequest.prototype.send=function(){
+  this.addEventListener('load',()=>{try{scan(this.responseText)}catch(e){}})  ;
+  try{scan(String(this.__mu))}catch(e){}
+  return os.apply(this,arguments);
+};
+// Уже загруженные данные: обходим кэш страницы заново.
+const url=new URL(location.href);url.search='';url.hash='';
+console.log('Перехват включён. Сейчас страница сама запросит данные SoundCloud.');
+setTimeout(()=>{
+  if(!scan(document.cookie)){console.log('Ждём запрос к api-v2.soundcloud.com: обновите страницу (F5), и токен появится выше.')}
+},1500);
 })())JS");
 		const auto snippetLabel = content->add(
 			object_ptr<Ui::FlatLabel>(
@@ -175,7 +174,7 @@ dbs.then(list=>Promise.all(list.map(db=>new Promise(r=>{
 		content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				Tr("3. Скопируйте напечатанную строку и вставьте её здесь."),
+				Tr("3. Скопируйте строку после TOKEN: и вставьте её здесь."),
 				st::boxLabel),
 			style::margins(st::boxRowPadding.left(), st::boxLittleSkip, st::boxRowPadding.right(), st::boxLittleSkip));
 		const auto field = box->addRow(
