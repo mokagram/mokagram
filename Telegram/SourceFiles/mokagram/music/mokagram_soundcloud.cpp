@@ -85,8 +85,12 @@ QString &ClientId() {
 }
 
 [[nodiscard]] bool ValidSessionToken(const QString &token) {
-	// oauth_token уходит в query: пускаем только символы, безопасные внутри URL.
-	return QRegularExpression(u"^[A-Za-z0-9_-]{16,256}$"_q).match(token).hasMatch();
+	// Настоящий oauth_token SoundCloud выглядит как "2-293746-185937845-AbCd".
+	// Заголовок JWT (eyJ...) и прочие строки сюда не проходят: у них нет
+	// ведущей группы цифр через дефис.
+	return QRegularExpression(
+		u"^[0-9][0-9]*-[0-9]+-[0-9]+-[A-Za-z0-9_-]{6,}$"_q).match(token).hasMatch()
+		&& token.size() <= 256;
 }
 
 // Токен входа; живёт в файле рядом с client_id, как и он.
@@ -206,17 +210,14 @@ void EnsureClientId(Fn<void(bool)> done, bool force = false) {
 	});
 }
 
-// client_id со страницы сайта нужен, только когда аккаунт не подключён.
+// client_id нужен всегда: по нему API отдаёт список треков и поток.
+// oauth-токен аккаунта лишь добавляется к запросу, когда он есть.
 void EnsureAnyClientId(Fn<void(bool)> done, bool force) {
-	if (!AccountToken().isEmpty()) {
-		done(true);
-		return;
-	}
 	EnsureClientId(done, force);
 }
 
 // GET с автоматическим обновлением client_id при 401/403 (один повтор).
-// Если аккаунт подключён, вместо client_id уходит его oauth-токен.
+// client_id уходит всегда, вместе с ним, если есть, oauth-токен аккаунта.
 void ApiGet(
 		const QString &base,
 		QUrlQuery query,
@@ -228,9 +229,10 @@ void ApiGet(
 			return;
 		}
 		auto copy = query;
-		if (AccountToken().isEmpty()) {
+		if (!ClientId().isEmpty()) {
 			copy.addQueryItem(u"client_id"_q, ClientId());
-		} else {
+		}
+		if (!AccountToken().isEmpty()) {
 			copy.addQueryItem(u"oauth_token"_q, AccountToken());
 		}
 		auto url = QUrl(base);
