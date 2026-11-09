@@ -483,10 +483,15 @@ void StoreBox(
 		if (::Lang::Id().startsWith(u"ru"_q)) {
 			const auto mod100 = n % 100;
 			const auto mod10 = n % 10;
-			const auto word = (mod100 >= 11 && mod100 <= 14) ? u"установок"_q
-				: (mod10 == 1) ? u"установка"_q
-				: (mod10 >= 2 && mod10 <= 4) ? u"установки"_q
+			const auto key = (mod100 >= 11 && mod100 <= 14)
+				? u"установок"_q
+				: (mod10 == 1)
+				? u"установка"_q
+				: (mod10 >= 2 && mod10 <= 4)
+				? u"установки"_q
 				: u"установок"_q;
+			const auto word = QString::fromUtf8(
+				Mokagram::Lang::Tr(key.toUtf8().constData()));
 			return QString::number(n) + ' ' + word;
 		}
 		return QString::number(n) + (n == 1 ? u" install"_q : u" installs"_q);

@@ -178,7 +178,7 @@ namespace S = Mokagram::Settings;
 
 [[nodiscard]] QString CommandsHelp() {
 	auto lines = QStringList{
-		U(".mute [30m|2h|1d] глушит чат, а ответом на сообщение в группе запрещает человеку писать"),
+		U(Mokagram::Lang::Tr(".mute [30m|2h|1d] глушит чат, а ответом на сообщение в группе запрещает человеку писать")),
 		U(Mokagram::Lang::Tr(".unmute включает звук чата или снимает запрет писать")),
 		U(Mokagram::Lang::Tr(".ban исключает человека (в группе, ответом) или блокирует его в личке")),
 		U(Mokagram::Lang::Tr(".unban снимает бан или разблокирует человека")),

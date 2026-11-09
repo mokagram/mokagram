@@ -897,7 +897,7 @@ std::vector<std::string> SandboxCommand(const std::string &bwrap, const LogFn &l
 			Push(args, { "--bind", real, real });
 			return true;
 		}
-		if (log) log("sandbox: папка не монтируется, пропускаю: " + path);
+		if (log) log(std::string(Mokagram::Lang::Tr("sandbox: папка не монтируется, пропускаю: ")) + path);
 		return false;
 	};
 	const auto defaultRoot = home + "/.local/share/mokagram";
@@ -1028,8 +1028,8 @@ bool SpawnHost(const LogFn &log) {
 	}
 	host.alive = true;
 	host.spawnedAt = std::chrono::steady_clock::now();
-	if (log) log(std::string("plugins: хост плагинов запущен, pid ") + std::to_string(pid)
-		+ (host.sandboxed ? " (bwrap)" : " (без песочницы)"));
+	if (log) log(std::string(Mokagram::Lang::Tr("plugins: хост плагинов запущен, pid ")) + std::to_string(pid)
+		+ (host.sandboxed ? " (bwrap)" : Mokagram::Lang::Tr(" (без песочницы)")));
 	return true;
 }
 
@@ -1375,7 +1375,7 @@ int StartEngine(LogFn log);
 
 int Start(LogFn log) {
 	if (!HasInstalledPlugins()) {
-		if (log) log("plugins: каталог пуст, движок поднимется при установке плагина");
+		if (log) log(Mokagram::Lang::Tr("plugins: каталог пуст, движок поднимется при установке плагина"));
 		return 0;
 	}
 	return StartEngine(std::move(log));
@@ -1410,7 +1410,7 @@ int StartEngine(LogFn log) {
 		return 0;
 	}
 	_started = true;
-	if (log) log("[mokagram-perf] plugins: хост поднят и скрипты загружены за " + perfMs() + " мс");
+	if (log) log(std::string(Mokagram::Lang::Tr("[mokagram-perf] plugins: хост поднят и скрипты загружены за ")) + perfMs() + Mokagram::Lang::Tr(" мс"));
 #else
 	if (!EnsurePython(log)) {
 		return -1;
@@ -1442,7 +1442,7 @@ int StartEngine(LogFn log) {
 		std::string(kTlSchema),
 	});
 #endif
-	if (log) log("[mokagram-perf] plugins: _moka_init за " + perfMs() + " мс (всего с хостом)");
+	if (log) log(std::string(Mokagram::Lang::Tr("[mokagram-perf] plugins: _moka_init за ")) + perfMs() + Mokagram::Lang::Tr(" мс (всего с хостом)"));
 	Drain(log);
 	QueueEvent("app_event", R"({"event":"START"})");
 	if (log) log("plugins loaded: " + count);

@@ -268,7 +268,7 @@ template <typename Callback>
 			break;
 		}
 	}
-	return Reply(false, U("клиент не ответил вовремя"));
+	return Reply(false, U(Mokagram::Lang::Tr("клиент не ответил вовремя")));
 }
 
 std::string ShowToast(const QJsonObject &args) {
@@ -283,8 +283,8 @@ std::string ShowToast(const QJsonObject &args) {
 				return Reply(true);
 			}
 		}
-		LOG(("[mokagram] toast без окна: %1").arg(text));
-		return Reply(false, U("нет открытого окна"));
+		LOG(("[mokagram] toast без окна: %1"_q).arg(text));
+		return Reply(false, U(Mokagram::Lang::Tr("нет открытого окна")));
 	});
 }
 
@@ -454,17 +454,17 @@ std::string SendMessage(const QJsonObject &args) {
 	const auto silent = args.value("silent").toBool();
 	const auto entities = args.value("entities").toArray();
 	if (!peerId || text.isEmpty()) {
-		return Reply(false, U("неверные параметры"));
+		return Reply(false, U(Mokagram::Lang::Tr("неверные параметры")));
 	}
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();
 		if (!session) {
-			return Reply(false, U("нет открытой сессии"));
+			return Reply(false, U(Mokagram::Lang::Tr("нет открытой сессии")));
 		}
 		// Только в чаты, которые уже есть у пользователя: не спам по чужим id.
 		const auto history = session->data().historyLoaded(peerId);
 		if (!history) {
-			return Reply(false, U("чата нет среди загруженных диалогов"));
+			return Reply(false, U(Mokagram::Lang::Tr("чата нет среди загруженных диалогов")));
 		}
 		// Отправка не из стека вызова плагина: хук может быть внутри ApiWrap::sendMessage.
 		const auto weak = base::make_weak(session);
@@ -565,7 +565,7 @@ std::string GetSetting(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto entry = FindEntry(args.value("key").toString());
 		if (!entry) {
-			return Reply(false, U("настройка не зарегистрирована"));
+			return Reply(false, U(Mokagram::Lang::Tr("настройка не зарегистрирована")));
 		}
 		auto result = QJsonObject();
 		result.insert("ok", true);
@@ -584,7 +584,7 @@ std::string ClientSettingGet(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto entry = allowed.contains(key) ? FindEntry(key) : nullptr;
 		if (!entry) {
-			return Reply(false, U("настройка закрыта"));
+			return Reply(false, U(Mokagram::Lang::Tr("настройка закрыта")));
 		}
 		auto result = QJsonObject();
 		result.insert("ok", true);
@@ -599,7 +599,7 @@ std::string SetSetting(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto entry = FindEntry(key);
 		if (!entry || !key.startsWith(U("plugin."))) {
-			return Reply(false, U("настройка не зарегистрирована"));
+			return Reply(false, U(Mokagram::Lang::Tr("настройка не зарегистрирована")));
 		}
 		switch (entry->kind) {
 		case Settings::Kind::Bool:
@@ -636,7 +636,7 @@ std::string GetMessage(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto item = FindItem(args);
 		if (!item) {
-			return Reply(false, U("сообщение не загружено"));
+			return Reply(false, U(Mokagram::Lang::Tr("сообщение не загружено")));
 		}
 		auto result = ItemBrief(item);
 		result.insert("ok", true);
@@ -649,12 +649,12 @@ std::string EditMessage(const QJsonObject &args) {
 	const auto text = args.value("text").toString();
 	const auto entities = args.value("entities").toArray();
 	if (text.isEmpty()) {
-		return Reply(false, U("пустой текст"));
+		return Reply(false, U(Mokagram::Lang::Tr("пустой текст")));
 	}
 	return OnMain([=]() -> std::string {
 		const auto item = FindItem(args);
 		if (!item || !item->out() || !item->canBeEdited()) {
-			return Reply(false, U("это сообщение нельзя изменить"));
+			return Reply(false, U(Mokagram::Lang::Tr("это сообщение нельзя изменить")));
 		}
 		MarkFromPlugin(true);
 		Api::EditTextMessage(
@@ -680,7 +680,7 @@ std::string ChatInfo(const QJsonObject &args) {
 			? session->data().peerLoaded(peerId)
 			: nullptr;
 		if (!peer) {
-			return Reply(false, U("чата нет среди загруженных"));
+			return Reply(false, U(Mokagram::Lang::Tr("чата нет среди загруженных")));
 		}
 		auto result = QJsonObject();
 		result.insert("ok", true);
@@ -710,7 +710,7 @@ std::string OpenChat(const QJsonObject &args) {
 		const auto window = Core::App().activeWindow();
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!peer || !controller) {
-			return Reply(false, U("не удалось открыть чат"));
+			return Reply(false, U(Mokagram::Lang::Tr("не удалось открыть чат")));
 		}
 		if (msgId > 0) {
 			controller->showPeerHistory(
@@ -727,7 +727,7 @@ std::string OpenChat(const QJsonObject &args) {
 std::string OpenUrl(const QJsonObject &args) {
 	const auto url = args.value("url").toString().left(2000);
 	if (!url.startsWith(U("https://")) && !url.startsWith(U("http://"))) {
-		return Reply(false, U("разрешены только http и https"));
+		return Reply(false, U(Mokagram::Lang::Tr("разрешены только http и https")));
 	}
 	return OnMain([=]() -> std::string {
 		UrlClickHandler::Open(url);
@@ -769,7 +769,7 @@ std::string DialogShow(const QJsonObject &args) {
 		const auto window = Core::App().activeWindow();
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller) {
-			return Reply(false, U("нет открытого окна"));
+			return Reply(false, U(Mokagram::Lang::Tr("нет открытого окна")));
 		}
 		const auto id = ++DialogNext;
 		const auto state = std::make_shared<DialogState>();
@@ -946,7 +946,7 @@ std::string DialogUpdate(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto i = Dialogs.find(args.value("id").toInt());
 		if (i == end(Dialogs)) {
-			return Reply(false, U("окно закрыто"));
+			return Reply(false, U(Mokagram::Lang::Tr("окно закрыто")));
 		}
 		const auto &state = i->second;
 		if (args.contains("message") && state->message) {
@@ -1000,7 +1000,7 @@ std::string ShowBulletin(const QJsonObject &args) {
 		const auto window = Core::App().activeWindow();
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller) {
-			return Reply(false, U("нет открытого окна"));
+			return Reply(false, U(Mokagram::Lang::Tr("нет открытого окна")));
 		}
 		const auto kind = args.value("kind").toString();
 		const auto subtitle = args.value("subtitle").toString();
@@ -1236,24 +1236,24 @@ std::string SendFile(const QJsonObject &args) {
 	const auto silent = args.value("silent").toBool();
 	const auto info = QFileInfo(path);
 	if (!peerId || !info.isFile() || info.size() <= 0 || info.size() > (qint64(2000) << 20)) {
-		return Reply(false, U("файл не найден или слишком большой"));
+		return Reply(false, U(Mokagram::Lang::Tr("файл не найден или слишком большой")));
 	}
 	// Мост сам валидирует путь: SDK-проверки в Python обходятся через import __main__.
 	if (!PluginPathAllowed(args.value("pid").toString(), path)) {
-		return Reply(false, U("файл вне разрешённых папок"));
+		return Reply(false, U(Mokagram::Lang::Tr("файл вне разрешённых папок")));
 	}
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();
 		const auto history = session ? session->data().historyLoaded(peerId) : nullptr;
 		if (!history) {
-			return Reply(false, U("чата нет среди загруженных диалогов"));
+			return Reply(false, U(Mokagram::Lang::Tr("чата нет среди загруженных диалогов")));
 		}
 		auto list = Storage::PrepareMediaList(
 			QStringList{ path },
 			st::sendMediaPreviewSize,
 			session->user()->isPremium());
 		if (list.files.empty() && list.filesToProcess.empty()) {
-			return Reply(false, U("файл нельзя отправить"));
+			return Reply(false, U(Mokagram::Lang::Tr("файл нельзя отправить")));
 		}
 		if (!list.files.empty()) {
 			list.files.front().caption = TextWithTags{ caption };
@@ -1329,7 +1329,7 @@ std::string GetDialogs(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();
 		if (!session) {
-			return Reply(false, U("нет открытой сессии"));
+			return Reply(false, U(Mokagram::Lang::Tr("нет открытой сессии")));
 		}
 		auto list = QJsonArray();
 		for (const auto &row : session->data().chatsList()->indexed()->all()) {
@@ -1358,7 +1358,7 @@ std::string GetHistory(const QJsonObject &args) {
 			? session->data().historyLoaded(peerId)
 			: nullptr;
 		if (!history) {
-			return Reply(false, U("чата нет среди загруженных"));
+			return Reply(false, U(Mokagram::Lang::Tr("чата нет среди загруженных")));
 		}
 		auto list = QJsonArray();
 		for (auto b = history->blocks.rbegin(); b != history->blocks.rend(); ++b) {
@@ -1388,7 +1388,7 @@ std::string CurrentChat(const QJsonObject &) {
 			? controller->activeChatCurrent().history()
 			: nullptr;
 		if (!history) {
-			return Reply(false, U("чат не открыт"));
+			return Reply(false, U(Mokagram::Lang::Tr("чат не открыт")));
 		}
 		auto result = PeerBrief(history->peer);
 		result.insert("ok", true);
@@ -1404,7 +1404,7 @@ std::string MarkRead(const QJsonObject &args) {
 			? session->data().historyLoaded(peerId)
 			: nullptr;
 		if (!history) {
-			return Reply(false, U("чата нет среди загруженных"));
+			return Reply(false, U(Mokagram::Lang::Tr("чата нет среди загруженных")));
 		}
 		session->data().histories().readInbox(history);
 		return Reply(true);
@@ -1419,7 +1419,7 @@ std::string GetUserInfo(const QJsonObject &args) {
 			? session->data().peerLoaded(peerId)
 			: nullptr;
 		if (!peer) {
-			return Reply(false, U("чата нет среди загруженных"));
+			return Reply(false, U(Mokagram::Lang::Tr("чата нет среди загруженных")));
 		}
 		auto result = PeerBrief(peer);
 		result.insert("ok", true);
@@ -1443,7 +1443,7 @@ std::string GetMe(const QJsonObject &) {
 	return OnMain([]() -> std::string {
 		const auto session = ActiveSession();
 		if (!session) {
-			return Reply(false, U("нет открытой сессии"));
+			return Reply(false, U(Mokagram::Lang::Tr("нет открытой сессии")));
 		}
 		auto result = PeerBrief(session->user());
 		result.insert("ok", true);
@@ -1466,7 +1466,7 @@ std::string PinMessage(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto item = FindItem(args);
 		if (!item || !item->id.bare || item->isService()) {
-			return Reply(false, U("сообщение не найдено"));
+			return Reply(false, U(Mokagram::Lang::Tr("сообщение не найдено")));
 		}
 		const auto peer = item->history()->peer;
 		const auto session = &peer->session();
@@ -1492,7 +1492,7 @@ std::string DeleteMessages(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();
 		if (!session || !peerId || list.isEmpty() || list.size() > 100) {
-			return Reply(false, U("нет сообщений для удаления"));
+			return Reply(false, U(Mokagram::Lang::Tr("нет сообщений для удаления")));
 		}
 		auto ids = MessageIdsList();
 		for (const auto &value : list) {
@@ -1502,7 +1502,7 @@ std::string DeleteMessages(const QJsonObject &args) {
 			}
 		}
 		if (ids.empty()) {
-			return Reply(false, U("сообщения не найдены"));
+			return Reply(false, U(Mokagram::Lang::Tr("сообщения не найдены")));
 		}
 		session->data().histories().deleteMessages(ids, revoke);
 		session->data().sendHistoryChangeNotifications();
@@ -1519,29 +1519,29 @@ std::string SendAlbum(const QJsonObject &args) {
 	for (const auto &value : args.value("paths").toArray()) {
 		const auto info = QFileInfo(value.toString());
 		if (!info.isFile() || info.size() <= 0 || info.size() > (qint64(2000) << 20)) {
-			return Reply(false, U("файл не найден или слишком большой"));
+			return Reply(false, U(Mokagram::Lang::Tr("файл не найден или слишком большой")));
 		}
 		// Как в SendFile: валидация на стороне моста, Python-слой обходится.
 		if (!PluginPathAllowed(args.value("pid").toString(), info.absoluteFilePath())) {
-			return Reply(false, U("файл вне разрешённых папок"));
+			return Reply(false, U(Mokagram::Lang::Tr("файл вне разрешённых папок")));
 		}
 		paths.push_back(info.absoluteFilePath());
 	}
 	if (!peerId || paths.size() < 2 || paths.size() > 10) {
-		return Reply(false, U("в альбоме от 2 до 10 файлов"));
+		return Reply(false, U(Mokagram::Lang::Tr("в альбоме от 2 до 10 файлов")));
 	}
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();
 		const auto history = session ? session->data().historyLoaded(peerId) : nullptr;
 		if (!history) {
-			return Reply(false, U("чата нет среди загруженных диалогов"));
+			return Reply(false, U(Mokagram::Lang::Tr("чата нет среди загруженных диалогов")));
 		}
 		auto list = Storage::PrepareMediaList(
 			paths,
 			st::sendMediaPreviewSize,
 			session->user()->isPremium());
 		if (list.files.size() < 2 || !list.filesToProcess.empty()) {
-			return Reply(false, U("файлы нельзя отправить альбомом"));
+			return Reply(false, U(Mokagram::Lang::Tr("файлы нельзя отправить альбомом")));
 		}
 		list.files.front().caption = TextWithTags{ caption };
 		auto action = Api::SendAction(history);
@@ -1569,18 +1569,18 @@ std::string DownloadMedia(const QJsonObject &args) {
 	const auto token = args.value("token").toString();
 	const auto path = args.value("path").toString();
 	if (path.isEmpty()) {
-		return Reply(false, U("нет пути"));
+		return Reply(false, U(Mokagram::Lang::Tr("нет пути")));
 	}
 	// Мост сам валидирует путь: без этого плагин мог сохранить скачанное
 	// поверх любого файла пользователя (~/.ssh/authorized_keys и т.п.).
 	if (!PluginPathAllowed(pid, path)) {
-		return Reply(false, U("путь вне разрешённых папок"));
+		return Reply(false, U(Mokagram::Lang::Tr("путь вне разрешённых папок")));
 	}
 	return OnMain([=]() -> std::string {
 		const auto item = FindItem(args);
 		const auto media = item ? item->media() : nullptr;
 		if (!media) {
-			return Reply(false, U("в сообщении нет медиа"));
+			return Reply(false, U(Mokagram::Lang::Tr("в сообщении нет медиа")));
 		}
 		const auto deliver = [=](bool ok, const QString &error) {
 			auto payload = QJsonObject();
@@ -1615,7 +1615,7 @@ std::string DownloadMedia(const QJsonObject &args) {
 				return image && image->original().save(path, "JPG", 95);
 			};
 		} else {
-			return Reply(false, U("это медиа нельзя сохранить"));
+			return Reply(false, U(Mokagram::Lang::Tr("это медиа нельзя сохранить")));
 		}
 		const auto timer = new QTimer(QCoreApplication::instance());
 		const auto started = crl::now();
@@ -1673,14 +1673,14 @@ constexpr auto kBackupFileLimit = qint64(30 * 1024 * 1024);
 std::string BackupClientFile(const QJsonObject &args) {
 	const auto name = args.value("name").toString();
 	if (!kBackupClientFiles.contains(name)) {
-		return Reply(false, U("файл не входит в бэкап"));
+		return Reply(false, U(Mokagram::Lang::Tr("файл не входит в бэкап")));
 	}
 	auto file = QFile(ClientTdataDir() + name);
 	if (!file.exists()) {
 		return R"({"ok":true,"exists":false})";
 	}
 	if (file.size() > kBackupFileLimit || !file.open(QIODevice::ReadOnly)) {
-		return Reply(false, U("не удалось прочитать файл"));
+		return Reply(false, U(Mokagram::Lang::Tr("не удалось прочитать файл")));
 	}
 	auto data = file.readAll();
 	if (name == u"moka_settings.json"_q) {
@@ -1714,19 +1714,19 @@ std::string RestoreStagePut(const QJsonObject &args) {
 				|| part == u".."_q
 				|| part.contains('\\')
 				|| part.contains(QChar(0))) {
-				return Reply(false, U("недопустимое имя файла"));
+				return Reply(false, U(Mokagram::Lang::Tr("недопустимое имя файла")));
 			}
 		}
 		if (name.endsWith(u"secrets.enc"_q) || name.endsWith(u"secrets.key"_q)) {
-			return Reply(false, U("секреты не восстанавливаются"));
+			return Reply(false, U(Mokagram::Lang::Tr("секреты не восстанавливаются")));
 		}
 		target = name;
 	} else {
-		return Reply(false, U("файл не входит в бэкап"));
+		return Reply(false, U(Mokagram::Lang::Tr("файл не входит в бэкап")));
 	}
 	auto data = QByteArray::fromBase64(args.value("data").toString().toLatin1());
 	if (data.size() > kBackupFileLimit) {
-		return Reply(false, U("файл слишком большой"));
+		return Reply(false, U(Mokagram::Lang::Tr("файл слишком большой")));
 	}
 	if (target == u"moka_settings.json"_q) {
 		data = FilterPortableSettings(data);
@@ -1734,13 +1734,13 @@ std::string RestoreStagePut(const QJsonObject &args) {
 	const auto stage = QDir::cleanPath(RestoreStageDir());
 	const auto path = QDir::cleanPath(stage + '/' + target);
 	if (!path.startsWith(stage + '/')) {
-		return Reply(false, U("недопустимое имя файла"));
+		return Reply(false, U(Mokagram::Lang::Tr("недопустимое имя файла")));
 	}
 	QDir().mkpath(QFileInfo(path).absolutePath());
 	auto file = QFile(path);
 	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
 		|| file.write(data) != data.size()) {
-		return Reply(false, U("не удалось записать файл"));
+		return Reply(false, U(Mokagram::Lang::Tr("не удалось записать файл")));
 	}
 	return Reply(true);
 }
@@ -1759,14 +1759,14 @@ std::string InstallPluginFile(const QJsonObject &args) {
 	const auto path = args.value("path").toString();
 	auto file = QFile(path);
 	if (!file.open(QIODevice::ReadOnly) || file.size() > (1 << 20)) {
-		return Reply(false, U("файл плагина не прочитан"));
+		return Reply(false, U(Mokagram::Lang::Tr("файл плагина не прочитан")));
 	}
 	const auto bytes = file.readAll();
 	return OnMain([=]() -> std::string {
 		const auto window = Core::App().activeWindow();
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller) {
-			return Reply(false, U("нет открытого окна"));
+			return Reply(false, U(Mokagram::Lang::Tr("нет открытого окна")));
 		}
 		InstallFromBytes(controller, bytes, [] {}, true);
 		return Reply(true);
@@ -1799,7 +1799,7 @@ std::string TlInput(const QJsonObject &args) {
 			? session->data().peerLoaded(peerId)
 			: nullptr;
 		if (!peer) {
-			return Reply(false, U("чата нет среди загруженных"));
+			return Reply(false, U(Mokagram::Lang::Tr("чата нет среди загруженных")));
 		}
 		const auto user = peer->asUser();
 		const auto channel = peer->asChannel();
@@ -1821,7 +1821,7 @@ std::string TlInput(const QJsonObject &args) {
 			result.insert("hex", QString::fromStdString(
 				SerializeHex(channel->inputChannel())));
 		} else {
-			return Reply(false, U("нет такого вида ввода для этого чата"));
+			return Reply(false, U(Mokagram::Lang::Tr("нет такого вида ввода для этого чата")));
 		}
 		return Json(result);
 	});
@@ -1930,20 +1930,20 @@ std::string InvokeRaw(const QJsonObject &args) {
 		args.value("hex").toString().toLatin1());
 	if (bytes.size() < 4 || (bytes.size() & 3) || bytes.size() > (1 << 20)
 		|| BlockedPluginRequest(bytes)) {
-		return Reply(false, U("плохой запрос"));
+		return Reply(false, U(Mokagram::Lang::Tr("плохой запрос")));
 	}
 	const auto report = QJsonDocument::fromJson(QByteArray::fromStdString(
 		RequestInfoJson(bytes.toHex().toStdString()))).object();
 	if (!report.value("ok").toBool()) {
-		return Reply(false, U("не удалось проверить запрос плагина"));
+		return Reply(false, U(Mokagram::Lang::Tr("не удалось проверить запрос плагина")));
 	}
 	if (!report.value("allowed").toBool()) {
-		return Reply(false, U("этот метод закрыт для плагинов"));
+		return Reply(false, U(Mokagram::Lang::Tr("этот метод закрыт для плагинов")));
 	}
 	return OnMain([=]() -> std::string {
 		const auto session = ActiveSession();
 		if (!session) {
-			return Reply(false, U("нет открытой сессии"));
+			return Reply(false, U(Mokagram::Lang::Tr("нет открытой сессии")));
 		}
 
 		const auto weak = base::make_weak(session);
@@ -2033,7 +2033,7 @@ std::string InvokeRaw(const QJsonObject &args) {
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller || &controller->session() != session
 			|| SensitivePending.contains(pid)) {
-			return Reply(false, U("подтверждение запроса плагина недоступно"));
+			return Reply(false, U(Mokagram::Lang::Tr("подтверждение запроса плагина недоступно")));
 		}
 		const auto answered = std::make_shared<bool>(false);
 		const auto resolve = [=](bool allowed) {
@@ -2354,7 +2354,7 @@ std::string OverlayCreate(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto parent = OverlayParent();
 		if (!parent) {
-			return Reply(false, u"нет окна"_q);
+			return Reply(false, Mokagram::Lang::Tr("нет окна"));
 		}
 		const auto pid = args.value("pid").toString().toStdString();
 		const auto id = args.value("id").toString().toStdString();
@@ -2370,7 +2370,7 @@ std::string OverlayCreate(const QJsonObject &args) {
 			--count;
 		}
 		if (count >= 4) {
-			return Reply(false, u"не больше 4 оверлеев на плагин"_q);
+			return Reply(false, Mokagram::Lang::Tr("не больше 4 оверлеев на плагин"));
 		}
 		const auto width = std::clamp(args.value("w").toInt(64), 8, 600);
 		const auto height = std::clamp(args.value("h").toInt(64), 8, 600);
@@ -2397,13 +2397,13 @@ std::string OverlaySetSprite(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto overlay = FindOverlay(args);
 		if (!overlay) {
-			return Reply(false, u"нет оверлея"_q);
+			return Reply(false, Mokagram::Lang::Tr("нет оверлея"));
 		}
 		const auto w = std::clamp(args.value("sw").toInt(), 1, 256);
 		const auto h = std::clamp(args.value("sh").toInt(), 1, 256);
 		const auto data = args.value("data").toArray();
 		if (data.size() != w * h) {
-			return Reply(false, u"размер спрайта не совпал с данными"_q);
+			return Reply(false, Mokagram::Lang::Tr("размер спрайта не совпал с данными"));
 		}
 		auto image = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
 		image.fill(Qt::transparent);
@@ -2420,7 +2420,7 @@ std::string OverlayMove(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto overlay = FindOverlay(args);
 		if (!overlay) {
-			return Reply(false, u"нет оверлея"_q);
+			return Reply(false, Mokagram::Lang::Tr("нет оверлея"));
 		}
 		overlay->moveClamped(args.value("x").toInt(), args.value("y").toInt());
 		return Reply(true);
@@ -2431,7 +2431,7 @@ std::string OverlaySay(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto overlay = FindOverlay(args);
 		if (!overlay) {
-			return Reply(false, u"нет оверлея"_q);
+			return Reply(false, Mokagram::Lang::Tr("нет оверлея"));
 		}
 		overlay->say(
 			args.value("text").toString().left(300),
@@ -2444,7 +2444,7 @@ std::string OverlayCallbacks(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto overlay = FindOverlay(args);
 		if (!overlay) {
-			return Reply(false, u"нет оверлея"_q);
+			return Reply(false, Mokagram::Lang::Tr("нет оверлея"));
 		}
 		const auto kind = args.value("kind").toString();
 		const auto cb = args.value("cb").toString().toStdString();
@@ -2474,7 +2474,7 @@ std::string WindowBounds() {
 	return OnMain([=]() -> std::string {
 		const auto parent = OverlayParent();
 		if (!parent) {
-			return Reply(false, u"нет окна"_q);
+			return Reply(false, Mokagram::Lang::Tr("нет окна"));
 		}
 		auto result = QJsonObject();
 		result.insert("ok", true);
@@ -2542,7 +2542,7 @@ std::string UiRects(const QJsonObject &args) {
 	return OnMain([=]() -> std::string {
 		const auto body = OverlayParent();
 		if (!body) {
-			return Reply(false, u"нет окна"_q);
+			return Reply(false, Mokagram::Lang::Tr("нет окна"));
 		}
 		const auto what = args.value("what").toString();
 		auto result = QJsonObject();
@@ -2626,7 +2626,7 @@ std::string UiElements() {
 	return OnMain([=]() -> std::string {
 		const auto body = OverlayParent();
 		if (!body) {
-			return Reply(false, u"нет окна"_q);
+			return Reply(false, Mokagram::Lang::Tr("нет окна"));
 		}
 		UiElementList.clear();
 		auto list = QJsonArray();
@@ -2675,11 +2675,11 @@ std::string UiSetHidden(const QJsonObject &args, bool hidden) {
 	return OnMain([=]() -> std::string {
 		const auto index = args.value("element").toInt(-1);
 		if (index < 0 || index >= int(UiElementList.size()) || !UiElementList[index]) {
-			return Reply(false, u"нет такого элемента, обнови список elements()"_q);
+			return Reply(false, Mokagram::Lang::Tr("нет такого элемента, обнови список elements()"));
 		}
 		const auto widget = UiElementList[index].data();
 		if (InsideLayer(widget)) {
-			return Reply(false, u"кнопки диалогов прятать нельзя"_q);
+			return Reply(false, Mokagram::Lang::Tr("кнопки диалогов прятать нельзя"));
 		}
 		if (hidden) {
 			if (!widget->graphicsEffect()) {
@@ -2994,7 +2994,7 @@ std::string Bridge(const std::string &op, const std::string &argsJson) {
 	} else if (op == "setting_set") {
 		return SetSetting(args);
 	}
-	return Reply(false, U("неизвестная операция"));
+	return Reply(false, U(Mokagram::Lang::Tr("неизвестная операция")));
 }
 
 } // namespace

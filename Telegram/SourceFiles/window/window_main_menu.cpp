@@ -1396,13 +1396,13 @@ void MainMenu::setupMenu() {
 			controller->showPeerHistory(controller->session().user());
 		});
 		addAction(
-			rpl::single(QString::fromUtf8("Плагины")),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Плагины"))),
 			{ &st::menuIconBotCommands }
 		)->setClickedCallback([=] {
 			controller->show(Box(Mokagram::Plugins::PluginsBox, controller));
 		});
 		addAction(
-			rpl::single(QString::fromUtf8("Музыка")),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Музыка"))),
 			{ &st::menuIconSoundOn }
 		)->setClickedCallback([=] {
 			Mokagram::Music::ShowMusicBox(controller);
