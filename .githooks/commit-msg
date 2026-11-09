@@ -1,0 +1,76 @@
+# commit-msg: подсказки по истории коммитов этого репозитория (en/ru).
+# Включается один раз: git config core.hooksPath .githooks
+#
+# Стиль репозитория: «Область: что сделано» — без «it», без точки в конце,
+# одна строка до ~72 символов, при необходимости — тело с деталями и «почему».
+#
+# Не блокирует коммит: только печатает заметки (exit 0 всегда).
+
+msg_file="$1"
+[ -f "$msg_file" ] || exit 0
+
+# Заголовок — первая непустая, не комментарийная строка, тело — всё после неё.
+subject=$(grep -v '^#' "$msg_file" | sed -e '/^[[:space:]]*$/d' | head -n 1)
+[ -n "$subject" ] || exit 0
+body=$(grep -v '^#' "$msg_file" | sed -e '1,/^[[:space:]]*$/d' | grep -v '^[[:space:]]*$')
+
+# Merge/Revert/fixup — замечания не нужны.
+case "$subject" in
+	Merge*|Revert*|fixup!*|squash!*|amend!*)
+		exit 0
+		;;
+esac
+
+notes=""
+
+add() {
+	notes="${notes}- $1
+"
+}
+
+# Длина заголовка в символах (кириллица в UTF-8 занимает по 2 байта).
+len=$(printf '%s' "$subject" | grep -o . | wc -l | tr -d ' ')
+if [ "$len" -gt 72 ]; then
+	add "Заголовок длинный (~$len символов). Обычно хватает ~72; детали — в теле.
+  The subject is long (~$len chars). Aim for ~72; put details in the body."
+fi
+
+case "$subject" in
+	*.)
+		add "Точка в конце заголовка не нужна.
+  No trailing period in the subject."
+		;;
+esac
+
+case "$subject" in
+	[wW]ip|[wW]ip*|*"wip"*|[fF]ix*|*"fix"*)
+		add "«wip/fix» ничего не объясняет. Что было не так и что теперь работает?
+    Не «fix: fix», а «Плеер: не зацикливать трек после перемотки».
+  \"wip/fix\" says nothing. What was broken, what works now?"
+		;;
+esac
+
+# Заголовок без области («Область: …») — подсказываем, если очень короткий.
+case "$subject" in
+	*:*) ;;
+	*)
+		if [ "$len" -lt 25 ] && ! printf '%s' "$subject" | grep -q '[.]'; then
+			add "Нет области. Формат репозитория: «Область: что сделано» — Музыка, Плеер, Настройки, CI Windows…
+  No area prefix. Repo format: \"Area: what changed\" — Музыка, Плеер, Настройки, CI Windows…"
+		fi
+		;;
+esac
+
+if [ -z "$body" ]; then
+	add "Тела нет. Если решение неочевидно — одна строка «почему», что ломалось и что проверил.
+  No body. If the change is not obvious, add one line on why, what broke, what you tested."
+fi
+
+if [ -z "$notes" ]; then
+	exit 0
+fi
+
+printf '\n  Подсказки по коммиту / commit hints\n'
+printf '%s' "$notes"
+printf '\n'
+exit 0
