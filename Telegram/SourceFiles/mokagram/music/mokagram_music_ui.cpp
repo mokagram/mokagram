@@ -1551,11 +1551,11 @@ public:
 		_refreshButton = Ui::CreateChild<Ui::RoundButton>(
 			this,
 			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Обновить"))),
-			Mokagram::BoxParts::PillLight());
+			actionStyle());
 		_disconnectButton = Ui::CreateChild<Ui::RoundButton>(
 			this,
 			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Отключить"))),
-			Mokagram::BoxParts::PillLight());
+			actionStyle());
 		_disconnectButton->setClickedCallback(_logout);
 		_refreshButton->setClickedCallback([=] {
 			if (_syncing || !Mokagram::Music::Account::IsLoggedIn()) {
@@ -1663,6 +1663,18 @@ protected:
 	}
 
 private:
+	static const style::RoundButton &actionStyle() {
+		static const auto result = [] {
+			auto result = Mokagram::BoxParts::PillLight();
+			result.textBg = st::windowBgOver;
+			result.textBgOver = st::windowBgRipple;
+			result.textFg = st::windowFg;
+			result.textFgOver = st::windowFg;
+			return result;
+		}();
+		return result;
+	}
+
 	void refresh() {
 		_logged = Mokagram::Music::Account::IsLoggedIn();
 		const auto info = Mokagram::Music::Account::User();
