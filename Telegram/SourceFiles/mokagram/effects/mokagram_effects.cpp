@@ -14,6 +14,7 @@
 #include "window/window_controller.h"
 #include "core/file_utilities.h"
 #include "ui/painter.h"
+#include "ui/power_saving.h"
 #include "ui/rp_widget.h"
 #include "ui/widgets/fields/input_field.h"
 
@@ -508,7 +509,9 @@ private:
 };
 
 [[nodiscard]] bool Skip() {
-	return anim::Disabled();
+	return anim::Disabled()
+		|| PowerSaving::On(PowerSaving::kChatEffects)
+		|| PowerSaving::On(PowerSaving::kAnimations);
 }
 
 void BuildTiles(Burst &b, int cell, int maxTiles, double speed) {
@@ -648,7 +651,7 @@ void RegisterSettings() {
 		.title = U(Mokagram::Lang::Tr("Заставка при запуске")),
 		.description = U(Mokagram::Lang::Tr("Знак mokaGram проявляется и растворяется при открытии окна.")),
 		.kind = S::Kind::Bool,
-		.defaultValue = true,
+		.defaultValue = false,
 	}, U(Mokagram::Lang::Tr("Запуск")), "palette");
 
 
@@ -672,7 +675,7 @@ void RegisterSettings() {
 		.key = u"fx.delete.duration"_q,
 		.title = U(Mokagram::Lang::Tr("Длительность, мс")),
 		.kind = S::Kind::Int,
-		.defaultValue = 800,
+		.defaultValue = 450,
 		.minValue = 300,
 		.maxValue = 2500,
 		.dependsOn = u"fx.delete.enabled"_q,
@@ -701,7 +704,7 @@ void RegisterSettings() {
 		.title = U(Mokagram::Lang::Tr("Максимум частиц")),
 		.description = U(Mokagram::Lang::Tr("Предел на одно сообщение. Для слабых компьютеров ставь меньше.")),
 		.kind = S::Kind::Int,
-		.defaultValue = 160,
+		.defaultValue = 48,
 		.minValue = 30,
 		.maxValue = 500,
 		.dependsOn = u"fx.delete.enabled"_q,
