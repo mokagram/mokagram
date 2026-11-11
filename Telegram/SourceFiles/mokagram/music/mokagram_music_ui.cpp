@@ -3472,7 +3472,7 @@ protected:
 			const auto bannerRect = QRect(0, 0, width(), s(narrow ? 128 : 176));
 			p.save();
 			auto bannerClip = QPainterPath();
-			bannerClip.addRoundedRect(bannerRect, s(22), s(22));
+			bannerClip.addRect(bannerRect);
 			p.setClipPath(bannerClip);
 			p.fillRect(bannerRect, st::windowBg);
 			if (!_banner.isNull()) {
@@ -3485,6 +3485,14 @@ protected:
 					(_scaledBanner.height() - bannerRect.height()) / 2,
 					bannerRect.width(), bannerRect.height());
 				p.drawImage(bannerRect, _scaledBanner, source);
+				auto fade = QLinearGradient(bannerRect.topLeft(), bannerRect.bottomLeft());
+				auto color = st::boxBg->c;
+				color.setAlpha(0);
+				fade.setColorAt(0., color);
+				fade.setColorAt(0.45, color);
+				color.setAlpha(255);
+				fade.setColorAt(1., color);
+				p.fillRect(bannerRect, fade);
 			}
 			p.restore();
 			p.setPen(Qt::NoPen);
@@ -5733,6 +5741,21 @@ public:
 			_volume->setProgress(value);
 			update();
 		}, lifetime());
+		_homeBack = Ui::CreateChild<NavItem>(this, u"‹  "_q + QString::fromUtf8(Mokagram::Lang::Tr("Назад")), false);
+		_homeBack->setClickedCallback(crl::guard(this, [=] {
+			if (_homeReturnToArtist) {
+				openHomeArtist(_homeArtistSeed);
+				return;
+			}
+			_homeAlbumOpen = false;
+			_homeArtistOpen = false;
+			_nav[1]->setActiveColor(Qt::white);
+			++_homeAlbumGeneration;
+			relayout();
+			rebuildTab();
+			_tabScroll->scrollToY(_homeAlbumReturnScroll);
+		}));
+		_homeBack->hide();
 		_filter->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Звуковой фильтр")));
 		_filter->setClickedCallback([=] {
 			_filterMenu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
@@ -6240,7 +6263,9 @@ protected:
 			barHeight);
 
 		// Сверху ряд вкладок по центру экрана, справа кнопка «свернуть».
-		const auto reserve = margin + _collapse->width() + s(8);
+		const auto reserve = (_tab == Tab::Home && _homeAlbumOpen)
+			? s(168)
+			: margin + _collapse->width() + s(8);
 		const auto navWidth = std::clamp(width() - 2 * reserve, 0, s(900));
 		result.nav = QRect((width() - navWidth) / 2, margin, navWidth, s(40));
 		result.collapse = QPoint(
@@ -6278,7 +6303,7 @@ protected:
 				std::max(width() - margin - lyricsLeft, 0),
 				areaHeight);
 		} else {
-			const auto contentWidth = std::max(width() - 2 * margin, 0);
+			const auto contentWidth = std::max(width() - ((_tab == Tab::Home && _homeArtistOpen) ? 0 : 2 * margin), 0);
 			result.center = QRect((width() - contentWidth) / 2, top, contentWidth, areaHeight);
 			result.scrollTop = result.center.y() + ((_tab == Tab::Home || _tab == Tab::Library || _tab == Tab::Queue || _tab == Tab::Playlists)
 				? 0
@@ -6420,6 +6445,8 @@ protected:
 		const auto layout = computeLayout();
 		_collapse->move(layout.collapse);
 		_filter->move(style::ConvertScale(16), layout.collapse.y());
+		_homeBack->setGeometry(_filter->x() + _filter->width() + s(8), layout.nav.y(), s(96), layout.nav.height());
+		_homeBack->setVisible(_tab == Tab::Home && _homeAlbumOpen);
 		_queueToggle->move(layout.queue);
 		_heart->move(layout.heart);
 		for (const auto button : { _shuffle.get(), _previous.get(), _play.get(), _next.get(), _repeat.get(), _queueToggle.get() }) {
@@ -7025,6 +7052,7 @@ protected:
 		_rebuiltTab = _tab;
 		_searchResultWidgets.clear();
 		_tabList->clear();
+		_homeBack->setVisible(_tab == Tab::Home && _homeAlbumOpen);
 		_tabNote.clear();
 		if (_tab != Tab::Playlists) {
 			_playlistsSticker = nullptr;
@@ -7082,26 +7110,13 @@ protected:
 			const auto &queue = QueueState();
 			const auto liked = LikedTracks();
 			if (_homeAlbumOpen) {
-				_tabList->add(object_ptr<HomeSectionHeader>(
-					_tabList, tr("Назад"), true, crl::guard(this, [=] {
-						if (_homeReturnToArtist) {
-							openHomeArtist(_homeArtistSeed);
-							return;
-						}
-						_homeAlbumOpen = false;
-						_homeArtistOpen = false;
-						_nav[1]->setActiveColor(Qt::white);
-						++_homeAlbumGeneration;
-						relayout();
-						rebuildTab();
-						_tabScroll->scrollToY(_homeAlbumReturnScroll);
-					})));
+
 				const auto albumHeader = _tabList->add(object_ptr<HomeAlbumHeader>(
 					_tabList, _homeAlbum, int(_homeAlbumTracks.size()), _homeAlbumIsTrack,
 					crl::guard(this, [=](QImage image, QRect source) {
 						source.moveTopLeft(mapFromGlobal(source.topLeft()));
 						Ui::CreateChild<HomeCoverPreview>(this, std::move(image), source);
-					}), _homeArtistOpen, _homeArtistBannerUrl), QMargins(12, 0, 12, 8));
+					}), _homeArtistOpen, _homeArtistBannerUrl), QMargins(0, 0, 0, style::ConvertScale(8)));
 				if (!_homeAlbumIsTrack && !_homeArtistOpen) InstallAlbumContextMenu(albumHeader, _controller, _homeAlbum);
 
 				if (_homeArtistOpen) {
@@ -7935,6 +7950,7 @@ private:
 	const not_null<SeekBar*> _seek;
 	const not_null<RoundGlyph*> _heart;
 	const not_null<RoundGlyph*> _collapse;
+	NavItem *_homeBack = nullptr;
 	const not_null<RoundGlyph*> _filter;
 	base::unique_qptr<Ui::PopupMenu> _filterMenu;
 	const not_null<RoundGlyph*> _queueToggle;
