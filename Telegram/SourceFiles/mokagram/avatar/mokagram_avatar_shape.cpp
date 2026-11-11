@@ -15,6 +15,7 @@
 #include <QtGui/QPainterPath>
 #include <QtGui/QTransform>
 
+#include <array>
 #include <cmath>
 
 namespace Mokagram::Avatar {
@@ -114,7 +115,7 @@ template <typename Radius>
 	return path;
 }
 
-[[nodiscard]] QPainterPath UnitPath(int shape) {
+[[nodiscard]] QPainterPath BuildUnitPath(int shape) {
 	auto path = QPainterPath();
 	switch (shape) {
 	case 1:
@@ -233,6 +234,20 @@ template <typename Radius>
 		break;
 	}
 	return path;
+}
+
+[[nodiscard]] const QPainterPath &UnitPath(int shape) {
+	static const auto paths = [] {
+		auto result = std::array<QPainterPath, 21>();
+		for (auto i = 0; i != 21; ++i) {
+			result[i] = BuildUnitPath(i);
+		}
+		return result;
+	}();
+	if (shape >= 0 && shape < int(paths.size())) {
+		return paths[shape];
+	}
+	return paths[0];
 }
 
 [[nodiscard]] QString KeyFor(int type) {
