@@ -1872,7 +1872,7 @@ auto TopBar::effectiveCollectible() const
 }
 
 bool TopBar::clipTouchesRoundedCorners(const QRect &clip) const {
-	if (!_roundEdges) {
+	if (!_roundEdges || _wrap.current() == Wrap::Side) {
 		return false;
 	}
 	// Mokagram: радиус шапки 32, иначе при частичной перерисовке (наведение,
@@ -1886,9 +1886,11 @@ void TopBar::paintEdges(
 		QPainter &p,
 		const QRect &clip,
 		const QBrush &brush) const {
-	// Mokagram: шапка с отступами по краям и сверху, углы радиусом 32.
+	// Mokagram: боковая панель примыкает к краям окна без верхних скруглений.
 	Q_UNUSED(clip);
-	constexpr auto kRadius = 32;
+	const auto kRadius = (_wrap.current() == Wrap::Side)
+		? 0
+		: style::ConvertScale(32);
 	auto hq = PainterHighQualityEnabler(p);
 	p.setPen(Qt::NoPen);
 	p.setBrush(brush);
@@ -2911,9 +2913,12 @@ void TopBar::paintEvent(QPaintEvent *e) {
 	// Mokagram: прямой низ и заливка уголков, пока плашка музыки показана.
 	const auto music = MusicShown();
 	if (!music) {
-		// Mokagram: без музыки шапка (и свёрнутая тоже) скруглена целиком.
+		// Mokagram: в боковой панели скруглён только низ шапки.
+		const auto radius = style::ConvertScale(32);
+		const auto top = (_wrap.current() == Wrap::Side) ? -radius : 0;
 		auto path = QPainterPath();
-		path.addRoundedRect(QRectF(rect()), 32., 32.);
+		path.addRoundedRect(
+			QRectF(rect()).adjusted(0, top, 0, 0), radius, radius);
 		p.setRenderHint(QPainter::Antialiasing);
 		p.setClipPath(path);
 	}
