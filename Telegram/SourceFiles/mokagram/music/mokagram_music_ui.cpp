@@ -3412,7 +3412,8 @@ public:
 		bool isTrack,
 		Fn<void(QImage, QRect)> showCover,
 		bool isArtist = false,
-		QString bannerUrl = QString())
+		QString bannerUrl = QString(),
+		Fn<void()> bannerReady = nullptr)
 	: RpWidget(parent)
 	, _album(std::move(album))
 	, _count(count)
@@ -3432,8 +3433,35 @@ public:
 				_banner = std::move(image);
 				_scaledBanner = QImage();
 				update();
+				if (bannerReady) bannerReady();
 			}));
 		}
+	}
+
+	void setBannerTopInset(int inset) {
+		if (_bannerTopInset == inset) return;
+		_bannerTopInset = inset;
+		update();
+	}
+
+	void paintArtistBanner(QPainter &p, const QRect &area) {
+		if (!_isArtist || _banner.isNull() || area.isEmpty()) return;
+		if (_scaledBanner.isNull() || _scaledBannerSize != area.size()) {
+			const auto scaled = _banner.scaled(area.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+			_scaledBanner = scaled.copy(
+				(scaled.width() - area.width()) / 2,
+				(scaled.height() - area.height()) / 2,
+				area.width(), area.height()).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+			_scaledBannerSize = area.size();
+			auto mask = QPainter(&_scaledBanner);
+			mask.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+			auto fade = QLinearGradient(0, 0, 0, area.height());
+			fade.setColorAt(0., Qt::white);
+			fade.setColorAt(0.45, Qt::white);
+			fade.setColorAt(1., Qt::transparent);
+			mask.fillRect(_scaledBanner.rect(), fade);
+		}
+		p.drawImage(area, _scaledBanner);
 	}
 
 protected:
@@ -3470,32 +3498,9 @@ protected:
 		const auto margin = s(24);
 		const auto art = coverRect();
 		if (_isArtist) {
-			const auto bannerRect = QRect(0, 0, width(), _bannerUrl.isEmpty() ? 0 : s(narrow ? 128 : 176));
-			p.save();
-			auto bannerClip = QPainterPath();
-			bannerClip.addRect(bannerRect);
-			p.setClipPath(bannerClip);
-			p.fillRect(bannerRect, st::windowBg);
-			if (!_banner.isNull()) {
-				if (_scaledBanner.isNull() || _scaledBannerSize != bannerRect.size()) {
-					_scaledBanner = _banner.scaled(bannerRect.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-					_scaledBannerSize = bannerRect.size();
-				}
-				const auto source = QRect(
-					(_scaledBanner.width() - bannerRect.width()) / 2,
-					(_scaledBanner.height() - bannerRect.height()) / 2,
-					bannerRect.width(), bannerRect.height());
-				p.drawImage(bannerRect, _scaledBanner, source);
-				auto fade = QLinearGradient(bannerRect.topLeft(), bannerRect.bottomLeft());
-				auto color = st::boxBg->c;
-				color.setAlpha(0);
-				fade.setColorAt(0., color);
-				fade.setColorAt(0.45, color);
-				color.setAlpha(255);
-				fade.setColorAt(1., color);
-				p.fillRect(bannerRect, fade);
-			}
-			p.restore();
+			paintArtistBanner(p, QRect(
+				0, -_bannerTopInset, width(),
+				_bannerUrl.isEmpty() ? 0 : _bannerTopInset + s(narrow ? 128 : 176)));
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::boxBg);
 			const auto border = s(4);
@@ -3619,6 +3624,7 @@ private:
 	bool _isTrack = false;
 	bool _isArtist = false;
 	QString _bannerUrl;
+	int _bannerTopInset = 0;
 	QImage _art;
 	QImage _scaledArt;
 	QSize _scaledArtSize;
@@ -5798,7 +5804,13 @@ public:
 		_seek->resize(_seek->width(), s(20));
 		_tabList = _tabScroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_tabScroll));
 		_topFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Top);
-		_topFade->setColor([=] { return pageBackgroundAt(_topFade->y()); });
+		_topFade->setColor([=] {
+			auto color = pageBackgroundAt(_topFade->y());
+			if (_tab == Tab::Home && _homeArtistOpen && !_homeArtistBannerUrl.isEmpty()) {
+				color.setAlphaF(std::clamp(_tabScroll->scrollTop() / double(style::ConvertScale(128)), 0., 1.));
+			}
+			return color;
+		});
 		_bottomFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Bottom);
 		_bottomFade->setColor([=] { return pageBackgroundAt(_bottomFade->y() + _bottomFade->height()); });
 		_homeMoreRetryTimer.setSingleShot(true);
@@ -6473,6 +6485,7 @@ protected:
 			layout.center.width(),
 			std::max(layout.center.y() + layout.center.height() - layout.scrollTop - s(12), 0));
 		_tabList->resizeToWidth(_tabScroll->width());
+		if (_homeAlbumHeader) _homeAlbumHeader->setBannerTopInset(_tabScroll->y());
 		_topFade->setVisible(_tab != Tab::Now
 			&& ((_tab != Tab::Search && _tab != Tab::Library && _tab != Tab::Queue) || _tabScroll->scrollTop() > 0));
 		_topFade->setGeometry(
@@ -7119,7 +7132,10 @@ protected:
 					crl::guard(this, [=](QImage image, QRect source) {
 						source.moveTopLeft(mapFromGlobal(source.topLeft()));
 						Ui::CreateChild<HomeCoverPreview>(this, std::move(image), source);
-					}), _homeArtistOpen, _homeArtistBannerUrl), QMargins(0, 0, 0, style::ConvertScale(8)));
+					}), _homeArtistOpen, _homeArtistBannerUrl,
+					crl::guard(this, [=] { update(); })), QMargins(0, 0, 0, style::ConvertScale(8)));
+				_homeAlbumHeader = albumHeader;
+				albumHeader->setBannerTopInset(_tabScroll->y());
 				if (!_homeAlbumIsTrack && !_homeArtistOpen) InstallAlbumContextMenu(albumHeader, _controller, _homeAlbum);
 
 				if (_homeArtistOpen) {
@@ -7442,6 +7458,18 @@ protected:
 				: QColor(0x32, 0x32, 0x32));
 			gradient.setColorAt(1., QColor(0x1c, 0x1c, 0x1c));
 			p.fillRect(e->rect(), gradient);
+		}
+		if (_tab == Tab::Home && _homeArtistOpen && !_homeArtistBannerUrl.isEmpty() && _homeAlbumHeader) {
+			const auto panel = QRect(0, 0, width(), _tabScroll->y());
+			const auto bannerHeight = s(_tabScroll->width() < s(480) ? 128 : 176);
+			p.save();
+			p.setClipRect(panel);
+			_homeAlbumHeader->paintArtistBanner(p, QRect(
+				_tabScroll->x(), -_tabScroll->scrollTop(),
+				_tabScroll->width(), panel.height() + bannerHeight));
+			p.setOpacity(std::clamp(_tabScroll->scrollTop() / double(s(128)), 0., 1.));
+			p.fillRect(panel, pageBackgroundAt(0));
+			p.restore();
 		}
 		const auto layout = computeLayout();
 		// Одна общая дорожка и движущаяся пилюля вместо отдельных фонов вкладок.
@@ -7988,6 +8016,7 @@ private:
 	HomeEdgeFade *_topFade = nullptr;
 	HomeEdgeFade *_bottomFade = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
+	QPointer<HomeAlbumHeader> _homeAlbumHeader;
 	std::array<NavItem*, 6> _nav = {};
 	Ui::Animations::Simple _navSlide;
 	Ui::Animations::Simple _homeEntrance;
