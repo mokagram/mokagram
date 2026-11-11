@@ -3439,6 +3439,9 @@ public:
 protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
+		if (_isArtist) {
+			return s(newWidth < s(480) ? 280 : 288);
+		}
 		if (newWidth < s(480)) {
 			return std::min(std::max(newWidth - s(48), 0), s(224)) + s(160);
 		}
@@ -3464,6 +3467,60 @@ protected:
 		const auto narrow = width() < s(480);
 		const auto margin = s(24);
 		const auto art = coverRect();
+		if (_isArtist) {
+			p.fillRect(rect(), st::boxBg);
+			const auto bannerRect = QRect(0, 0, width(), s(narrow ? 128 : 176));
+			p.save();
+			auto bannerClip = QPainterPath();
+			bannerClip.addRoundedRect(bannerRect, s(22), s(22));
+			p.setClipPath(bannerClip);
+			p.fillRect(bannerRect, st::windowBg);
+			if (!_banner.isNull()) {
+				if (_scaledBanner.isNull() || _scaledBannerSize != bannerRect.size()) {
+					_scaledBanner = _banner.scaled(bannerRect.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+					_scaledBannerSize = bannerRect.size();
+				}
+				const auto source = QRect(
+					(_scaledBanner.width() - bannerRect.width()) / 2,
+					(_scaledBanner.height() - bannerRect.height()) / 2,
+					bannerRect.width(), bannerRect.height());
+				p.drawImage(bannerRect, _scaledBanner, source);
+			}
+			p.restore();
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::boxBg);
+			const auto border = s(4);
+			p.drawEllipse(art.adjusted(-border, -border, border, border));
+			p.save();
+			auto avatarClip = QPainterPath();
+			avatarClip.addEllipse(art);
+			p.setClipPath(avatarClip);
+			p.fillRect(art, st::windowBg);
+			if (!_art.isNull()) {
+				if (_scaledArt.isNull() || _scaledArtSize != art.size()) {
+					_scaledArt = _art.scaled(art.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+					_scaledArtSize = art.size();
+				}
+				p.drawImage(art, _scaledArt, QRect(
+					(_scaledArt.width() - art.width()) / 2,
+					(_scaledArt.height() - art.height()) / 2, art.width(), art.height()));
+			}
+			p.restore();
+			const auto left = narrow ? margin : art.right() + s(25);
+			const auto top = narrow ? s(184) : s(194);
+			const auto available = std::max(width() - left - margin, 0);
+			p.setFont(st::normalFont->f);
+			p.setPen(st::windowSubTextFg);
+			p.drawText(QRect(left, top, available, s(20)), Qt::AlignLeft | Qt::AlignVCenter,
+				QString::fromUtf8(Mokagram::Lang::Tr("Исполнитель")));
+			auto title = st::semiboldFont->f;
+			title.setPixelSize(s(narrow ? 24 : 32));
+			p.setFont(title);
+			p.setPen(st::windowFg);
+			p.drawText(QRect(left, top + s(24), available, s(44)), Qt::AlignLeft | Qt::AlignVCenter,
+				QFontMetrics(title).elidedText(_album.title, Qt::ElideRight, available));
+			return;
+		}
 		if (_isArtist && !_banner.isNull()) {
 			if (_scaledBanner.isNull() || _scaledBannerSize != size()) {
 				_scaledBanner = _banner.scaled(size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
@@ -3536,6 +3593,10 @@ protected:
 private:
 	[[nodiscard]] QRect coverRect() const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
+		if (_isArtist) {
+			const auto narrow = width() < s(480);
+			return QRect(s(24), s(narrow ? 88 : 136), s(narrow ? 80 : 128), s(narrow ? 80 : 128));
+		}
 		const auto side = (width() < s(480))
 			? std::min(std::max(width() - s(48), 0), s(224))
 			: s(224);
