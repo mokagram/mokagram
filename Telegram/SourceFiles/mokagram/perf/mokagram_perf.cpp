@@ -38,9 +38,9 @@ namespace {
 
 namespace S = ::Mokagram::Settings;
 
-constexpr auto kIdleDelay = crl::time(8000);
-constexpr auto kTrimActive = crl::time(5 * 60 * 1000);
-constexpr auto kTrimIdle = crl::time(90 * 1000);
+constexpr auto kIdleDelay = crl::time(3000);
+constexpr auto kTrimActive = crl::time(3 * 60 * 1000);
+constexpr auto kTrimIdle = crl::time(60 * 1000);
 
 struct State {
 	rpl::variable<bool> economy = false;
