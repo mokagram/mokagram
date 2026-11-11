@@ -633,11 +633,12 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 				*busy = false;
 				if (code == 2) {
 					setStatus(Tr("В браузере нет входа в SoundCloud. Войдите на soundcloud.com и нажмите ещё раз."));
-					OpenSoundCloudInBrowser();
-				} else {
-					setStatus(Tr("Не получилось запустить браузер. Токен можно ввести вручную."));
-					manual->toggle(true, anim::type::normal);
+					if (OpenSoundCloudInBrowser()) {
+						return;
+					}
 				}
+				setStatus(Tr("Не получилось запустить браузер. Токен можно ввести вручную."));
+				manual->toggle(true, anim::type::normal);
 			});
 			process->start();
 		};
