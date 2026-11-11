@@ -7,6 +7,7 @@
 
 #include "base/random.h"
 #include "rpl/event_stream.h"
+#include <crl/crl_async.h>
 
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
@@ -28,8 +29,8 @@
 namespace Mokagram::Music {
 namespace {
 
-constexpr auto kHistoryLimit = 3000;
-constexpr auto kShownLimit = 1500;
+constexpr auto kHistoryLimit = 1000;
+constexpr auto kShownLimit = 500;
 constexpr qint64 kEarlySkipMs = 30 * 1000;
 constexpr qint64 kFinishedCooldown = 30 * 86400;
 constexpr qint64 kPartialCooldown = 14 * 86400;
@@ -221,13 +222,15 @@ void Save() {
 		playlists.push_back(item);
 	}
 	root.insert("playlists", playlists);
-	QDir().mkpath(QFileInfo(FilePath()).absolutePath());
-	// Через временный файл: обрыв посреди записи не стирает историю.
-	auto file = QSaveFile(FilePath());
-	if (file.open(QIODevice::WriteOnly)) {
-		file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
-		file.commit();
-	}
+	const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Compact);
+	crl::async([bytes = std::move(bytes), path = FilePath()] {
+		QDir().mkpath(QFileInfo(path).absolutePath());
+		auto file = QSaveFile(path);
+		if (file.open(QIODevice::WriteOnly)) {
+			file.write(bytes);
+			file.commit();
+		}
+	});
 }
 
 Library &Lib() {
