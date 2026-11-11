@@ -3454,10 +3454,17 @@ public:
 				area.width(), area.height()).convertToFormat(QImage::Format_ARGB32_Premultiplied);
 			_scaledBannerSize = area.size();
 			auto mask = QPainter(&_scaledBanner);
+			// Keep navigation readable even when the artist banner is white.
+			auto shade = QLinearGradient(0, 0, 0, area.height());
+			shade.setColorAt(0., QColor(0, 0, 0, 215));
+			shade.setColorAt(0.3, QColor(0, 0, 0, 215));
+			shade.setColorAt(0.65, QColor(0, 0, 0, 40));
+			shade.setColorAt(1., Qt::transparent);
+			mask.fillRect(_scaledBanner.rect(), shade);
 			mask.setCompositionMode(QPainter::CompositionMode_DestinationIn);
 			auto fade = QLinearGradient(0, 0, 0, area.height());
 			fade.setColorAt(0., Qt::white);
-			fade.setColorAt(0.45, Qt::white);
+			fade.setColorAt(0.65, Qt::white);
 			fade.setColorAt(1., Qt::transparent);
 			mask.fillRect(_scaledBanner.rect(), fade);
 		}
