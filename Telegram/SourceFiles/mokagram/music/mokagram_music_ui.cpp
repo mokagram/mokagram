@@ -3470,7 +3470,6 @@ protected:
 		const auto margin = s(24);
 		const auto art = coverRect();
 		if (_isArtist) {
-			p.fillRect(rect(), st::boxBg);
 			const auto bannerRect = QRect(0, 0, width(), _bannerUrl.isEmpty() ? 0 : s(narrow ? 128 : 176));
 			p.save();
 			auto bannerClip = QPainterPath();
