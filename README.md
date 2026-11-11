@@ -40,9 +40,6 @@
 
 ## Скачать
 
-
-DMG для macOS Apple Silicon загружается в релиз вручную. Новые сборки Windows и Linux будут добавлены позже; до этого доступны предыдущие версии.
-
 | Система | Версия | Файл |
 |---|---|---|
 | **macOS Apple Silicon (arm64)** | v0.1.8 | [mokagram-arm64.dmg](https://github.com/mokagram/mokagram/releases/download/v0.1.8/mokaGram-0.1.8-arm64.dmg) |
