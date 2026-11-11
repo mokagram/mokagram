@@ -895,6 +895,12 @@ QByteArray BrandRewrite(const QByteArray &value) {
 	if (!value.contains(from)) {
 		return value;
 	}
+	// Ссылки не трогаем: t.me/TelegramTips не должен стать t.me/mokaGramTips.
+	if (value.startsWith("http://")
+		|| value.startsWith("https://")
+		|| value.startsWith("tg://")) {
+		return value;
+	}
 	auto result = QByteArray();
 	result.reserve(value.size());
 	auto i = 0;
