@@ -203,10 +203,11 @@ public:
 			QColor color,
 			int maxTotal) {
 		const auto now = crl::now();
+		if (const auto overflow = int(_sparks.size()) + count - maxTotal; overflow > 0) {
+			const auto toRemove = std::min(overflow, int(_sparks.size()));
+			_sparks.erase(_sparks.begin(), _sparks.begin() + toRemove);
+		}
 		for (auto i = 0; i != count; ++i) {
-			if (int(_sparks.size()) >= maxTotal) {
-				_sparks.erase(_sparks.begin());
-			}
 			auto s = Spark();
 			s.pos = at + QPointF(Rand(-3, 3), Rand(-2, 2));
 			const auto angle = Rand(-M_PI * 0.92, -M_PI * 0.08);
