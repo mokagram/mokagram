@@ -679,7 +679,7 @@ void RegisterMotionSettings() {
 		.description = QString::fromUtf8(Lang::Tr("Требует входа в Spotify. При отсутствии видео остаётся обычный фон.")),
 		.kind = Settings::Kind::Bool, .defaultValue = false, .hidden = true });
 	add({ .key = u"player.spotify_client_id"_q,
-		.title = QString::fromUtf8(Lang::Tr("Spotify Client ID")),
+		.title = QString::fromUtf8(Lang::Tr("ID клиента Spotify")),
 		.description = QString::fromUtf8(Lang::Tr("Client ID приложения Spotify с Redirect URI http://127.0.0.1:8899/mokagram. Секрет приложения не нужен.")),
 		.kind = Settings::Kind::String, .defaultValue = u"a3a01911beb24158bb925ad5ba8dd26c"_q,
 		.dependsOn = u"player.spotify_canvas"_q, .hidden = true });
