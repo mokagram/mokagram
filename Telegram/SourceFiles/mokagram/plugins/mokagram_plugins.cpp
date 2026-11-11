@@ -266,8 +266,8 @@ std::string ParseMetadataJson(const std::string &source) {
 	} else {
 		const auto srcStr = QString::fromUtf8(rawBytes);
 		const auto extractString = [&](const QString &key) -> QString {
-			QRegularExpression re(
-				key + QStringLiteral(R"(\s*=\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)'''|"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'))"));
+			const auto pat = key + QString::fromUtf8(R"(\s*=\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)'''|"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'))");
+			QRegularExpression re(pat);
 			auto match = re.match(srcStr);
 			if (match.hasMatch()) {
 				for (int i = 1; i <= 4; ++i) {
@@ -281,20 +281,20 @@ std::string ParseMetadataJson(const std::string &source) {
 			return {};
 		};
 
-		meta.insert("__id__", extractString(QStringLiteral("__id__")));
-		meta.insert("__name__", extractString(QStringLiteral("__name__")));
-		meta.insert("__description__", extractString(QStringLiteral("__description__")));
-		meta.insert("__author__", extractString(QStringLiteral("__author__")));
-		meta.insert("__version__", extractString(QStringLiteral("__version__")));
-		meta.insert("__icon__", extractString(QStringLiteral("__icon__")));
-		meta.insert("__details__", extractString(QStringLiteral("__details__")));
+		meta.insert("__id__", extractString(QString::fromUtf8("__id__")));
+		meta.insert("__name__", extractString(QString::fromUtf8("__name__")));
+		meta.insert("__description__", extractString(QString::fromUtf8("__description__")));
+		meta.insert("__author__", extractString(QString::fromUtf8("__author__")));
+		meta.insert("__version__", extractString(QString::fromUtf8("__version__")));
+		meta.insert("__icon__", extractString(QString::fromUtf8("__icon__")));
+		meta.insert("__details__", extractString(QString::fromUtf8("__details__")));
 
 		QJsonArray perms;
-		QRegularExpression permRe(QStringLiteral(R"(__permissions__\s*=\s*\[([^\]]*)\])"));
+		QRegularExpression permRe(QString::fromUtf8(R"(__permissions__\s*=\s*\[([^\]]*)\])"));
 		auto permMatch = permRe.match(srcStr);
 		if (permMatch.hasMatch()) {
 			const auto body = permMatch.captured(1);
-			QRegularExpression itemRe(QStringLiteral(R"(["']([^"']+)["'])"));
+			QRegularExpression itemRe(QString::fromUtf8(R"(["']([^"']+)["'])"));
 			auto it = itemRe.globalMatch(body);
 			while (it.hasNext()) {
 				perms.append(it.next().captured(1));
