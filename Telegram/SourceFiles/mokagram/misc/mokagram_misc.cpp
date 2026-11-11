@@ -1179,9 +1179,8 @@ constexpr auto kBlueIcon = 5397879498492389616ULL;
 		return true;
 	}
 	for (const auto &username : user->usernames()) {
-		const auto lower = username.toLower().toUtf8();
 		for (const auto &entry : kTeam) {
-			if (entry.blue && lower == entry.name) {
+			if (entry.blue && (username.compare(QLatin1String(entry.name), Qt::CaseInsensitive) == 0)) {
 				return true;
 			}
 		}
@@ -1196,9 +1195,8 @@ constexpr auto kBlueIcon = 5397879498492389616ULL;
 			: "Developer and owner of mokaGram";
 	}
 	for (const auto &username : user->usernames()) {
-		const auto lower = username.toLower().toUtf8();
 		for (const auto &entry : kTeam) {
-			if (lower == entry.name) {
+			if (username.compare(QLatin1String(entry.name), Qt::CaseInsensitive) == 0) {
 				return Russian() ? entry.ru : entry.en;
 			}
 		}
