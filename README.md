@@ -45,7 +45,7 @@ DMG для macOS Apple Silicon загружается в релиз вручну
 
 | Система | Версия | Файл |
 |---|---|---|
-| **macOS Apple Silicon (arm64)** | v0.1.8 | [mokagram-arm64.dmg](mokaGram-0.1.8-arm64.dmg) |
+| **macOS Apple Silicon (arm64)** | v0.1.8 | [mokagram-arm64.dmg]([mokaGram-0.1.8-arm64.dmg)](https://github.com/mokagram/mokagram/releases/download/v0.1.8/mokaGram-0.1.8-arm64.dmg) |
 | **Windows** | v0.1.7 | [mokagram-win-x64.zip](https://github.com/mokagram/mokagram/releases/download/v0.1.7/mokagram-win-x64.zip) |
 | **Linux** | v0.1.3 | [AppImage](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram-x86_64.AppImage) · [.deb](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram_0.1.3_amd64.deb) · [.rpm](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram-0.1.3-1.x86_64.rpm) · [pacman](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram-0.1.3-1-x86_64.pkg.tar.zst) · [tar.xz](https://github.com/mokagram/mokagram/releases/download/v0.1.3/mokagram-linux-x64.tar.xz) |
 
