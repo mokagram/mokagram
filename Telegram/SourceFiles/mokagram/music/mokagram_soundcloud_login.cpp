@@ -136,6 +136,7 @@ def desktop_binaries():
             "Vivaldi": ("Vivaldi.app", "Vivaldi"),
             "Opera": ("Opera.app", "Opera"),
             "Arc": ("Arc.app", "Arc"),
+            "Helium": ("Helium.app", "Helium"),
             "Yandex Browser": ("Yandex.app", "Yandex"),
         }
         for appdir in ("/Applications", os.path.join(home, "Applications")):
@@ -211,6 +212,8 @@ if sys.platform == "darwin":
         os.path.join(support, "Vivaldi"),
         os.path.join(support, "com.operasoftware.Opera"),
         os.path.join(support, "Arc/User Data"),
+        os.path.join(support, "net.imput.helium"),
+        os.path.join(support, "net.imput.helium.dev"),
         os.path.join(support, "Yandex/YandexBrowser")):
         roots.extend(glob.glob(pattern))
 for root in roots:
