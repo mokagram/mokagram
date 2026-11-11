@@ -124,10 +124,13 @@ struct MediaMemory {
 }
 
 void RememberMediaImpl(FullMsgId id, QByteArray tl) {
+	if (!Settings::Bool(u"history.save_deleted"_q)) {
+		return;
+	}
 	auto &mem = MediaMem();
 	if (mem.map.emplace(id, std::move(tl)).second) {
 		mem.order.push_back(id);
-		while (mem.order.size() > 4000) {
+		while (mem.order.size() > 1000) {
 			mem.map.remove(mem.order.front());
 			mem.order.pop_front();
 		}
@@ -683,7 +686,7 @@ struct SeenQueue {
 }
 
 constexpr auto kSeenChunk = 150;
-constexpr auto kSeenRecent = 20000;
+constexpr auto kSeenRecent = 5000;
 
 void JournalNow(not_null<HistoryItem*> item, bool replace) {
 	if (!Eligible(item, Kind::Deleted) || !IsServerMsgId(item->id)) {
@@ -713,7 +716,9 @@ void ProcessSeen() {
 } // namespace
 
 void OnSeen(not_null<HistoryItem*> item) {
-	if (item->isLocal() || !IsServerMsgId(item->id)) {
+	if (!Settings::Bool(u"history.save_deleted"_q)
+		|| item->isLocal()
+		|| !IsServerMsgId(item->id)) {
 		return;
 	}
 	auto &queue = Seen();
