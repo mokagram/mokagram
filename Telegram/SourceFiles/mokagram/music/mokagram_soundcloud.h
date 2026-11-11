@@ -158,7 +158,10 @@ void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done);
 void SyncLikes(Fn<void(int remote, int pushed, QString error)> done = nullptr);
 
 // Ставит лайк в аккаунте при входе. Для локального лайка это фоновая операция.
-void SetTrackLiked(const QString &trackId, bool liked);
+void SetTrackLiked(
+	const QString &trackId,
+	bool liked,
+	bool refreshed = false);
 
 // Локальные лайки, пришедшие из подключённого аккаунта: их не отправляем обратно,
 // а снятый в аккаунте лайк убирается и локально. Возвращает число новых треков.

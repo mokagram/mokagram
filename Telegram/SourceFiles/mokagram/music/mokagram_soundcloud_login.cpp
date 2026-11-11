@@ -592,4 +592,45 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 	}));
 }
 
+void RefreshSoundCloudToken(Fn<void(bool)> done) {
+#ifdef Q_OS_LINUX
+	static auto running = false;
+	const auto python = QStandardPaths::findExecutable(u"python3"_q);
+	if (running || python.isEmpty()) {
+		done(false);
+		return;
+	}
+	running = true;
+	const auto process = new QProcess();
+	process->setProgram(python);
+	process->setArguments({ u"-I"_q, u"-c"_q, QString::fromLatin1(kGrabScript) });
+	const auto timeout = new QTimer(process);
+	timeout->setSingleShot(true);
+	timeout->callOnTimeout([=] { process->terminate(); });
+	timeout->start(40 * 1000);
+	QObject::connect(process, &QProcess::finished, process, [=](int) {
+		const auto output = QString::fromUtf8(process->readAllStandardOutput());
+		process->deleteLater();
+		auto token = QString();
+		for (const auto &line : output.split(u'\n')) {
+			if (line.startsWith(u"TOKEN "_q)) {
+				token = TokenFromText(line.mid(6));
+			}
+		}
+		if (token.isEmpty()) {
+			running = false;
+			done(false);
+			return;
+		}
+		Account::Login(token, [=](QString error) {
+			running = false;
+			done(error.isEmpty());
+		});
+	});
+	process->start();
+#else // Q_OS_LINUX
+	done(false);
+#endif // Q_OS_LINUX
+}
+
 } // namespace Mokagram::Music

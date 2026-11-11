@@ -6,6 +6,7 @@
 
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/music/mokagram_music_library.h"
+#include "mokagram/music/mokagram_soundcloud_login.h"
 
 #include "core/application.h"
 #include "rpl/event_stream.h"
@@ -1265,7 +1266,7 @@ void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done) {
 	});
 }
 
-void SetTrackLiked(const QString &trackId, bool liked) {
+void SetTrackLiked(const QString &trackId, bool liked, bool refreshed) {
 	if (!IsLoggedIn() || !ValidTrackId(trackId)) {
 		return;
 	}
@@ -1274,6 +1275,18 @@ void SetTrackLiked(const QString &trackId, bool liked) {
 			QNetworkReply::NetworkError networkError,
 			QString networkMessage,
 			QByteArray data) {
+		if (status == 401 && !refreshed) {
+			// Токен входа живёт сутки: берём свежий из браузера и повторяем.
+			RefreshSoundCloudToken([=](bool ok) {
+				if (ok) {
+					SetTrackLiked(trackId, liked, true);
+				} else {
+					LikeWriteErrorsStream().fire(QString::fromUtf8(
+						Mokagram::Lang::Tr("Вход в SoundCloud устарел: открой soundcloud.com в браузере и войди заново в mokaGram.")));
+				}
+			});
+			return;
+		}
 		auto message = QString::fromUtf8(Mokagram::Lang::Tr(
 			"SoundCloud не сохранил лайк"));
 		if (status) {

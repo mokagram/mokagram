@@ -17,6 +17,10 @@ namespace Mokagram::Music {
 // onLoggedIn зовётся в главном потоке после успешного входа.
 void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed = nullptr);
 
+// Тихо берёт свежий токен из куков браузера (Linux) и входит с ним.
+// Токен SoundCloud живёт сутки, потом лайки отвечают 401.
+void RefreshSoundCloudToken(Fn<void(bool)> done);
+
 // Круглый оранжевый значок SoundCloud со знаком: облако и столбики звука.
 void PaintSoundCloudBadge(QPainter &p, const QRectF &r);
 
