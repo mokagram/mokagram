@@ -246,7 +246,9 @@ void RoundLayer(not_null<Ui::BoxContent*> box) {
 
 void PaintCard(QPainter &p, QRect rect) {
 	auto hq = PainterHighQualityEnabler(p);
-	const auto radius = std::min(kCardRadius, rect.height() / 2);
+	const auto radius = std::min(
+		style::ConvertScale(kCardRadius),
+		rect.height() / 2);
 	p.setPen(Qt::NoPen);
 	p.setBrush(st::windowBg);
 	p.drawRoundedRect(rect, radius, radius);
