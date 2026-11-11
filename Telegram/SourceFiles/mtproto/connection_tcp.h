@@ -13,7 +13,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace MTP {
 
 // Mokagram: controlled by the native WebSocket connection setting.
-void SetTelegramWebSocketTransportEnabled(bool enabled);
 
 namespace details {
 

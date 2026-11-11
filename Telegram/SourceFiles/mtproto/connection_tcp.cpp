@@ -9,7 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/details/mtproto_abstract_socket.h"
 #include "mtproto/details/mtproto_web_proxy_socket.h"
-#include "mtproto/details/mtproto_websocket_fallback_socket.h"
 #include "base/bytes.h"
 #include "base/openssl_help.h"
 #include "base/random.h"
@@ -17,19 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QtEndian>
 
-#include <atomic>
-
 namespace MTP {
-namespace {
-
-std::atomic_bool TelegramWebSocketTransportEnabled = false;
-
-} // namespace
-
-void SetTelegramWebSocketTransportEnabled(bool enabled) {
-	TelegramWebSocketTransportEnabled.store(enabled, std::memory_order_relaxed);
-}
-
 namespace details {
 namespace {
 
@@ -546,21 +533,9 @@ void TcpConnection::connectToServer(
 		_protocol = Protocol::Create(secret);
 	}
 	_protocolDcId = protocolDcId;
-	const auto useWebSocket = TelegramWebSocketTransportEnabled.load(
-		std::memory_order_relaxed)
-		&& (_proxy.type == ProxyData::Type::None)
-		&& protocolSecret.empty();
-	// Mokagram: opt into Telegram's WebSocket frontend for direct connections.
+	// Mokagram: direct connections use the standard MTProto transport.
 	_socket = (_proxy.type == ProxyData::Type::Web)
 		? std::make_unique<WebProxySocket>(thread(), _proxy)
-		: useWebSocket
-		? std::make_unique<WebSocketFallbackSocket>(
-			thread(),
-			_address,
-			_port,
-			protocolDcId,
-			protocolForFiles,
-			ToNetworkProxy(_proxy))
 		: AbstractSocket::Create(
 			thread(),
 			secret,
