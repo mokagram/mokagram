@@ -673,7 +673,7 @@ void RegisterMotionSettings() {
 	add({ .key = u"player.public_canvas"_q,
 		.title = QString::fromUtf8(Lang::Tr("Canvas из публичного каталога")),
 		.description = QString::fromUtf8(Lang::Tr("Автоматически ищет видео по исполнителю и названию через Canvas Downloader; вход в Spotify не требуется.")),
-		.kind = Settings::Kind::Bool, .defaultValue = true });
+		.kind = Settings::Kind::Bool, .defaultValue = false });
 	add({ .key = u"player.spotify_canvas"_q,
 		.title = QString::fromUtf8(Lang::Tr("Видео Spotify Canvas")),
 		.description = QString::fromUtf8(Lang::Tr("Требует входа в Spotify. При отсутствии видео остаётся обычный фон.")),
