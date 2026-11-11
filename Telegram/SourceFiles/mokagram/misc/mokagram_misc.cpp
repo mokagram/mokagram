@@ -1578,6 +1578,7 @@ void Start() {
 	});
 	ConnectEvents();
 	static auto timer = new QTimer();
+	timer->setTimerType(Qt::CoarseTimer);
 	timer->setInterval(3000);
 	QObject::connect(timer, &QTimer::timeout, [] {
 		static auto ticks = 0;
@@ -1931,7 +1932,7 @@ void RegisterSettings() {
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько эмодзи играет одновременно")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("Остальные премиум-эмодзи замирают на кадре. 0 значит без ограничения.")),
 		.kind = S::Kind::Int,
-		.defaultValue = 24,
+		.defaultValue = 12,
 		.minValue = 0,
 		.maxValue = 200,
 	});
@@ -1940,7 +1941,7 @@ void RegisterSettings() {
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Сколько стикеров играет одновременно")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("Остальные анимированные стикеры замирают на кадре. 0 значит без ограничения.")),
 		.kind = S::Kind::Int,
-		.defaultValue = 6,
+		.defaultValue = 3,
 		.minValue = 0,
 		.maxValue = 50,
 	});
