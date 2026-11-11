@@ -1540,3 +1540,6 @@
 	{ "Не удалось открыть файл плагина «%1»: %2", "Could not open plugin file \"%1\": %2" },
 	{ "Плагины: не удалось удалить файл %1", "Plugins: failed to remove file %1" },
 	{ "[%1] превышен общий лимит отправки сообщений", "[%1] global message send limit exceeded" },
+	{ "Подключение", "Connection" },
+	{ "Пробовать WebSocket для Telegram", "Try WebSocket for Telegram" },
+	{ "При прямом подключении сначала используется WebSocket, при сбое клиент подключится по TCP.", "For direct connections, try WebSocket first and fall back to TCP if it fails." },

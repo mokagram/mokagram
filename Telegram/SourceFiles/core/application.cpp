@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/commands/mokagram_commands.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/settings/mokagram_settings_box.h"
+#include "mokagram/settings/mokagram_network_settings.h"
 #include "mokagram/streamer/mokagram_streamer.h"
 #include "mokagram/history/mokagram_history.h"
 #include "mokagram/passcode/mokagram_passcode_guard.h"
@@ -356,6 +357,8 @@ void Application::run() {
 
 	Mokagram::Plugins::ApplyPendingRestore();
 	Mokagram::Settings::Load();
+	// Mokagram: apply the native WebSocket transport setting before accounts connect.
+	Mokagram::Network::RegisterSettings();
 	Mokagram::Badges::Start();
 	Mokagram::Perf::Start();
 	Mokagram::Guard::Start();

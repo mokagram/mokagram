@@ -11,6 +11,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 
 namespace MTP {
+
+// Mokagram: controlled by the native WebSocket connection setting.
+void SetTelegramWebSocketTransportEnabled(bool enabled);
+
 namespace details {
 
 class AbstractSocket;

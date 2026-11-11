@@ -155,6 +155,8 @@ PRIVATE
     mokagram/settings/mokagram_settings.h
     mokagram/settings/mokagram_settings_box.cpp
     mokagram/settings/mokagram_settings_box.h
+    mokagram/settings/mokagram_network_settings.cpp
+    mokagram/settings/mokagram_network_settings.h
     mokagram/streamer/mokagram_streamer.cpp
     mokagram/streamer/mokagram_streamer.h
     mokagram/history/mokagram_history.cpp
@@ -1873,6 +1875,8 @@ PRIVATE
     mtproto/dedicated_file_loader.h
     mtproto/details/mtproto_web_proxy_socket.cpp
     mtproto/details/mtproto_web_proxy_socket.h
+    mtproto/details/mtproto_websocket_fallback_socket.cpp
+    mtproto/details/mtproto_websocket_fallback_socket.h
     mtproto/facade.cpp
     mtproto/facade.h
     mtproto/mtp_instance.cpp

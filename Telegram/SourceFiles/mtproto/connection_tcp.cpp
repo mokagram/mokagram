@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/details/mtproto_abstract_socket.h"
 #include "mtproto/details/mtproto_web_proxy_socket.h"
+#include "mtproto/details/mtproto_websocket_fallback_socket.h"
 #include "base/bytes.h"
 #include "base/openssl_help.h"
 #include "base/random.h"
@@ -16,7 +17,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QtEndian>
 
+#include <atomic>
+
 namespace MTP {
+namespace {
+
+std::atomic_bool TelegramWebSocketTransportEnabled = false;
+
+} // namespace
+
+void SetTelegramWebSocketTransportEnabled(bool enabled) {
+	TelegramWebSocketTransportEnabled.store(enabled, std::memory_order_relaxed);
+}
+
 namespace details {
 namespace {
 
@@ -532,14 +545,27 @@ void TcpConnection::connectToServer(
 		_port = port;
 		_protocol = Protocol::Create(secret);
 	}
+	_protocolDcId = protocolDcId;
+	const auto useWebSocket = TelegramWebSocketTransportEnabled.load(
+		std::memory_order_relaxed)
+		&& (_proxy.type == ProxyData::Type::None)
+		&& protocolSecret.empty();
+	// Mokagram: opt into Telegram's WebSocket frontend for direct connections.
 	_socket = (_proxy.type == ProxyData::Type::Web)
 		? std::make_unique<WebProxySocket>(thread(), _proxy)
+		: useWebSocket
+		? std::make_unique<WebSocketFallbackSocket>(
+			thread(),
+			_address,
+			_port,
+			protocolDcId,
+			protocolForFiles,
+			ToNetworkProxy(_proxy))
 		: AbstractSocket::Create(
 			thread(),
 			secret,
 			ToNetworkProxy(_proxy),
 			protocolForFiles);
-	_protocolDcId = protocolDcId;
 
 	const auto postfix = _socket->debugPostfix();
 	_debugId = u"%1(dc:%2,%3%4:%5%6)"_q
@@ -649,7 +675,9 @@ QString TcpConnection::transport() const {
 	if (!isConnected()) {
 		return QString();
 	}
-	auto result = u"TCP"_q;
+	auto result = (_socket->debugPostfix() == u"_ws"_q)
+		? u"TCP/WS"_q
+		: u"TCP"_q;
 	if (qthelp::is_ipv6(_address)) {
 		result += u"/IPv6"_q;
 	}
