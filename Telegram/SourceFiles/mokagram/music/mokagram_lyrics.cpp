@@ -884,9 +884,12 @@ void FetchLyrics(
 	const auto trackName = split.trackName;
 	const auto artistName = split.artistName;
 	const auto finish = [=](Lyrics result) {
-		// Неудачу не запоминаем: сеть могла моргнуть.
 		if (result.found) {
-			Cache()[cacheKey] = result;
+			auto &cache = Cache();
+			if (cache.size() >= 64) {
+				cache.erase(cache.begin());
+			}
+			cache[cacheKey] = result;
 		}
 		done(std::move(result));
 	};
@@ -971,9 +974,12 @@ void FetchArtwork(
 		return;
 	}
 	SearchArtwork(wanted, durationMs, [=](QString url) {
-		// Неудачу не запоминаем: сеть могла моргнуть.
 		if (!url.isEmpty()) {
-			ArtworkUrls()[cacheKey] = url;
+			auto &urls = ArtworkUrls();
+			if (urls.size() >= 128) {
+				urls.erase(urls.begin());
+			}
+			urls[cacheKey] = url;
 		}
 		LoadArtwork(url, done);
 	});
