@@ -3411,12 +3411,14 @@ public:
 		int count,
 		bool isTrack,
 		Fn<void(QImage, QRect)> showCover,
-		bool isArtist = false)
+		bool isArtist = false,
+		QString bannerUrl = QString())
 	: RpWidget(parent)
 	, _album(std::move(album))
 	, _count(count)
 	, _isTrack(isTrack)
 	, _isArtist(isArtist)
+	, _bannerUrl(std::move(bannerUrl))
 	, _showCover(std::move(showCover)) {
 		setMouseTracking(true);
 		setToolTip(_album.title + u" - "_q + _album.artist);
@@ -3425,6 +3427,13 @@ public:
 			_scaledArt = QImage();
 			update();
 		}));
+		if (_isArtist && !_bannerUrl.isEmpty()) {
+			LoadImage(_bannerUrl, crl::guard(this, [=](QImage image) {
+				_banner = std::move(image);
+				_scaledBanner = QImage();
+				update();
+			}));
+		}
 	}
 
 protected:
@@ -3455,6 +3464,23 @@ protected:
 		const auto narrow = width() < s(480);
 		const auto margin = s(24);
 		const auto art = coverRect();
+		if (_isArtist && !_banner.isNull()) {
+			if (_scaledBanner.isNull() || _scaledBannerSize != size()) {
+				_scaledBanner = _banner.scaled(size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+				_scaledBannerSize = size();
+			}
+			const auto source = QRect(
+				(_scaledBanner.width() - width()) / 2,
+				(_scaledBanner.height() - height()) / 2,
+				width(),
+				height());
+			p.drawImage(rect(), _scaledBanner, source);
+			auto shade = QLinearGradient(rect().topLeft(), rect().bottomLeft());
+			shade.setColorAt(0., QColor(0, 0, 0, 36));
+			shade.setColorAt(0.68, QColor(0, 0, 0, 48));
+			shade.setColorAt(1., QColor(0, 0, 0, 126));
+			p.fillRect(rect(), shade);
+		}
 		auto clip = QPainterPath();
 		if (_isArtist) clip.addEllipse(art);
 		else clip.addRoundedRect(art, s(6), s(6));
@@ -3486,6 +3512,14 @@ protected:
 		p.setFont(title);
 		p.setPen(Qt::white);
 		const auto titleHeight = narrow ? s(56) : s(72);
+		if (_isArtist && !_banner.isNull()) {
+			const auto titleWidth = std::min(
+				available,
+				QFontMetrics(title).horizontalAdvance(_album.title) + s(16));
+			p.fillRect(
+				QRect(left - s(8), top + s(28), titleWidth, titleHeight),
+				QColor(0, 0, 0, 180));
+		}
 		p.drawText(QRect(left, top + s(28), available, titleHeight),
 			Qt::AlignLeft | Qt::AlignVCenter,
 			QFontMetrics(title).elidedText(_album.title, Qt::ElideRight, available));
@@ -3512,9 +3546,13 @@ private:
 	int _count = 0;
 	bool _isTrack = false;
 	bool _isArtist = false;
+	QString _bannerUrl;
 	QImage _art;
 	QImage _scaledArt;
 	QSize _scaledArtSize;
+	QImage _banner;
+	QImage _scaledBanner;
+	QSize _scaledBannerSize;
 	Fn<void(QImage, QRect)> _showCover;
 
 };
@@ -6045,14 +6083,14 @@ protected:
 		}
 		const auto track = PlayingTrack();
 		const auto artist = track.artist.trimmed();
-		const auto controller = _controller;
 		if (hover == InfoHover::Title || hover == InfoHover::BarTitle) {
 			setHover(InfoHover::None);
 			setTab(Tab::Home);
 			openHomeTrack(track);
 		} else if (!artist.isEmpty()) {
-			close();
-			ShowMusicBox(controller, artist);
+			setHover(InfoHover::None);
+			setTab(Tab::Home);
+			openHomeArtist(track);
 		}
 	}
 	void contextMenuEvent(QContextMenuEvent *e) override {
@@ -6769,12 +6807,30 @@ protected:
 		_homeAlbumIsTrack = false;
 		_homeArtistSeed = track;
 		const auto generation = ++_homeAlbumGeneration;
+		_homeArtistBannerUrl.clear();
 		const auto art = track.artistArtworkUrl.isEmpty() ? track.artworkUrl : track.artistArtworkUrl;
 		_homeAlbum = { {}, track.artist, {}, art, 0 };
 		_homeAlbumTracks.clear();
 		_homeAlbumNote.clear();
 		_homeAlbumLoading = false;
 		loadHomeAccent(art, generation);
+		if (!track.artistId.isEmpty()) {
+			LoadArtistInfo(track.artistId, crl::guard(this, [=](ArtistInfo info) {
+				if (generation != _homeAlbumGeneration || !_homeArtistOpen) {
+					return;
+				}
+				if (!info.avatarUrl.isEmpty()) {
+					_homeAlbum.artworkUrl = info.avatarUrl;
+				}
+				_homeArtistBannerUrl = info.bannerUrl;
+				loadHomeAccent(
+					_homeArtistBannerUrl.isEmpty() ? art : _homeArtistBannerUrl,
+					generation);
+				if (_tab == Tab::Home) {
+					rebuildTab();
+				}
+			}));
+		}
 		loadHomeArtist(track.artist, track.artistId, {}, {}, generation);
 		loadHomeSimilar(track, generation);
 		relayout();
@@ -6984,7 +7040,7 @@ protected:
 					crl::guard(this, [=](QImage image, QRect source) {
 						source.moveTopLeft(mapFromGlobal(source.topLeft()));
 						Ui::CreateChild<HomeCoverPreview>(this, std::move(image), source);
-					}), _homeArtistOpen), QMargins(12, 0, 12, 8));
+					}), _homeArtistOpen, _homeArtistBannerUrl), QMargins(12, 0, 12, 8));
 				if (!_homeAlbumIsTrack && !_homeArtistOpen) InstallAlbumContextMenu(albumHeader, _controller, _homeAlbum);
 
 				if (_homeArtistOpen) {
@@ -7488,7 +7544,7 @@ protected:
 			s(4)), _accent);
 		p.restore();
 
-		// Название и исполнитель; под курсором подчёркнуты: по ним открываются альбомы и поиск исполнителя.
+		// Название и исполнитель; под курсором подчёркнуты и ведут на их страницы.
 		const auto available = infoAvailable(layout);
 		const auto drawInfo = [&](
 				const QString &title,
@@ -7895,6 +7951,7 @@ private:
 	std::vector<Track> _homeAlbumTracks;
 	std::vector<Track> _homeArtistTracks;
 	std::vector<Album> _homeArtistAlbums;
+	QString _homeArtistBannerUrl;
 	// Похожее по звучанию: отдельный ряд от автора играющего трека.
 	std::vector<Track> _homeSimilarTracks;
 	bool _homeSimilarLoading = false;
