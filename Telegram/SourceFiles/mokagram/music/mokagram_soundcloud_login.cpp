@@ -86,18 +86,35 @@ constexpr auto kSoundCloudPath = "M23.999 14.165c-.052 1.796-1.612 3.169-3.4 3.1
 	return QString();
 }
 
-#ifdef Q_OS_LINUX
+[[nodiscard]] QString Python3Executable() {
+#ifdef Q_OS_MAC
+	const auto homebrew = QStandardPaths::findExecutable(u"python3"_q, {
+		u"/opt/homebrew/bin"_q,
+		u"/usr/local/bin"_q,
+		u"/opt/local/bin"_q,
+	});
+	if (!homebrew.isEmpty()) {
+		return homebrew;
+	}
+#endif // Q_OS_MAC
+	return QStandardPaths::findExecutable(u"python3"_q);
+}
+
+#if defined Q_OS_LINUX || defined Q_OS_MAC
 // Достаёт oauth_token SoundCloud из куков любого браузера. Chromium-семейство:
 // копия профиля, headless-браузер сам расшифровывает куки и отдаёт их через
 // DevTools по каналу (без портов). Firefox-семейство: куки без шифрования,
-// читаются из копии cookies.sqlite.
+// читаются из копии cookies.sqlite. Safari на macOS хранит куки в отдельном
+// бинарном файле; его разбираем локально без запуска браузера.
 // Вывод: строка "BROWSER <имя>", затем "TOKEN <jwt>". Код 2: входа нет.
 constexpr auto kGrabScript = R"PY(
-import glob, json, os, shutil, signal, sqlite3, subprocess, sys, tempfile, time
+import glob, json, os, shutil, signal, sqlite3, struct, subprocess, sys, tempfile, time
 signal.signal(signal.SIGTERM, lambda *a: sys.exit(1))
 home = os.path.expanduser("~")
 cfg = os.path.join(home, ".config")
+support = os.path.join(home, "Library", "Application Support")
 CHROMIUM_EPOCH = 11644473600
+SAFARI_EPOCH = 978307200
 
 def norm(text):
     return "".join(ch for ch in text.lower() if ch.isalnum())
@@ -107,6 +124,26 @@ def is_jwt(value):
 
 def desktop_binaries():
     found = {}
+    if sys.platform == "darwin":
+        apps = {
+            "Google Chrome": ("Google Chrome.app", "Google Chrome"),
+            "Google Chrome Beta": ("Google Chrome Beta.app", "Google Chrome Beta"),
+            "Google Chrome Dev": ("Google Chrome Dev.app", "Google Chrome Dev"),
+            "Google Chrome Canary": ("Google Chrome Canary.app", "Google Chrome Canary"),
+            "Chromium": ("Chromium.app", "Chromium"),
+            "Microsoft Edge": ("Microsoft Edge.app", "Microsoft Edge"),
+            "Brave Browser": ("Brave Browser.app", "Brave Browser"),
+            "Vivaldi": ("Vivaldi.app", "Vivaldi"),
+            "Opera": ("Opera.app", "Opera"),
+            "Arc": ("Arc.app", "Arc"),
+            "Yandex Browser": ("Yandex.app", "Yandex"),
+        }
+        for appdir in ("/Applications", os.path.join(home, "Applications")):
+            for label, (bundle, executable) in apps.items():
+                path = os.path.join(appdir, bundle, "Contents", "MacOS", executable)
+                if os.path.isfile(path) and os.access(path, os.X_OK):
+                    found[norm(executable)] = path
+        return found
     dirs = [os.path.join(home, ".local/share/applications"), "/usr/share/applications",
             "/var/lib/flatpak/exports/share/applications"]
     for d in dirs:
@@ -126,12 +163,15 @@ def desktop_binaries():
 
 def find_binary(rootname, binaries):
     key = norm(rootname)
+    for name, exe in binaries.items():
+        if name == key:
+            return exe
     best = None
     for name, exe in binaries.items():
         short = name
         for tail in ("stable", "browser", "bin", "beta", "unstable"):
             short = short[:-len(tail)] if short.endswith(tail) and len(short) > len(tail) + 2 else short
-        if len(short) >= 4 and (short in key or key in short):
+        if len(short) >= 3 and (short in key or key in short):
             if best is None or len(short) > best[0]:
                 best = (len(short), exe)
     if best:
@@ -153,14 +193,29 @@ def copy_db(path, tmp):
 cands = []
 binaries = desktop_binaries()
 
-# Chromium-семейство: профили по Local State, браузер по .desktop (куки зашифрованы).
+# Chromium-семейство: профили по Local State, исполняемый файл по имени браузера.
 roots = []
 for pattern in (os.path.join(cfg, "*"), os.path.join(cfg, "*/*"), os.path.join(home, ".var/app/*/config/*")):
     for root in glob.glob(pattern):
         if os.path.isfile(os.path.join(root, "Local State")):
             roots.append(root)
+if sys.platform == "darwin":
+    for pattern in (
+        os.path.join(support, "Google/Chrome"),
+        os.path.join(support, "Google/Chrome Beta"),
+        os.path.join(support, "Google/Chrome Dev"),
+        os.path.join(support, "Google/Chrome Canary"),
+        os.path.join(support, "Chromium"),
+        os.path.join(support, "Microsoft Edge"),
+        os.path.join(support, "BraveSoftware/Brave-Browser"),
+        os.path.join(support, "Vivaldi"),
+        os.path.join(support, "com.operasoftware.Opera"),
+        os.path.join(support, "Arc/User Data"),
+        os.path.join(support, "Yandex/YandexBrowser")):
+        roots.extend(glob.glob(pattern))
 for root in roots:
-    rootname = os.path.relpath(root, cfg) if root.startswith(cfg) else os.path.basename(root)
+    rootname = os.path.relpath(root, cfg) if root.startswith(cfg) else (
+        os.path.relpath(root, support) if root.startswith(support) else os.path.basename(root))
     binary = find_binary(rootname, binaries)
     if not binary:
         continue
@@ -185,11 +240,29 @@ for pattern in (os.path.join(home, ".*/*/cookies.sqlite"), os.path.join(home, ".
                 os.path.join(home, ".var/app/*/.*/*/*/cookies.sqlite"),
                 os.path.join(home, "snap/*/common/.*/*/*/cookies.sqlite")):
     ff.update(glob.glob(pattern))
+if sys.platform == "darwin":
+    for pattern in (
+        os.path.join(support, "Firefox/Profiles/*/cookies.sqlite"),
+        os.path.join(support, "Zen/Profiles/*/cookies.sqlite"),
+        os.path.join(support, "LibreWolf/Profiles/*/cookies.sqlite"),
+        os.path.join(support, "Waterfox/Profiles/*/cookies.sqlite")):
+        ff.update(glob.glob(pattern))
 for db in sorted(ff):
     rel = os.path.relpath(db, home).split(os.sep)
     label = next((x.strip(".") for x in rel if x not in (".config", ".var", "app", "snap", "common") and x.startswith(".") or x in ("mozilla",)), "firefox")
     label = "Firefox" if label.lower() in ("mozilla", "firefox") else label.title()
     cands.append((0, "firefox", label, db))
+
+safari = set()
+if sys.platform == "darwin":
+    for pattern in (
+        os.path.join(home, "Library/Cookies/Cookies.binarycookies"),
+        os.path.join(home, "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"),
+        os.path.join(home, "Library/Containers/com.apple.SafariTechnologyPreview/Data/Library/Cookies/Cookies.binarycookies"),
+        os.path.join(home, "Library/Containers/com.apple.Safari*/Data/Library/Cookies/Cookies.binarycookies")):
+        safari.update(glob.glob(pattern))
+    for path in sorted(safari):
+        cands.append((0, "safari", "Safari", path))
 
 tmp = tempfile.mkdtemp(prefix="moka-sc-")
 proc = None
@@ -211,6 +284,57 @@ def firefox_token(db):
             best = (value, expiry)
     return best
 
+def safari_tokens(path):
+    with open(path, "rb") as source:
+        data = source.read()
+    if len(data) < 8 or data[:4] != b"cook":
+        return []
+    pages = struct.unpack_from(">I", data, 4)[0]
+    if pages > 4096 or 8 + pages * 4 > len(data):
+        return []
+    sizes = struct.unpack_from(">" + "I" * pages, data, 8) if pages else ()
+    page_offset = 8 + pages * 4
+    found = []
+    def string_at(record, offset):
+        if offset < 56 or offset >= len(record):
+            return ""
+        end = record.find(b"\0", offset)
+        if end < 0:
+            return ""
+        return record[offset:end].decode("utf-8", "replace")
+    for page_size in sizes:
+        page_end = page_offset + page_size
+        if page_size < 12 or page_end > len(data):
+            break
+        page = data[page_offset:page_end]
+        page_offset = page_end
+        if page[:4] != b"\x00\x00\x01\x00":
+            continue
+        count = struct.unpack_from("<I", page, 4)[0]
+        if count > 100000 or 8 + count * 4 > len(page):
+            continue
+        offsets = struct.unpack_from("<" + "I" * count, page, 8) if count else ()
+        for offset in offsets:
+            if offset + 56 > len(page):
+                continue
+            record_size = struct.unpack_from("<I", page, offset)[0]
+            if record_size < 56 or offset + record_size > len(page):
+                continue
+            record = page[offset:offset + record_size]
+            domain_offset, name_offset, path_offset, value_offset = struct.unpack_from("<IIII", record, 16)
+            domain = string_at(record, domain_offset).lower().lstrip(".")
+            name = string_at(record, name_offset)
+            if domain != "soundcloud.com" and not domain.endswith(".soundcloud.com"):
+                continue
+            if name != "oauth_token":
+                continue
+            value = string_at(record, value_offset)
+            expiry = struct.unpack_from("<d", record, 40)[0] + SAFARI_EPOCH
+            if not expiry or expiry >= time.time():
+                if is_jwt(value):
+                    found.append((expiry, value))
+    return found
+
 def chromium_token(binary, prof, sub):
     global proc
     dst = os.path.join(tmp, "profile", "Default", sub)
@@ -225,10 +349,12 @@ def chromium_token(binary, prof, sub):
     r_out, w_out = os.pipe()
     def prep():
         os.dup2(r_in, 3); os.dup2(w_out, 4)
+    args = [binary, "--headless=new", "--user-data-dir=" + os.path.join(tmp, "profile"), "--remote-debugging-pipe",
+            "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--disable-extensions"]
+    args.append("--password-store=keychain" if sys.platform == "darwin" else "--password-store=gnome-libsecret")
+    args.append("about:blank")
     proc = subprocess.Popen(
-        [binary, "--headless=new", "--user-data-dir=" + os.path.join(tmp, "profile"), "--remote-debugging-pipe",
-         "--no-first-run", "--no-default-browser-check", "--disable-gpu",
-         "--disable-extensions", "--password-store=gnome-libsecret", "about:blank"],
+        args,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         preexec_fn=prep, pass_fds=(3, 4))
     os.close(r_in); os.close(w_out)
@@ -282,12 +408,19 @@ try:
                 continue
             if token:
                 ready.append((expiry, "firefox", label, token))
+        elif kind == "safari":
+            try:
+                for token_expiry, token in safari_tokens(data):
+                    ready.append((token_expiry, "safari", label, token))
+            except Exception:
+                failed = True
+                continue
         else:
             ready.append((expiry, kind, label, data))
     ready.sort(key=lambda r: r[0], reverse=True)
     for expiry, kind, label, data in ready:
         try:
-            tok = data if kind == "firefox" else chromium_token(*data)
+            tok = data if kind in ("firefox", "safari") else chromium_token(*data)
         except Exception:
             failed = True
             continue
@@ -310,7 +443,7 @@ finally:
             proc.kill()
     shutil.rmtree(tmp, ignore_errors=True)
 )PY";
-#endif // Q_OS_LINUX
+#endif // Q_OS_LINUX || Q_OS_MAC
 
 } // namespace
 
@@ -461,8 +594,8 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 			});
 		};
 
-#ifdef Q_OS_LINUX
-		const auto python = QStandardPaths::findExecutable(u"python3"_q);
+#if defined Q_OS_LINUX || defined Q_OS_MAC
+		const auto python = Python3Executable();
 		const auto autoLogin = [=] {
 			*busy = true;
 			setStatus(Tr("Ищу вход в браузере…"));
@@ -505,7 +638,7 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 			});
 			process->start();
 		};
-#endif // Q_OS_LINUX
+#endif // Q_OS_LINUX || Q_OS_MAC
 
 		const auto submit = [=] {
 			if (*busy) {
@@ -521,15 +654,15 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 					return;
 				}
 			}
-#ifdef Q_OS_LINUX
+#if defined Q_OS_LINUX || defined Q_OS_MAC
 			if (!python.isEmpty()) {
 				autoLogin();
 				return;
 			}
 			setStatus(Tr("Нужен python3. Токен можно ввести вручную."));
-#else // Q_OS_LINUX
-			setStatus(Tr("Автовход пока только на Linux. Введите токен вручную."));
-#endif // Q_OS_LINUX
+#else // Q_OS_LINUX || Q_OS_MAC
+			setStatus(Tr("Автовход пока только на Linux и macOS. Введите токен вручную."));
+#endif // Q_OS_LINUX || Q_OS_MAC
 			manual->toggle(true, anim::type::normal);
 		};
 		field->submits() | rpl::on_next(submit, field->lifetime());
@@ -593,9 +726,9 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 }
 
 void RefreshSoundCloudToken(Fn<void(bool)> done) {
-#ifdef Q_OS_LINUX
+#if defined Q_OS_LINUX || defined Q_OS_MAC
 	static auto running = false;
-	const auto python = QStandardPaths::findExecutable(u"python3"_q);
+	const auto python = Python3Executable();
 	if (running || python.isEmpty()) {
 		done(false);
 		return;
@@ -628,9 +761,9 @@ void RefreshSoundCloudToken(Fn<void(bool)> done) {
 		});
 	});
 	process->start();
-#else // Q_OS_LINUX
+#else // Q_OS_LINUX || Q_OS_MAC
 	done(false);
-#endif // Q_OS_LINUX
+#endif // Q_OS_LINUX || Q_OS_MAC
 }
 
 } // namespace Mokagram::Music

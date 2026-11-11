@@ -168,7 +168,7 @@
 	{ "В браузере нет входа в SoundCloud. Войдите на soundcloud.com и нажмите ещё раз.", "There is no SoundCloud sign-in in the browser. Sign in at soundcloud.com and press again." },
 	{ "Не получилось запустить браузер. Токен можно ввести вручную.", "Couldn't start the browser. You can enter the token manually." },
 	{ "Нужен python3. Токен можно ввести вручную.", "python3 is required. You can enter the token manually." },
-	{ "Автовход пока только на Linux. Введите токен вручную.", "Automatic sign-in is Linux-only for now. Enter the token manually." },
+	{ "Автовход пока только на Linux и macOS. Введите токен вручную.", "Automatic sign-in is available on Linux and macOS. Enter the token manually." },
 	{ "Войти через браузер", "Sign in via browser" },
 	{ "Токен вручную", "Enter token manually" },
 	{ "Возьмём вход из вашего браузера. Достаточно один раз войти на soundcloud.com.", "We will take the sign-in from your browser. Just sign in at soundcloud.com once." },
