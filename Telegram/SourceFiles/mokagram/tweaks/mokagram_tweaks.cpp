@@ -12,13 +12,13 @@
 #include "main/main_session.h"
 
 #include <QtCore/QStringList>
+#include <rpl/filter.h>
 
 namespace Mokagram::Tweaks {
 namespace {
 
 constexpr auto kPinsKey = "chats.local_pins";
 
-// Нижняя граница JPEG-маркеров, где лежат данные картинки, а не служебные.
 constexpr uchar kMarkerSOI = 0xD8;
 constexpr uchar kMarkerSOS = 0xDA;
 constexpr uchar kMarkerAPP1 = 0xE1;
@@ -29,10 +29,37 @@ constexpr uchar kMarkerCOM = 0xFE;
 	return QString::fromUtf8(Mokagram::Lang::Tr(text));
 }
 
+struct PinCache {
+	std::vector<uint64> ids;
+	bool loaded = false;
+	rpl::lifetime lifetime;
+};
+
 [[nodiscard]] QStringList PinIds() {
 	return Settings::String(QString::fromLatin1(kPinsKey)).split(
 		',',
 		Qt::SkipEmptyParts);
+}
+
+[[nodiscard]] PinCache &Pins() {
+	static auto result = PinCache();
+	if (!result.loaded) {
+		result.loaded = true;
+		const auto refresh = [] {
+			auto &p = Pins();
+			p.ids.clear();
+			for (const auto &id : PinIds()) {
+				if (const auto val = id.toULongLong()) {
+					p.ids.push_back(val);
+				}
+			}
+		};
+		refresh();
+		Settings::Changed() | rpl::filter([](const QString &key) {
+			return key == QString::fromLatin1(kPinsKey);
+		}) | rpl::on_next(refresh, result.lifetime);
+	}
+	return result;
 }
 
 void WritePinIds(const QStringList &ids) {
@@ -212,10 +239,14 @@ bool StripsMetadata() {
 }
 
 int LocalPinIndex(not_null<PeerData*> peer) {
-	const auto ids = PinIds();
-	const auto at = ids.indexOf(QString::number(peer->id.value));
-	// Индексы 1 и 2 заняты архивом и рекламой.
-	return (at >= 0) ? (10 + at) : 0;
+	const auto &ids = Pins().ids;
+	const auto target = peer->id.value;
+	for (auto i = 0, count = int(ids.size()); i != count; ++i) {
+		if (ids[i] == target) {
+			return 10 + i;
+		}
+	}
+	return 0;
 }
 
 bool IsLocallyPinned(not_null<PeerData*> peer) {
