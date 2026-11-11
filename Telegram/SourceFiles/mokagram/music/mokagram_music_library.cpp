@@ -767,7 +767,7 @@ void Gather(
 		}
 		titleKey = NormalizePart(text);
 	}
-	text.remove(noise).simplified();
+	text = text.remove(noise).simplified();
 	if (NormalizePart(text).size() >= 3) {
 		return text;
 	}
