@@ -3440,7 +3440,9 @@ protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		if (_isArtist) {
-			return s(newWidth < s(480) ? 280 : 288);
+			return s(_bannerUrl.isEmpty()
+				? (newWidth < s(480) ? 232 : 168)
+				: (newWidth < s(480) ? 280 : 288));
 		}
 		if (newWidth < s(480)) {
 			return std::min(std::max(newWidth - s(48), 0), s(224)) + s(160);
@@ -3469,7 +3471,7 @@ protected:
 		const auto art = coverRect();
 		if (_isArtist) {
 			p.fillRect(rect(), st::boxBg);
-			const auto bannerRect = QRect(0, 0, width(), s(narrow ? 128 : 176));
+			const auto bannerRect = QRect(0, 0, width(), _bannerUrl.isEmpty() ? 0 : s(narrow ? 128 : 176));
 			p.save();
 			auto bannerClip = QPainterPath();
 			bannerClip.addRect(bannerRect);
@@ -3515,7 +3517,9 @@ protected:
 			}
 			p.restore();
 			const auto left = narrow ? margin : art.right() + s(25);
-			const auto top = narrow ? s(184) : s(194);
+			const auto top = _bannerUrl.isEmpty()
+				? s(narrow ? 136 : 52)
+				: s(narrow ? 184 : 194);
 			const auto available = std::max(width() - left - margin, 0);
 			p.setFont(st::normalFont->f);
 			p.setPen(st::windowSubTextFg);
@@ -3603,7 +3607,7 @@ private:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		if (_isArtist) {
 			const auto narrow = width() < s(480);
-			return QRect(s(24), s(narrow ? 88 : 136), s(narrow ? 80 : 128), s(narrow ? 80 : 128));
+			return QRect(s(24), _bannerUrl.isEmpty() ? s(24) : s(narrow ? 88 : 136), s(narrow ? 80 : 128), s(narrow ? 80 : 128));
 		}
 		const auto side = (width() < s(480))
 			? std::min(std::max(width() - s(48), 0), s(224))
