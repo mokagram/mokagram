@@ -2,8 +2,7 @@
 // (c) 2026 @ecronx (https://t.me/ecronx). GPLv3 with the attribution term
 // of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
 // mokagram-id: 7ba2234e
-// Mokagram: хост плагинов (встроенный Python).
-// Этот файл не включает ничего из Qt/tdesktop: Python.h изолирован в .cpp.
+// Mokagram: нативный хост плагинов (C++).
 #pragma once
 
 #include <cstddef>
