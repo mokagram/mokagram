@@ -2099,6 +2099,7 @@ std::map<FullMsgId, bool> FilterCache;
 
 std::atomic<int> TextHookCount = 0;
 std::set<std::string> TextHookPlugins;
+std::map<FullMsgId, std::pair<TimeId, TextWithEntities>> TextTransformCache;
 
 std::atomic<int> BadgeHookCount = 0;
 std::set<std::string> BadgeHookPlugins;
@@ -2125,6 +2126,7 @@ std::string FilterSubscribe(const QJsonObject &args) {
 		BadgeHookCount = int(BadgeHookPlugins.size());
 		FilterCache.clear();
 		BadgeCache.clear();
+		TextTransformCache.clear();
 		return Reply(true);
 	});
 }
@@ -3153,6 +3155,16 @@ void TransformMessageText(
 		|| item->out()) {
 		return;
 	}
+	const auto id = item->fullId();
+	const auto edited = TimeId(qHash(item->originalText().text) & 0x7fffffff);
+	const auto i = TextTransformCache.find(id);
+	if (i != TextTransformCache.end() && i->second.first == edited) {
+		text = i->second.second;
+		return;
+	}
+	if (TextTransformCache.size() > 5000) {
+		TextTransformCache.clear();
+	}
 	auto message = QJsonObject();
 	message.insert("id", QString::number(item->id.bare));
 	message.insert("peer", QString::number(item->history()->peer->id.value));
@@ -3161,6 +3173,7 @@ void TransformMessageText(
 	message.insert("date", double(item->date()));
 	const auto answer = CallTextHook(Json(message), PluginLog);
 	if (answer.size() < 1) {
+		TextTransformCache[id] = { edited, text };
 		return;
 	}
 	if (answer[0] == 'T') {
@@ -3178,6 +3191,7 @@ void TransformMessageText(
 			EntitiesFromJson(object.value("entities").toArray(), changed.size(), true),
 		};
 	}
+	TextTransformCache[id] = { edited, text };
 }
 
 QString MessageBadge(not_null<const HistoryItem*> item) {
