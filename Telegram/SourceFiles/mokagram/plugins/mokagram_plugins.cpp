@@ -4971,7 +4971,7 @@ QJsonObject CallBridgeJson(const std::string &op, const QJsonObject &args) {
 	if (!fn) {
 		return QJsonObject{
 			{ QStringLiteral("ok"), false },
-			{ QStringLiteral("error"), QStringLiteral("bridge unavailable") },
+			{ QStringLiteral("error"), Tr("мост недоступен") },
 		};
 	}
 	const auto payload = QJsonDocument(args).toJson(QJsonDocument::Compact).toStdString();
@@ -5166,12 +5166,12 @@ void SaveStateLocked(QStringList &pendingLogs) {
 
 	QSaveFile f(StatePathQ());
 	if (!f.open(QIODevice::WriteOnly)) {
-		pendingLogs.push_back(QStringLiteral("plugins: failed to save state: ") + f.errorString());
+		pendingLogs.push_back(Tr("Плагины: не удалось сохранить состояние: %1").arg(f.errorString()));
 		return;
 	}
 	const auto bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
 	if (f.write(bytes) != bytes.size() || !f.commit()) {
-		pendingLogs.push_back(QStringLiteral("plugins: failed to commit state: ") + f.errorString());
+		pendingLogs.push_back(Tr("Плагины: не удалось записать состояние: %1").arg(f.errorString()));
 	}
 }
 
@@ -5202,12 +5202,12 @@ void SaveGrantsLocked(QStringList &pendingLogs) {
 
 	QSaveFile f(GrantsPathQ());
 	if (!f.open(QIODevice::WriteOnly)) {
-		pendingLogs.push_back(QStringLiteral("plugins: failed to save grants: ") + f.errorString());
+		pendingLogs.push_back(Tr("Плагины: не удалось сохранить разрешения: %1").arg(f.errorString()));
 		return;
 	}
 	const auto bytes = QJsonDocument(obj).toJson(QJsonDocument::Indented);
 	if (f.write(bytes) != bytes.size() || !f.commit()) {
-		pendingLogs.push_back(QStringLiteral("plugins: failed to commit grants: ") + f.errorString());
+		pendingLogs.push_back(Tr("Плагины: не удалось записать разрешения: %1").arg(f.errorString()));
 	}
 }
 
@@ -6859,12 +6859,12 @@ QString LoadFileImpl(const QString &fileName, const LogFn &log, bool recordGrant
 	const QString fullPath = PluginsDirQ() + QStringLiteral("/") + fileName;
 	const QFileInfo fileInfo(fullPath);
 	if (!fileInfo.isFile() || fileInfo.isSymLink() || fileInfo.size() < 0 || fileInfo.size() > kPluginFileLimitBytes) {
-		EmitLog(log, fileName + QStringLiteral(": skipped (invalid, symlink, or > 1 MB)"));
+		EmitLog(log, Tr("Файл плагина «%1» пропущен: он отсутствует, не является обычным файлом, является символической ссылкой или больше 1 МБ.").arg(fileName));
 		return QString();
 	}
 	QFile f(fullPath);
 	if (!f.open(QIODevice::ReadOnly)) {
-		EmitLog(log, fileName + QStringLiteral(": ") + f.errorString());
+		EmitLog(log, Tr("Не удалось открыть файл плагина «%1»: %2").arg(fileName, f.errorString()));
 		return QString();
 	}
 	const QByteArray raw = f.readAll();
@@ -8199,7 +8199,7 @@ void HandleNewMessageEvent(const QString &payloadJson) {
 				continue;
 			}
 			if (!CheckRateWindow(e.rateAll, 300, std::chrono::seconds(60))) {
-				logs.push_back(QStringLiteral("[") + pid + QStringLiteral("] rate limit __all"));
+				logs.push_back(Tr("[%1] превышен общий лимит отправки сообщений").arg(pid));
 				continue;
 			}
 			if (!CheckRateWindow(e.rateSend, 20, std::chrono::seconds(60))) {
@@ -8863,7 +8863,7 @@ bool Remove(const std::string &id, LogFn log) {
 		CallBridgeJson("plugin_unloaded", QJsonObject{ { QStringLiteral("pid"), qid } });
 	}
 	if (!filePath.isEmpty() && QFileInfo::exists(filePath) && !QFile::remove(filePath)) {
-		pendingLogs.push_back(QStringLiteral("plugins: failed to remove ") + filePath);
+		pendingLogs.push_back(Tr("Плагины: не удалось удалить файл %1").arg(filePath));
 	}
 	for (const auto &line : pendingLogs) {
 		EmitLog(log, line);
@@ -9466,12 +9466,12 @@ std::string RecordInstall(const std::string &fileName, LogFn log) {
 	const QString fullPath = PluginsDirQ() + QStringLiteral("/") + qname;
 	const QFileInfo fi(fullPath);
 	if (!fi.isFile() || fi.isSymLink() || fi.size() < 0 || fi.size() > kPluginFileLimitBytes) {
-		EmitLog(log, qname + QStringLiteral(": invalid file"));
+		EmitLog(log, Tr("Неверный файл плагина «%1».").arg(qname));
 		return std::string();
 	}
 	QFile f(fullPath);
 	if (!f.open(QIODevice::ReadOnly)) {
-		EmitLog(log, qname + QStringLiteral(": ") + f.errorString());
+		EmitLog(log, Tr("Не удалось открыть файл плагина «%1»: %2").arg(qname, f.errorString()));
 		return std::string();
 	}
 	const QByteArray raw = f.readAll();
@@ -9515,12 +9515,12 @@ bool Approve(const std::string &id, LogFn log) {
 	}
 	const QFileInfo fi(path);
 	if (!fi.isFile() || fi.isSymLink() || fi.size() < 0 || fi.size() > kPluginFileLimitBytes) {
-		EmitLog(log, pid + QStringLiteral(": invalid file"));
+		EmitLog(log, Tr("Неверный файл плагина «%1».").arg(pid));
 		return false;
 	}
 	QFile f(path);
 	if (!f.open(QIODevice::ReadOnly)) {
-		EmitLog(log, pid + QStringLiteral(": ") + f.errorString());
+		EmitLog(log, Tr("Не удалось открыть файл плагина «%1»: %2").arg(pid, f.errorString()));
 		return false;
 	}
 	const QByteArray raw = f.readAll();
