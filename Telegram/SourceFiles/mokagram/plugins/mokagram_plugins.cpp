@@ -266,7 +266,7 @@ std::string ParseMetadataJson(const std::string &source) {
 	} else {
 		const auto srcStr = QString::fromUtf8(rawBytes);
 		const auto extractString = [&](const QString &key) -> QString {
-			const auto pat = key + QString::fromUtf8(R"(\s*=\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)'''|"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'))");
+			const auto pat = key + QString::fromUtf8(R"pattern(\s*=\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)'''|"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'))pattern");
 			QRegularExpression re(pat);
 			auto match = re.match(srcStr);
 			if (match.hasMatch()) {
@@ -734,4 +734,4 @@ int Start(LogFn log) {
 	return int(_plugins.size());
 }
 
-} Mokagram::Plugins
+} // namespace Mokagram::Plugins
