@@ -1676,6 +1676,9 @@ win:
 else: # qt > '6'
     qtAngleCmake = os.path.realpath(os.path.join(
         scriptPath, '../../../cmake/external/angle/qt.cmake')).replace('\\', '/')
+    # Mokagram: include the SecureTransport lifetime fix in the Qt cache key.
+    qtSecureTransportPatch = os.path.realpath(os.path.join(
+        scriptPath, '../../../patches/qt-securetransport-lifetime.patch'))
     # checkouts share Libraries, so the cache key gets the content, not the path
     modifiedEnv['QT_ANGLE_CMAKE'] = qtAngleCmake
     branch = 'v$QT' + ('-lts-lgpl' if qt.startswith('6.2.') else '')
@@ -1687,13 +1690,14 @@ depends:patches/qtbase_""" + qt + """/*.patch
 depends:patches/qtsvg_""" + qt + """/*.patch
 win32_win64:
 depends:qt6_windows7/*.patch
-version:""" + computeFileHash(qtAngleCmake) + """
+version:""" + computeFileHash(qtAngleCmake) + computeFileHash(qtSecureTransportPatch) + """
 mac:
     if [ -d "../patches/qt6_highsierra" ]; then
         find "$PWD/../patches/qt6_highsierra" -maxdepth 1 -name "*.patch" -print0 | sort -z | xargs -0 git -C qtbase apply -v
     fi
     find $PWD/../patches/qtbase_$QT -type f -print0 | sort -z | xargs -0 git -C qtbase apply -v
     find $PWD/../patches/qtsvg_$QT -type f -print0 | sort -z | xargs -0 git -C qtsvg apply -v
+    git -C qtbase apply "$PREPARE_DIR/../../../patches/qt-securetransport-lifetime.patch"
     sed -i.bak 's/tqtc-//' {qtimageformats,qtsvg}/dependencies.yaml
 
     CONFIGURATIONS=-debug
