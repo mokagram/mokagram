@@ -11,7 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/details/mtproto_tcp_socket.h"
 
 #include <crl/crl_time.h>
-#include <rpl/on_next.h>
+#include <rpl/producer.h>
 
 #include <algorithm>
 #include <cstdlib>

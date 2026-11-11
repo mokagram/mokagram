@@ -10,7 +10,7 @@
 namespace Mokagram::Network {
 
 void RegisterSettings() {
-	constexpr auto kWebSocketSetting = u"net.telegram_websocket"_q;
+	const auto kWebSocketSetting = u"net.telegram_websocket"_q;
 	Settings::Register({
 		.key = kWebSocketSetting,
 		.section = QString::fromUtf8(Mokagram::Lang::Tr("Подключение")),
