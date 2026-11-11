@@ -70,8 +70,6 @@ endif()
 
 set_target_properties(Telegram PROPERTIES AUTOMOC ON)
 
-# mokagram: хост плагинов (встроенный Python)
-find_package(Python3 REQUIRED COMPONENTS Development.Embed)
 nice_target_sources(Telegram ${src_loc}
 PRIVATE
     mokagram/misc/mokagram_datereg.cpp
@@ -179,11 +177,6 @@ PRIVATE
     mokagram/update/mokagram_update.cpp
     mokagram/update/mokagram_update.h
 )
-# путь к Python.h только для одного файла, иначе пересоберётся весь клиент
-set_source_files_properties(
-    ${src_loc}/mokagram/plugins/mokagram_plugins.cpp
-    PROPERTIES INCLUDE_DIRECTORIES "${Python3_INCLUDE_DIRS}")
-target_link_libraries(Telegram PRIVATE ${Python3_LIBRARIES})
 find_package(Qt6 COMPONENTS PdfWidgets QUIET)
 nice_target_sources(Telegram ${src_loc} PRIVATE
     media/view/media_view_pdf.cpp
@@ -2742,15 +2735,6 @@ if (WIN32)
     endif()
 
     target_link_options(Telegram PRIVATE /PDBPAGESIZE:8192)
-
-    # Telegram.exe динамически подключает pythonNNN.dll (плагины): ищем её и в папке приложения,
-    # а не только в System32 (общий флаг 0x800 из cmake_helpers). Последний флаг побеждает.
-    target_link_options(Telegram PRIVATE /DEPENDENTLOADFLAG:0xA00)
-
-    # pythonNNN.dll грузим отложенно: если архив распаковали не целиком или exe запустили
-    # из архива, клиент всё равно стартует (без плагинов), а не падает «не найден python312.dll».
-    target_link_libraries(Telegram PRIVATE delayimp)
-    target_link_options(Telegram PRIVATE /DELAYLOAD:python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}.dll)
 
     if (DESKTOP_APP_WIN7_BASELINE)
         # The loader reads the subsystem version as the minimal Windows.
