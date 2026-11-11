@@ -4728,7 +4728,10 @@ protected:
 			: -double(e->pixelDelta().y());
 		if (_lyrics.synced) {
 			const auto last = int(_lyrics.lines.size()) - 1;
-			_scroll = std::clamp(_scroll + delta, centerOf(0), centerOf(last));
+			const auto topMargin = double(style::ConvertScale(_big ? 32 : 16));
+			const auto minScroll = anchorY() - topMargin;
+			const auto maxScroll = std::max(centerOf(last), minScroll);
+			_scroll = std::clamp(_scroll + delta, minScroll, maxScroll);
 			_manualUntil = _clock.elapsed() + 3000;
 		} else {
 			auto total = 24.;
@@ -4815,10 +4818,8 @@ private:
 			changed |= (_current != index);
 			_current = index;
 			auto target = centerOf(std::max(index, 0));
-			if (_big) {
-				// В начале песни сверху не оставляем пустоты: первая строка не ниже верхней трети.
-				target = std::max(target, anchorY() - height() * 0.16);
-			}
+			const auto topMargin = double(style::ConvertScale(_big ? 32 : 16));
+			target = std::max(target, anchorY() - topMargin);
 			if (!_scrollReady) {
 				_scroll = target;
 				_scrollReady = true;
