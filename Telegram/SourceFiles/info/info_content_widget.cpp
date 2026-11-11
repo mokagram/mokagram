@@ -177,7 +177,9 @@ void ContentWidget::paintEvent(QPaintEvent *e) {
 		}
 		return;
 	}
-	if (_paintPadding.isNull()) {
+	// Mokagram: скруглённая шапка профиля не закрашивает углы подложки.
+	if (_paintPadding.isNull()
+		|| _controller->section().type() == Section::Type::Profile) {
 		p.fillRect(e->rect(), _bg);
 	} else {
 		const auto &r = e->rect();
