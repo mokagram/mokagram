@@ -5,6 +5,7 @@
 // Mokagram: скачивание медиа по ссылке из сообщения через API Saveinator.
 #include "mokagram/saveinator/mokagram_saveinator.h"
 #include "mokagram/lang/mokagram_lang.h"
+#include <crl/crl_async.h>
 
 #include "api/api_common.h"
 #include "apiwrap.h"
@@ -1412,17 +1413,19 @@ void RegisterSettings() {
 
 void Start() {
 	const auto root = Root();
-	// Если на месте корневого каталога символическая ссылка — не трогаем её.
-	if (QFileInfo(root).isSymLink()) {
-		return;
-	}
-	QDir(root).removeRecursively();
-	if (QDir().mkpath(root)) {
-		// 0700: каталог читает и пишет только владелец.
-		QFile::setPermissions(
-			root,
-			QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-	}
+	crl::async([root] {
+		// Если на месте корневого каталога символическая ссылка — не трогаем её.
+		if (QFileInfo(root).isSymLink()) {
+			return;
+		}
+		QDir(root).removeRecursively();
+		if (QDir().mkpath(root)) {
+			// 0700: каталог читает и пишет только владелец.
+			QFile::setPermissions(
+				root,
+				QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+		}
+	});
 }
 
 QString FindLink(not_null<HistoryItem*> item) {
