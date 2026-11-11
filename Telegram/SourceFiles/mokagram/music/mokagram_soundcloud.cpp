@@ -272,7 +272,8 @@ void ApiGet(
 		const QString &base,
 		QUrlQuery query,
 		Fn<void(QByteArray, QString)> done,
-		bool retried = false) {
+		bool retried = false,
+		bool anonymous = false) {
 	const auto officialApi = QUrl(base).host().toLower()
 		== u"api.soundcloud.com"_q;
 	const auto send = [=](bool ok) {
@@ -294,13 +295,22 @@ void ApiGet(
 		}
 		url.setQuery(copy);
 		// SoundCloud moved access tokens to the Authorization header.
-		const auto reply = Get(url, 0, AccountToken());
+		const auto reply = Get(url, 0, anonymous ? QString() : AccountToken());
 		QObject::connect(reply, &QNetworkReply::finished, [=] {
 			const auto status = reply->attribute(
 				QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			const auto data = reply->readAll();
 			const auto error = reply->error();
 			reply->deleteLater();
+			// Токен входа протух: поиск и стрим работают и без него.
+			if (status == 401
+				&& retried
+				&& !anonymous
+				&& !officialApi
+				&& !AccountToken().isEmpty()) {
+				ApiGet(base, query, done, true, true);
+				return;
+			}
 			if ((status == 401 || status == 403)
 				&& !retried
 				&& !officialApi) {
