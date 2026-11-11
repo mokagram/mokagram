@@ -434,6 +434,68 @@ void ApiGet(
 	return result;
 }
 
+[[nodiscard]] QString ArtistBannerUrl(const QJsonObject &object) {
+	for (const auto &key : { "cover_url", "banner_url", "header_url" }) {
+		const auto url = object.value(key).toString();
+		if (SafeMediaUrl(QUrl(url))) {
+			return url;
+		}
+	}
+	const auto raw = object.value("visuals");
+	const auto visuals = raw.isObject()
+		? raw.toObject().value("visuals").toArray()
+		: raw.toArray();
+	auto result = QString();
+	auto bestArea = -1;
+	for (const auto &entry : visuals) {
+		const auto visual = entry.toObject();
+		auto url = visual.value("visual_url").toString();
+		if (url.isEmpty()) {
+			url = visual.value("url").toString();
+		}
+		if (!SafeMediaUrl(QUrl(url))) {
+			continue;
+		}
+		const auto area = visual.value("width").toInt()
+			* visual.value("height").toInt();
+		if (area > bestArea) {
+			result = std::move(url);
+			bestArea = area;
+		}
+	}
+	return result;
+}
+
+[[nodiscard]] ArtistInfo ParseArtistInfo(
+		const QJsonObject &object,
+		const QString &requestedId) {
+	if (object.isEmpty()) {
+		return {};
+	}
+	auto result = ArtistInfo();
+	result.id = ResourceId(object, u"id"_q);
+	if (result.id.isEmpty()) {
+		result.id = requestedId;
+	}
+	result.name = object.value("username").toString();
+	result.avatarUrl = object.value("avatar_url").toString();
+	if (!SafeMediaUrl(QUrl(result.avatarUrl))) {
+		result.avatarUrl.clear();
+	}
+	result.bannerUrl = ArtistBannerUrl(object);
+	return result;
+}
+
+[[nodiscard]] std::map<QString, ArtistInfo> &ArtistInfoCache() {
+	static auto result = std::map<QString, ArtistInfo>();
+	return result;
+}
+
+[[nodiscard]] std::map<QString, std::vector<Fn<void(ArtistInfo)>>> &PendingArtistInfo() {
+	static auto result = std::map<QString, std::vector<Fn<void(ArtistInfo)>>>();
+	return result;
+}
+
 [[nodiscard]] QString CachePath(const Track &track) {
 	// id попадает в путь к файлу: нечисловой id не пропускаем.
 	if (!ValidTrackId(track.id)) {
@@ -775,6 +837,42 @@ void UserTracks(
 	auto q = QUrlQuery();
 	q.addQueryItem(u"limit"_q, QString::number(limit));
 	CollectionRequest(u"/users/"_q + userId + u"/tracks"_q, q, std::move(done));
+}
+
+void LoadArtistInfo(
+		const QString &userId,
+		Fn<void(ArtistInfo)> done) {
+	if (!ValidTrackId(userId)) {
+		done({});
+		return;
+	}
+	if (const auto i = ArtistInfoCache().find(userId);
+		i != ArtistInfoCache().end()) {
+		done(i->second);
+		return;
+	}
+	auto &pending = PendingArtistInfo();
+	if (const auto i = pending.find(userId); i != pending.end()) {
+		i->second.push_back(std::move(done));
+		return;
+	}
+	pending[userId].push_back(std::move(done));
+	ApiGet(
+		QString::fromLatin1(kApi) + u"/users/"_q + userId,
+		QUrlQuery(),
+		[=](QByteArray data, QString error) {
+			auto info = error.isEmpty()
+				? ParseArtistInfo(QJsonDocument::fromJson(data).object(), userId)
+				: ArtistInfo();
+			if (!info.id.isEmpty()) {
+				ArtistInfoCache()[userId] = info;
+			}
+			auto callbacks = std::move(PendingArtistInfo()[userId]);
+			PendingArtistInfo().erase(userId);
+			for (const auto &callback : callbacks) {
+				callback(info);
+			}
+		});
 }
 
 void SearchLimited(

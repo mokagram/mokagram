@@ -78,6 +78,18 @@ void UserTracks(
 	int limit,
 	Fn<void(std::vector<Track>)> done);
 
+struct ArtistInfo {
+	QString id;
+	QString name;
+	QString avatarUrl;
+	QString bannerUrl;
+};
+
+// Публичный профиль исполнителя SoundCloud, включая аватар и обложку страницы.
+void LoadArtistInfo(
+	const QString &userId,
+	Fn<void(ArtistInfo)> done);
+
 struct Album {
 	QString id;
 	QString title;
