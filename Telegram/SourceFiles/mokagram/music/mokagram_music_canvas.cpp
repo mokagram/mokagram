@@ -42,7 +42,7 @@ QCache<QString, QString> &Titles() {
 }
 
 QCache<QString, QByteArray> &Videos() {
-	static auto result = QCache<QString, QByteArray>(24 * 1024 * 1024);
+	static auto result = QCache<QString, QByteArray>(12 * 1024 * 1024);
 	return result;
 }
 
