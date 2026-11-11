@@ -155,7 +155,9 @@ void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done);
 
 // Двусторонняя синхронизация: новые лайки из аккаунта в локальные, локальные
 // лайки не из аккаунта отправляются туда же. Дальше поднимает LikesChanged.
-void SyncLikes(Fn<void(int remote, int pushed, QString error)> done = nullptr);
+void SyncLikes(
+	Fn<void(int remote, int pushed, QString error)> done = nullptr,
+	bool refreshed = false);
 
 // Ставит лайк в аккаунте при входе. Для локального лайка это фоновая операция.
 void SetTrackLiked(

@@ -1387,7 +1387,9 @@ void SetTrackLiked(const QString &trackId, bool liked, bool refreshed) {
 	});
 }
 
-void SyncLikes(Fn<void(int remote, int pushed, QString error)> done) {
+void SyncLikes(
+		Fn<void(int remote, int pushed, QString error)> done,
+		bool refreshed) {
 	auto state = std::make_shared<SyncState>();
 	state->done = std::move(done);
 	if (!IsLoggedIn()) {
@@ -1426,6 +1428,17 @@ void SyncLikes(Fn<void(int remote, int pushed, QString error)> done) {
 				}
 			}
 			if (!state->error.isEmpty()) {
+				if (!refreshed && state->error.contains(u"HTTP 401"_q)) {
+					// Токен входа живёт сутки: берём свежий из браузера.
+					RefreshSoundCloudToken([=](bool ok) {
+						if (ok) {
+							SyncLikes(state->done, true);
+						} else if (state->done) {
+							state->done(0, 0, state->error);
+						}
+					});
+					return;
+				}
 				if (state->done) {
 					state->done(0, 0, state->error);
 				}
