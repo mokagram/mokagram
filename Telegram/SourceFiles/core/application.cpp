@@ -381,7 +381,7 @@ void Application::run() {
 	Mokagram::Settings::StartDebugCommands();
 	perfStage("moka modules");
 	// Python не стоит на пути к первому кадру: поднимаем после показа окна.
-	base::call_delayed(300, this, [] {
+	base::call_delayed(2000, this, [] {
 		const auto started = crl::now();
 		Mokagram::Plugins::Start([](const std::string &line) {
 			LOG(("[mokagram] %1").arg(QString::fromStdString(line)));
