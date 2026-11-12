@@ -1557,3 +1557,5 @@
 	{ "Войди в SoundCloud в разделе лайков, чтобы комментировать", "Sign in to SoundCloud in Likes to comment" },
 	{ "Загружаю комментарии…", "Loading comments…" },
 	{ "Комментарии появятся в нужный момент трека", "Comments will appear at their moment in the track" },
+	{ "Написать", "Write" },
+	{ "Загрузить ещё", "Load more" },

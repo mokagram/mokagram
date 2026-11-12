@@ -4805,7 +4805,7 @@ class TimedComments final : public Ui::RpWidget {
 public:
 	explicit TimedComments(QWidget *parent) : RpWidget(parent) {
 		_send = Ui::CreateChild<Ui::RoundButton>(this,
-			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Комментировать"))),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Написать"))),
 			BoxParts::PillActive());
 		_more = Ui::CreateChild<Ui::RoundButton>(this,
 			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Обновить"))),
@@ -4920,7 +4920,9 @@ protected:
 		p.setFont(st::normalFont);
 		p.setPen(st::windowSubTextFg);
 		p.drawText(QRect(s(14), s(6), width() - s(28), s(24)),
-			Qt::AlignVCenter, QString::fromUtf8(Mokagram::Lang::Tr("Комментарии SoundCloud")));
+			Qt::AlignVCenter, st::normalFont->elided(
+				QString::fromUtf8(Mokagram::Lang::Tr("Комментарии SoundCloud"))
+					+ u" · "_q + time(_editing ? _stamp : _position), width() - s(28)));
 		auto note = _note;
 		if (!Account::IsLoggedIn()) {
 			note = QString::fromUtf8(Mokagram::Lang::Tr("Войди в SoundCloud в разделе лайков, чтобы комментировать"));
@@ -4935,6 +4937,7 @@ protected:
 				}
 			}
 			if (active) {
+				setToolTip(active->author + u"\n"_q + active->body);
 				if (_avatarUrl != active->avatarUrl) {
 					_avatarUrl = active->avatarUrl;
 					_avatar = {};
@@ -4962,6 +4965,7 @@ protected:
 				p.drawText(QRect(s(54), s(56), width() - s(68), s(40)),
 					Qt::TextWordWrap, active->body);
 			} else {
+				setToolTip({});
 				p.drawText(QRect(s(14), s(34), width() - s(28), s(48)),
 					Qt::TextWordWrap, QString::fromUtf8(Mokagram::Lang::Tr(
 						_loading ? "Загружаю комментарии…" : "Комментарии появятся в нужный момент трека")));
@@ -4979,8 +4983,7 @@ private:
 	}
 	void refreshButtons() {
 		_send->setText(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr(
-			_editing ? "Отправить" : "Комментировать")) + u" · "_q
-			+ time(_editing ? _stamp : _position)));
+			_editing ? "Отправить" : "Написать"))));
 		_send->setDisabled(_posting || !Account::IsLoggedIn());
 		_more->setText(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr(
 			_editing ? "Отмена" : _next.isEmpty() ? "Обновить" : "Загрузить ещё"))));
