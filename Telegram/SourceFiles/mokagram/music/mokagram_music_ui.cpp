@@ -4810,23 +4810,9 @@ public:
 		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Комментарии SoundCloud")));
 		setClickedCallback([=] {
-			_menu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
-			for (const auto index : _active) {
-				const auto &comment = _comments[index];
-				const auto timestamp = comment.timestampMs;
-				_menu->addAction(comment.author + u": "_q + comment.body, [=] {
-					_seekRequests.fire_copy(timestamp);
-				});
-			}
-			_menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Обновить")), [=] {
-				if (!_loading) load({});
-			});
-			if (!_next.isEmpty()) {
-				_menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Загрузить ещё")), [=] {
-					if (!_loading) load(_next);
-				});
-			}
-			_menu->popup(mapToGlobal(QPoint(0, height())));
+			if (_active.empty()) return;
+			const auto slot = std::clamp(_hoverIndex, 0, int(_active.size()) - 1);
+			_seekRequests.fire_copy(_comments[_active[slot]].timestampMs);
 		});
 		Settings::Changed() | rpl::on_next([=](const QString &key) {
 			if (key != u"lyrics.comments"_q) return;
@@ -4844,10 +4830,6 @@ public:
 		Settings::RowIconsUpdated() | rpl::on_next([=] { update(); }, lifetime());
 	}
 
-	void setShowAvatars(bool show) {
-		_showAvatars = show;
-		refresh();
-	}
 	void setTrack(const QString &id) {
 		if (id == _trackId) return;
 		_trackId = id;
@@ -4867,6 +4849,12 @@ public:
 		_position = position;
 		refresh();
 	}
+	[[nodiscard]] int avatarCount() const {
+		return int(_active.size());
+	}
+	[[nodiscard]] rpl::producer<> changes() const {
+		return _changes.events();
+	}
 	[[nodiscard]] bool validTrack() const {
 		return _trackId.toULongLong() && QString::number(_trackId.toULongLong()) == _trackId;
 	}
@@ -4883,12 +4871,13 @@ protected:
 	void paintEvent(QPaintEvent *) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
+		if (_active.empty()) return;
 		if (isOver() || isDown() || hasFocus()) {
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::windowBgOver);
 			p.drawEllipse(rect());
 		}
-		if (_showAvatars && !_active.empty()) {
+		if (!_active.empty()) {
 			const auto side = style::ConvertScale(28);
 			const auto step = style::ConvertScale(32);
 			const auto count = std::min(int(_active.size()), std::max(1, width() / step));
@@ -4913,10 +4902,7 @@ protected:
 			}
 			return;
 		}
-		p.setOpacity(_shownTimestamp >= 0 ? 1. : 0.5);
-		const auto size = style::ConvertScale(20);
-		Settings::PaintPackIcon(p, QRect((width() - size) / 2, (height() - size) / 2, size, size),
-			QString::fromUtf8("💬"), _icon, this);
+
 	}
 
 private:
@@ -4927,7 +4913,7 @@ private:
 	void refreshTooltip() {
 		auto tip = QString();
 		if (!_active.empty()) {
-			const auto slot = std::clamp(_showAvatars ? _hoverIndex : 0, 0, std::min(
+			const auto slot = std::clamp(_hoverIndex, 0, std::min(
 				int(_active.size()), std::max(1, width() / style::ConvertScale(32))) - 1);
 			const auto &comment = _comments[_active[slot]];
 			tip = (comment.author + u" · "_q + time(comment.timestampMs)
@@ -4940,6 +4926,7 @@ private:
 		if (toolTip() != tip) setToolTip(tip);
 	}
 	void refresh() {
+		const auto wasActive = _active;
 		_shownTimestamp = -1;
 		_active.clear();
 		for (auto index = 0; index < int(_comments.size()); ++index) {
@@ -4965,6 +4952,12 @@ private:
 		}
 		refreshTooltip();
 		update();
+		if (wasActive != _active) _changes.fire({});
+		// Следующая страница нужна, когда воспроизведение дошло до её таймкодов.
+		if (!_loading && !_next.isEmpty()
+			&& (_comments.empty() || _comments.back().timestampMs <= _position + 7000)) {
+			load(_next);
+		}
 	}
 	void load(const QString &cursor) {
 		if (!Settings::Bool(u"lyrics.comments"_q) || !validTrack()) return;
@@ -4994,14 +4987,12 @@ private:
 	std::map<QString, QImage> _avatars;
 	std::set<QString> _pendingAvatars;
 	int _hoverIndex = 0;
-	std::shared_ptr<void> _icon;
-	base::unique_qptr<Ui::PopupMenu> _menu;
+	rpl::event_stream<> _changes;
 	rpl::event_stream<qint64> _seekRequests;
 	qint64 _shownTimestamp = -1;
 	qint64 _position = 0;
 	int _generation = 0;
 	bool _loading = false;
-	bool _showAvatars = false;
 };
 
 class LyricsView final : public Ui::RpWidget {
@@ -5009,6 +5000,7 @@ public:
 	explicit LyricsView(QWidget *parent)
 	: RpWidget(parent)
 	, _comments(Ui::CreateChild<TimedComments>(this)) {
+		_comments->changes() | rpl::on_next([=] { layoutComments(); }, lifetime());
 		_comments->seekRequests() | rpl::on_next([=](qint64 ms) {
 			_lineClicked.fire_copy(ms);
 		}, lifetime());
@@ -5430,11 +5422,13 @@ private:
 	}
 	void layoutComments() {
 		const auto shown = Settings::Bool(u"lyrics.comments"_q)
-			&& _lyrics.found && _comments->validTrack();
+			&& _lyrics.found && _comments->validTrack() && _comments->avatarCount() > 0;
 		_comments->setVisible(shown);
 		if (!shown) return;
 		const auto size = style::ConvertScale(32);
-		const auto rowWidth = size;
+		const auto left = _big ? 0 : style::ConvertScale(24);
+		const auto rowWidth = std::min(std::max(0, width() - left),
+			_comments->avatarCount() * size);
 		auto top = anchorY() - _scroll;
 		if (_lyrics.synced && _current >= 0) {
 			for (auto i = 0; i < _current; ++i) top += heightOf(i);
@@ -8600,13 +8594,12 @@ void AttachCommentsToPlayer(
 		Fn<bool()> available) {
 	Settings::PreloadRowIcons(&controller->session());
 	const auto button = Ui::CreateChild<TimedComments>(parent);
-	button->setShowAvatars(true);
 	const auto refresh = [=] {
 		const auto track = PlayingTrack();
 		const auto allowed = !available || available();
 		const auto enabled = allowed && Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable();
 		button->setTrack(enabled ? track.id : QString());
-		const auto shown = enabled && button->validTrack()
+		const auto shown = enabled && button->validTrack() && button->avatarCount() > 0
 			&& (replaceAnchor || !anchor->isHidden());
 		button->setVisible(shown);
 		if (replaceAnchor) anchor->setVisible(allowed && !shown);
@@ -8620,6 +8613,7 @@ void AttachCommentsToPlayer(
 		button->setPosition(state.position * 1000 / std::max<int64>(state.frequency, 1));
 		button->raise();
 	};
+	button->changes() | rpl::on_next(refresh, button->lifetime());
 	button->seekRequests() | rpl::on_next([](qint64 ms) {
 		const auto instance = Media::Player::instance();
 		const auto state = instance->getState(AudioMsgId::Type::Song);
