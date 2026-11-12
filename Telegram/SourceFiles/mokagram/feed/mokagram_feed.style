@@ -108,6 +108,26 @@ feedLoading: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) {
 }
 feedMediaPlaySize: 48px;
 feedMediaPlayIcon: icon {{ "history_file_play", windowFg }};
+feedVoiceHeight: 56px;
+feedVoiceButtonSize: 40px;
+feedVoiceButtonGap: 12px;
+feedVoiceWaveHeight: 18px;
+feedVoiceWaveLabelGap: 4px;
+feedVoiceBarWidth: 2px;
+feedVoiceBarSkip: 1px;
+feedVoiceBarMin: 3px;
+feedVoiceBarMax: 17px;
+feedVoicePlayIcon: icon {{ "history_file_play", activeButtonFg }};
+feedVoicePauseIcon: icon {{ "history_file_pause", activeButtonFg }};
+feedVoiceButton: IconButton(defaultIconButton) {
+    width: feedVoiceButtonSize;
+    height: feedVoiceButtonSize;
+    icon: feedVoicePlayIcon;
+    iconOver: feedVoicePauseIcon;
+    rippleAreaPosition: point(0px, 0px);
+    rippleAreaSize: feedVoiceButtonSize;
+    ripple: defaultRippleAnimation;
+}
 
 feedPostRadius: 22px;
 feedPostMaxWidth: 720px;
