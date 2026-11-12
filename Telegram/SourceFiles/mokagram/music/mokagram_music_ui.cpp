@@ -5052,7 +5052,7 @@ private:
 				: bin * step + (step - side) / 2;
 			auto rect = QRect(std::clamp(x, 0, std::max(0, width() - side)),
 				(height() - side) / 2, side, side);
-			mask += QRegion(rect, QRegion::Ellipse);
+			mask += QRegion(rect);
 			_slots.push_back({ rect, std::move(comments) });
 		}
 		setMask(mask);
