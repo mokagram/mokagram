@@ -4800,10 +4800,229 @@ private:
 
 };
 
+// Комментарии живут рядом с текстом в обоих вариантах плеера.
+class TimedComments final : public Ui::RpWidget {
+public:
+	explicit TimedComments(QWidget *parent) : RpWidget(parent) {
+		_send = Ui::CreateChild<Ui::RoundButton>(this,
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Комментировать"))),
+			BoxParts::PillActive());
+		_more = Ui::CreateChild<Ui::RoundButton>(this,
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Обновить"))),
+			BoxParts::PillLight());
+		_input = Ui::CreateChild<Ui::InputField>(this,
+			BoxParts::CardField(st::defaultInputField),
+			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Комментарий в SoundCloud"))));
+		_input->setMaxLength(1000);
+		_input->hide();
+		_send->setClickedCallback([=] {
+			if (_posting) return;
+			if (!_editing) {
+				_editing = true;
+				_stamp = _position;
+				_note.clear();
+				_input->show();
+				_input->setFocusFast();
+				refreshButtons();
+				update();
+				return;
+			}
+			const auto body = _input->getLastText().trimmed();
+			if (body.isEmpty()) {
+				_input->setFocusFast();
+				return;
+			}
+			_posting = true;
+			_input->setDisabled(true);
+			refreshButtons();
+			const auto id = _trackId;
+			const auto generation = _generation;
+			PostTrackComment(id, _stamp, body, crl::guard(this,
+				[=](TrackComment comment, QString error) {
+					if (_generation != generation) return;
+					_posting = false;
+					_input->setDisabled(false);
+					_note = std::move(error);
+					if (_note.isEmpty()) {
+						_comments.push_back(std::move(comment));
+						_input->setTextWithTags({});
+						_editing = false;
+						_input->hide();
+						_note = QString::fromUtf8(Mokagram::Lang::Tr("Комментарий опубликован в SoundCloud"));
+					}
+					refreshButtons();
+					update();
+				}));
+		});
+		_more->setClickedCallback([=] {
+			if (_editing) {
+				_editing = false;
+				_input->hide();
+				_note.clear();
+				refreshButtons();
+				update();
+			} else if (!_loading) {
+				load(_next);
+			}
+		});
+		_input->submits() | rpl::on_next([=] {
+			if (_editing && !_posting) _send->click();
+		}, lifetime());
+		Account::Changes() | rpl::on_next([=] {
+			refreshButtons();
+			update();
+		}, lifetime());
+	}
+
+	void setTrack(const QString &id) {
+		if (id == _trackId) return;
+		_trackId = id;
+		++_generation;
+		_comments.clear();
+		_next.clear();
+		_note.clear();
+		_avatar = {};
+		_avatarUrl.clear();
+		_editing = _posting = _loading = false;
+		_input->setDisabled(false);
+		_input->setTextWithTags({});
+		_input->hide();
+		const auto number = id.toULongLong();
+		setVisible(number && QString::number(number) == id);
+		if (isHidden()) return;
+		load({});
+	}
+
+	void setPosition(qint64 position) {
+		if (_position / 1000 == position / 1000 && _position == position) return;
+		_position = position;
+		refreshButtons();
+		update();
+	}
+
+protected:
+	void resizeEvent(QResizeEvent *e) override {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto half = std::max(0, (width() - s(36)) / 2);
+		_send->setFullWidth(half);
+		_more->setFullWidth(half);
+		_send->setGeometry(s(14), height() - s(48), half, s(40));
+		_more->setGeometry(s(22) + half, height() - s(48), half, s(40));
+		_input->setGeometry(s(14), s(36), std::max(0, width() - s(28)), s(54));
+		RpWidget::resizeEvent(e);
+	}
+
+	void paintEvent(QPaintEvent *) override {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		auto p = QPainter(this);
+		BoxParts::PaintCard(p, rect().marginsRemoved(QMargins(s(6), 0, s(6), 0)));
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		p.drawText(QRect(s(14), s(6), width() - s(28), s(24)),
+			Qt::AlignVCenter, QString::fromUtf8(Mokagram::Lang::Tr("Комментарии SoundCloud")));
+		auto note = _note;
+		if (!Account::IsLoggedIn()) {
+			note = QString::fromUtf8(Mokagram::Lang::Tr("Войди в SoundCloud в разделе лайков, чтобы комментировать"));
+		}
+		if (!_editing) {
+			const TrackComment *active = nullptr;
+			for (const auto &comment : _comments) {
+				if (comment.timestampMs >= 0 && comment.timestampMs <= _position
+					&& _position - comment.timestampMs < 7000
+					&& (!active || comment.timestampMs >= active->timestampMs)) {
+					active = &comment;
+				}
+			}
+			if (active) {
+				if (_avatarUrl != active->avatarUrl) {
+					_avatarUrl = active->avatarUrl;
+					_avatar = {};
+					const auto url = _avatarUrl;
+					if (!url.isEmpty()) LoadImage(url, crl::guard(this, [=](QImage image) {
+						if (_avatarUrl != url) return;
+						_avatar = std::move(image);
+						update();
+					}));
+				}
+				if (!_avatar.isNull()) {
+					p.save();
+					auto clip = QPainterPath();
+					clip.addEllipse(QRect(s(14), s(36), s(32), s(32)));
+					p.setClipPath(clip);
+					p.drawImage(QRect(s(14), s(36), s(32), s(32)), _avatar);
+					p.restore();
+				}
+				p.setPen(st::windowFg);
+				p.setFont(st::semiboldFont);
+				p.drawText(QRect(s(54), s(32), width() - s(68), s(22)),
+					Qt::AlignVCenter, st::semiboldFont->elided(
+						active->author + u" · "_q + time(active->timestampMs), width() - s(68)));
+				p.setFont(st::normalFont);
+				p.drawText(QRect(s(54), s(56), width() - s(68), s(40)),
+					Qt::TextWordWrap, active->body);
+			} else {
+				p.drawText(QRect(s(14), s(34), width() - s(28), s(48)),
+					Qt::TextWordWrap, QString::fromUtf8(Mokagram::Lang::Tr(
+						_loading ? "Загружаю комментарии…" : "Комментарии появятся в нужный момент трека")));
+			}
+		}
+		p.setPen(st::windowSubTextFg);
+		p.drawText(QRect(s(14), s(96), width() - s(28), s(40)),
+			Qt::TextWordWrap, note);
+	}
+
+private:
+	static QString time(qint64 ms) {
+		const auto seconds = std::max<qint64>(0, ms / 1000);
+		return u"%1:%2"_q.arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'));
+	}
+	void refreshButtons() {
+		_send->setText(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr(
+			_editing ? "Отправить" : "Комментировать")) + u" · "_q
+			+ time(_editing ? _stamp : _position)));
+		_send->setDisabled(_posting || !Account::IsLoggedIn());
+		_more->setText(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr(
+			_editing ? "Отмена" : _next.isEmpty() ? "Обновить" : "Загрузить ещё"))));
+		_more->setDisabled(_posting || (!_editing && _loading));
+	}
+	void load(const QString &cursor) {
+		_loading = true;
+		_note.clear();
+		refreshButtons();
+		const auto generation = _generation;
+		LoadTrackComments(_trackId, cursor, crl::guard(this, [=](TrackCommentsPage page) {
+			if (generation != _generation) return;
+			_loading = false;
+			_note = std::move(page.error);
+			if (_note.isEmpty()) {
+				if (cursor.isEmpty()) _comments.clear();
+				for (auto &comment : page.comments) {
+					const auto exists = std::any_of(_comments.begin(), _comments.end(),
+						[&](const TrackComment &c) { return c.id == comment.id; });
+					if (!exists) _comments.push_back(std::move(comment));
+				}
+				_next = std::move(page.next);
+			}
+			refreshButtons();
+			update();
+		}));
+	}
+	Ui::RoundButton *_send = nullptr;
+	Ui::RoundButton *_more = nullptr;
+	Ui::InputField *_input = nullptr;
+	QString _trackId, _next, _note, _avatarUrl;
+	QImage _avatar;
+	std::vector<TrackComment> _comments;
+	qint64 _position = 0, _stamp = 0;
+	int _generation = 0;
+	bool _editing = false, _posting = false, _loading = false;
+};
+
 class LyricsView final : public Ui::RpWidget {
 public:
 	explicit LyricsView(QWidget *parent)
-	: RpWidget(parent) {
+	: RpWidget(parent)
+	, _comments(Ui::CreateChild<TimedComments>(this)) {
 		resize(width(), 280);
 		setMouseTracking(true);
 		_clock.start();
@@ -4861,7 +5080,12 @@ public:
 			_backdrop.refresh([=] { update(); }, isVisible());
 		}
 	}
+	void setCommentsTrack(const QString &id) {
+		_comments->setTrack(id);
+		layoutComments();
+	}
 	void setPosition(qint64 ms, bool playing) {
+		_comments->setPosition(ms);
 		updateCover();
 		_position = ms;
 		_positionAt = _clock.elapsed();
@@ -4901,7 +5125,7 @@ protected:
 			for (auto i = 0; i != int(_lyrics.lines.size()); ++i) {
 				total += heightOf(i);
 			}
-			_plainScroll = std::clamp(_plainScroll + delta, 0., std::max(total - height(), 0.));
+			_plainScroll = std::clamp(_plainScroll + delta, 0., std::max(total - lyricsHeight(), 0.));
 		}
 		e->accept();
 		update();
@@ -4921,7 +5145,7 @@ protected:
 private:
 	// Номер строки под точкой по вертикали (-1 нет), считается так же, как рисуется.
 	[[nodiscard]] int lineAt(int y) {
-		if (!_lyrics.found || !_lyrics.synced || _lyrics.lines.empty()) {
+		if (y >= lyricsHeight() || !_lyrics.found || !_lyrics.synced || _lyrics.lines.empty()) {
 			return -1;
 		}
 		auto top = anchorY() - _scroll;
@@ -5026,7 +5250,7 @@ private:
 	}
 
 	[[nodiscard]] double anchorY() const {
-		return height() * (_big ? 0.4 : 0.5);
+		return lyricsHeight() * (_big ? 0.4 : 0.5);
 	}
 	[[nodiscard]] int textWidth() const {
 		return width() - (_big ? 0 : style::ConvertScale(48));
@@ -5139,10 +5363,11 @@ private:
 			}
 			p.restore();
 		}
+		p.setClipRect(QRect(0, 0, width(), lyricsHeight()));
 		if (!_lyrics.found) {
 			p.setPen(_big ? QColor(255, 255, 255, 140) : st::windowSubTextFg->c);
 			p.setFont(st::normalFont);
-			p.drawText(rect(), Qt::AlignCenter, _status);
+			p.drawText(QRect(0, 0, width(), lyricsHeight()), Qt::AlignCenter, _status);
 			return;
 		}
 		const auto count = int(_lyrics.lines.size());
@@ -5205,6 +5430,13 @@ private:
 		p.fillRect(QRect(0, height() - 56, width(), 56), fadeBottom);
 	}
 
+	int lyricsHeight() const {
+		return std::max(0, height() - (_comments->isHidden() ? 0 : style::ConvertScale(188)));
+	}
+	void layoutComments() {
+		_comments->setGeometry(0, lyricsHeight(), width(), style::ConvertScale(188));
+	}
+	const not_null<TimedComments*> _comments;
 	Lyrics _lyrics;
 	QString _status;
 	QTimer _timer;
@@ -5256,6 +5488,7 @@ void LyricsView::hideEvent(QHideEvent *e) {
 }
 
 void LyricsView::resizeEvent(QResizeEvent *e) {
+	layoutComments();
 	_heights.clear();
 	_layouts.clear();
 	RpWidget::resizeEvent(e);
@@ -5470,6 +5703,7 @@ private:
 			return;
 		}
 		_lyricsFor = track.id;
+		_view->setCommentsTrack(track.id);
 		_view->setLoading();
 		const auto id = track.id;
 		FetchLyrics(
@@ -8017,6 +8251,7 @@ private:
 		}
 		if (_lyricsFor != track.id) {
 			_lyricsFor = track.id;
+			_view->setCommentsTrack(track.id);
 			_view->setLoading();
 			const auto id = track.id;
 			FetchLyrics(
