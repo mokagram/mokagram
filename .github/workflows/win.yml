@@ -108,8 +108,10 @@ jobs:
             !${{ env.LibrariesPath }}\[qQ]t[_-]*
             ${{ env.LibrariesPath }}\cache_keys\*
             !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-${{ matrix.arch }}-libs-v2-${{ env.CACHE_KEY }}
-          restore-keys: ${{ runner.OS }}-${{ matrix.arch }}-libs-v2-
+          key: ${{ runner.OS }}-${{ matrix.arch }}-libs-v3-${{ env.CACHE_KEY }}
+          restore-keys: |
+            ${{ runner.OS }}-${{ matrix.arch }}-libs-v3-
+            ${{ runner.OS }}-${{ matrix.arch }}-libs-v2-
 
       - name: Qt cache.
         id: cache-qt
@@ -120,6 +122,15 @@ jobs:
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
           key: ${{ runner.OS }}-${{ matrix.arch }}-${{ matrix.qt || 'qt' }}-${{ env.CACHE_KEY }}
           restore-keys: ${{ runner.OS }}-${{ matrix.arch }}-${{ matrix.qt || 'qt' }}-
+
+      - name: Reset incomplete rust cache keys.
+        shell: bash
+        run: |
+          LP="${LibrariesPath//\\//}"
+          if [ ! -f "$LP/wallet-engine/Cargo.toml" ] || [ ! -f "$LP/tdesktop_rust/out/src/wallet_engine/wallet_engine.cpp" ]; then
+            rm -f "$LP"/cache_keys/tlottie "$LP"/cache_keys/wallet-engine "$LP"/cache_keys/tdesktop_rust
+            echo "reset tlottie, wallet-engine, tdesktop_rust cache keys"
+          fi
 
       - name: Libraries.
         run: |
@@ -175,7 +186,7 @@ jobs:
 
       - name: Free up some disk space.
         shell: bash
-        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' -o -path '*/src/wallet_engine/*' -o '(' '(' -path '*/tlottie/*' -o -path '*/wallet-engine/*' ')' ! -path '*/target/*' ')' ')' -type f ')' -o '(' -empty ! -path '*/tlottie/*' ! -path '*/wallet-engine/*' ')' ')' -delete
 
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
