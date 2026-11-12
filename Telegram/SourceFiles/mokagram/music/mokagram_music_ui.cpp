@@ -6239,7 +6239,9 @@ public:
 			_spotifyCanvas = nullptr;
 			refresh();
 		}, lifetime());
+		LyricsAvailabilityChanges() | rpl::on_next([=] { relayout(); }, lifetime());
 		Mokagram::Settings::Changed() | rpl::on_next([=](const QString &key) {
+			if (key == u"lyrics.comments"_q) relayout();
 			if (key.startsWith(u"player."_q)) {
 				if (key == u"player.motion_covers"_q || key == u"player.spotify_canvas"_q) {
 					_motionFor.clear();
@@ -8521,17 +8523,19 @@ void AttachCommentsToPlayer(
 		not_null<Window::SessionController*> controller,
 		not_null<Ui::RpWidget*> parent,
 		not_null<Ui::RpWidget*> anchor,
-		bool replaceAnchor) {
+		bool replaceAnchor,
+		Fn<bool()> available) {
 	Settings::PreloadRowIcons(&controller->session());
 	const auto button = Ui::CreateChild<TimedComments>(parent);
 	const auto refresh = [=] {
 		const auto track = PlayingTrack();
-		const auto enabled = Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable();
+		const auto allowed = !available || available();
+		const auto enabled = allowed && Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable();
 		button->setTrack(enabled ? track.id : QString());
 		const auto shown = enabled && button->validTrack()
 			&& (replaceAnchor || !anchor->isHidden());
 		button->setVisible(shown);
-		if (replaceAnchor) anchor->setVisible(!shown);
+		if (replaceAnchor) anchor->setVisible(allowed && !shown);
 		const auto size = style::ConvertScale(32);
 		button->setGeometry(replaceAnchor
 			? anchor->x() + (anchor->width() - size) / 2
@@ -8558,6 +8562,9 @@ void AttachCommentsToPlayer(
 	anchor->events() | rpl::on_next([=](not_null<QEvent*> event) {
 		if (event->type() == QEvent::Move || event->type() == QEvent::Resize
 			|| (!replaceAnchor && (event->type() == QEvent::Show || event->type() == QEvent::Hide))) refresh();
+	}, button->lifetime());
+	parent->events() | rpl::on_next([=](not_null<QEvent*> event) {
+		if (event->type() == QEvent::Resize || event->type() == QEvent::Show) refresh();
 	}, button->lifetime());
 	crl::on_main(button, refresh);
 }

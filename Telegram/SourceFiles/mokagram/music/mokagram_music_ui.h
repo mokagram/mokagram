@@ -78,7 +78,8 @@ void AttachCommentsToPlayer(
 	not_null<Window::SessionController*> controller,
 	not_null<Ui::RpWidget*> parent,
 	not_null<Ui::RpWidget*> anchor,
-	bool replaceAnchor = true);
+	bool replaceAnchor = true,
+	Fn<bool()> available = nullptr);
 
 // Найден ли текст для играющего трека (кнопка в плеере неактивна, пока нет).
 [[nodiscard]] bool LyricsAvailable();
