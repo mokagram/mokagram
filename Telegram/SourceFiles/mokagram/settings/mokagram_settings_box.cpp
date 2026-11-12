@@ -346,6 +346,7 @@ struct Category {
 		{ "bubbles.in_text", "📋" },
 		{ "player.cover_colors", "🖼" },
 		{ "lyrics.plasma", "💎" },
+		{ "lyrics.comments", "💬" },
 		{ "player.autoplay_next", "▶️" },
 		{ "chats.edited_pencil", "✏️" },
 		{ "chats.select_3000", "☑️" },
