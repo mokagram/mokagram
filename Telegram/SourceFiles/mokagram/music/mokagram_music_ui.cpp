@@ -68,6 +68,7 @@
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QToolButton>
+#include <QtWidgets/QToolTip>
 #include <array>
 #include "ui/image/image.h"
 #include "ui/image/image_prepare.h"
@@ -4867,6 +4868,9 @@ protected:
 		AbstractButton::mouseMoveEvent(event);
 		_hoverIndex = std::max(0, event->pos().x() / style::ConvertScale(32));
 		refreshTooltip();
+		if (!_active.empty()) {
+			QToolTip::showText(event->globalPosition().toPoint(), toolTip(), this, rect());
+		}
 	}
 	void paintEvent(QPaintEvent *) override {
 		auto p = QPainter(this);
@@ -4954,7 +4958,7 @@ private:
 		update();
 		if (wasActive != _active) _changes.fire({});
 		// Следующая страница нужна, когда воспроизведение дошло до её таймкодов.
-		if (!_loading && !_next.isEmpty()
+		if (!_loading && _note.isEmpty() && !_next.isEmpty()
 			&& (_comments.empty() || _comments.back().timestampMs <= _position + 7000)) {
 			load(_next);
 		}
