@@ -1196,11 +1196,26 @@ void LoadTrackComments(
 	auto query = QUrlQuery();
 	if (cursor.isEmpty()) {
 		query.addQueryItem(u"limit"_q, u"200"_q);
-		query.addQueryItem(u"linked_partitioning"_q, u"true"_q);
+		if (url.host() == u"api-v2.soundcloud.com"_q) {
+			// API сайта требует явных параметров списка комментариев.
+			query.addQueryItem(u"sort"_q, u"track-timestamp"_q);
+			query.addQueryItem(u"offset"_q, u"0"_q);
+			query.addQueryItem(u"threaded"_q, u"0"_q);
+		} else {
+			query.addQueryItem(u"linked_partitioning"_q, u"true"_q);
+		}
 	}
 	ApiGet(url.toString(), query, [=](QByteArray data, QString error) {
 		auto result = TrackCommentsPage();
-		result.error = std::move(error);
+		if (!error.isEmpty()) {
+			// QNetworkReply включает URL в errorString, он не нужен в интерфейсе.
+			result.error = QString::fromUtf8(Mokagram::Lang::Tr("Не удалось загрузить комментарии"));
+			const auto status = QRegularExpression(
+				u"(?:HTTP |код )(\\d{3})"_q).match(error);
+			if (status.hasMatch()) {
+				result.error += u" (HTTP %1)"_q.arg(status.captured(1));
+			}
+		}
 		if (result.error.isEmpty()) {
 			auto parseError = QJsonParseError();
 			const auto document = QJsonDocument::fromJson(data, &parseError);
