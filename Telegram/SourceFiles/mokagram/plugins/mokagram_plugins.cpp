@@ -17,11 +17,12 @@
 #define PY_SSIZE_T_CLEAN
 #if defined(_WIN32) && defined(_DEBUG)
 #define MOKA_RESTORE_DEBUG 1
+#pragma push_macro("_DEBUG")
 #undef _DEBUG
 #endif
 #include <Python.h>
 #if defined(MOKA_RESTORE_DEBUG)
-#define _DEBUG
+#pragma pop_macro("_DEBUG")
 #undef MOKA_RESTORE_DEBUG
 #endif
 #endif
@@ -1428,11 +1429,9 @@ int StartEngine(LogFn log) {
 		return std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
 			std::chrono::steady_clock::now() - perfStart).count());
 	};
-	if (const auto env = std::getenv("MOKAGRAM_PLUGINS")) {
-		if (std::string(env) == "0") {
-			if (log) log(Mokagram::Lang::Tr("plugins: отключены переменной MOKAGRAM_PLUGINS=0"));
-			return 0;
-		}
+	if (qEnvironmentVariable("MOKAGRAM_PLUGINS") == QStringLiteral("0")) {
+		if (log) log(Mokagram::Lang::Tr("plugins: отключены переменной MOKAGRAM_PLUGINS=0"));
+		return 0;
 	}
 #ifdef MOKA_PLUGINS_PROCESS
 	if (!_started) {
@@ -1762,7 +1761,7 @@ bool HostAlive() {
 #endif
 }
 
-bool RestartHost(LogFn log) {
+bool RestartHost([[maybe_unused]] LogFn log) {
 #ifdef MOKA_PLUGINS_PROCESS
 	auto &host = H();
 	if (!_started || _stopping.load()) {
