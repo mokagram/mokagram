@@ -7732,7 +7732,11 @@ protected:
 						_tabList->add(object_ptr<Ui::FlatLabel>(
 							_tabList,
 							tr("Похожие исполнители"),
-							st::boxLabel), QMargins(20, 28, 20, 8));
+							st::boxLabel), QMargins(
+								style::ConvertScale(20),
+								style::ConvertScale(28),
+								style::ConvertScale(20),
+								style::ConvertScale(8)));
 						if (!similarArtists.empty()) {
 							_tabList->add(object_ptr<HomeMixedGrid>(
 								_tabList,
