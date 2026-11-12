@@ -239,6 +239,13 @@ void RegisterSettings() {
 		.defaultValue = true,
 		.dependsOn = u"lyrics.enabled"_q,
 	});
+	playerEntry({
+		.key = u"lyrics.comments"_q,
+		.title = QString::fromUtf8(Mokagram::Lang::Tr("Комментарии SoundCloud")),
+		.description = QString::fromUtf8(Mokagram::Lang::Tr("Комментарии к моменту трека: значок над текстом песни или в баре плеера. Наведи, чтобы прочитать.")),
+		.kind = S::Kind::Bool,
+		.defaultValue = true,
+	});
 	Music::RegisterMotionSettings();
 }
 

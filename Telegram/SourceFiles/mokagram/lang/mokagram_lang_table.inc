@@ -1551,3 +1551,4 @@
 	{ "Загружаю комментарии…", "Loading comments…" },
 	{ "Комментарии появятся в нужный момент трека", "Comments will appear at their moment in the track" },
 	{ "Загрузить ещё", "Load more" },
+	{ "Комментарии к моменту трека: значок над текстом песни или в баре плеера. Наведи, чтобы прочитать.", "Timed comments: an icon above the lyrics or in the player bar. Hover to read." },
