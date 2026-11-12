@@ -409,6 +409,8 @@
 	{ "Слушать вместе: войти по коду", "Listen together: join by code" },
 	{ "Свои закрепы", "My pins" },
 	{ "Похожее по звучанию", "Sounds like this" },
+	{ "Похожие исполнители", "Similar artists" },
+	{ "Ищу похожих исполнителей…", "Finding similar artists…" },
 	{ "Ищу похожее по звучанию…", "Finding similar sounds…" },
 	{ "Нет жанра и тегов: поищу похожее позже.", "No genre or tags yet: similar tracks will come later." },
 	{ "Не нашлось похожего по звучанию. Попробуйте позже.", "No similar tracks found. Try again later." },

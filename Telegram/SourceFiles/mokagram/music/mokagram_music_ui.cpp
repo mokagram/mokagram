@@ -3083,6 +3083,19 @@ private:
 	return result;
 }
 
+[[nodiscard]] std::vector<Track> HomeSimilarArtists(
+		const Track &artist,
+		const std::vector<Track> &tracks) {
+	auto result = HomeRecommendationArtists(tracks);
+	const auto artistName = artist.artist.trimmed();
+	std::erase_if(result, [&](const Track &candidate) {
+		return (!artist.artistId.isEmpty() && candidate.artistId == artist.artistId)
+			|| (!artistName.isEmpty()
+				&& candidate.artist.trimmed().compare(artistName, Qt::CaseInsensitive) == 0);
+	});
+	return result;
+}
+
 class HomeRecentGrid final : public Ui::RpWidget {
 public:
 	HomeRecentGrid(
@@ -7711,6 +7724,38 @@ protected:
 					if (!_homeArtistTracks.empty()) {
 						_tabList->add(object_ptr<Ui::FlatLabel>(_tabList, tr("Популярное"), st::boxLabel), QMargins(20, 8, 20, 4));
 						addRows(_homeArtistTracks, RowMode::Album);
+					}
+					const auto similarArtists = HomeSimilarArtists(
+						_homeArtistSeed,
+						_homeSimilarTracks);
+					if (!similarArtists.empty() || _homeSimilarLoading) {
+						_tabList->add(object_ptr<Ui::FlatLabel>(
+							_tabList,
+							tr("Похожие исполнители"),
+							st::boxLabel), QMargins(20, 28, 20, 8));
+						if (!similarArtists.empty()) {
+							_tabList->add(object_ptr<HomeMixedGrid>(
+								_tabList,
+								_controller,
+								std::vector<Track>(),
+								std::vector<Album>(),
+								crl::guard(this, [=](Album album) {
+									openHomeAlbum(std::move(album));
+								}),
+								crl::guard(this, [=](Track track) {
+									openHomeTrack(std::move(track));
+								}),
+								false,
+								std::make_shared<int>(0),
+								similarArtists,
+								crl::guard(this, [=](Track track) {
+									openHomeArtist(std::move(track));
+								})));
+						} else {
+							_tabList->add(object_ptr<HomeLoadingView>(
+								_tabList,
+								tr("Ищу похожих исполнителей…")));
+						}
 					}
 					auto artistLikes = std::vector<Track>();
 					for (const auto &track : liked) {
