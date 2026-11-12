@@ -1813,7 +1813,12 @@ struct HoverFade {
 		art.bottom() - s(8) - size + 1, size, size);
 }
 
-void PaintHomeCardAction(QPainter &p, const QRect &art, bool album, double shown = 1.) {
+void PaintHomeCardAction(
+		QPainter &p,
+		const QRect &art,
+		bool album,
+		double shown = 1.,
+		bool playing = false) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
 	const auto size = std::min(s(38), std::max(art.width() - s(16), 0));
 	if (size < s(24)) {
@@ -1838,6 +1843,12 @@ void PaintHomeCardAction(QPainter &p, const QRect &art, bool album, double shown
 		p.setBrush(Qt::NoBrush);
 		p.drawPolyline(QPolygon({ center + QPoint(-s(3), -s(6)),
 			center + QPoint(s(3), 0), center + QPoint(-s(3), s(6)) }));
+	} else if (playing) {
+		p.setBrush(glyph);
+		p.drawRoundedRect(QRect(
+			center.x() - s(4), center.y() - s(6), s(3), s(12)), s(1), s(1));
+		p.drawRoundedRect(QRect(
+			center.x() + s(1), center.y() - s(6), s(3), s(12)), s(1), s(1));
 	} else {
 		p.setBrush(glyph);
 		p.drawPolygon(QPolygon({ center + QPoint(-s(4), -s(7)),
@@ -2879,11 +2890,36 @@ public:
 			const auto s = [](int v) { return style::ConvertScale(v); };
 			const auto button = QRect(width() - s(56), (height() - s(44)) / 2, s(44), s(44));
 			if (button.contains(mapFromGlobal(QCursor::pos()))) {
-				play();
+				const auto instance = Media::Player::instance();
+				const auto state = instance->getState(AudioMsgId::Type::Song);
+				if (!_item.isAlbum
+					&& PlayingTrack().id == _item.track.id
+					&& !Media::Player::IsStoppedOrStopping(state.state)) {
+					instance->playPause(AudioMsgId::Type::Song);
+				} else {
+					play();
+				}
 			} else {
 				activate();
 			}
 		});
+		const auto refreshPlayback = [=] {
+			const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+			const auto playing = !_item.isAlbum
+				&& PlayingTrack().id == _item.track.id
+				&& (state.state == Media::Player::State::Playing
+					|| state.state == Media::Player::State::Starting
+					|| state.state == Media::Player::State::Resuming);
+			if (_playing != playing) {
+				_playing = playing;
+				update();
+			}
+		};
+		Media::Player::instance()->updatedNotifier(
+		) | rpl::on_next(refreshPlayback, lifetime());
+		QueueState().changes.events(
+		) | rpl::on_next(refreshPlayback, lifetime());
+		refreshPlayback();
 		const auto recentItem = _item;
 		InstallMusicContextMenu(this, [=](not_null<Ui::PopupMenu*> menu) {
 			menu->addAction(PlaylistText("Воспроизвести"), play, &st::menuIconSoundOn);
@@ -2942,7 +2978,12 @@ protected:
 		const auto available = std::max(width() - left - s(64), 0);
 		{
 			const auto art = QRect(width() - s(64), (height() - s(60)) / 2, s(60), s(60));
-			PaintHomeCardAction(p, art, false, hasFocus() ? 1. : _hoverFade.value());
+			PaintHomeCardAction(
+				p,
+				art,
+				false,
+				hasFocus() ? 1. : _hoverFade.value(),
+				_playing);
 		}
 		const auto title = _item.isAlbum ? _item.album.title : _item.track.title;
 		p.setFont(st::semiboldFont);
@@ -2959,6 +3000,7 @@ protected:
 private:
 	RecentItem _item;
 	QImage _art;
+	bool _playing = false;
 
 	HoverFade _hoverFade;
 
