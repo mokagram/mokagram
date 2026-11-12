@@ -68,7 +68,6 @@
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QToolButton>
-#include <QtWidgets/QToolTip>
 #include <array>
 #include "ui/image/image.h"
 #include "ui/image/image_prepare.h"
@@ -4802,6 +4801,80 @@ private:
 
 };
 
+// Карточка комментария поверх плеера, в палитре и формах mokaGram.
+class CommentHoverCard final : public Ui::RpWidget {
+public:
+	explicit CommentHoverCard(QWidget *parent) : RpWidget(parent) {
+		setAttribute(Qt::WA_TransparentForMouseEvents);
+		setFocusPolicy(Qt::NoFocus);
+		hide();
+	}
+	void setComment(const TrackComment &comment, const QImage &avatar, int availableWidth) {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		_author = comment.author;
+		const auto seconds = std::max<qint64>(0, comment.timestampMs / 1000);
+		_time = u"%1:%2"_q.arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'));
+		_avatar = avatar;
+		const auto cardWidth = std::min(s(360), std::max(0, availableWidth));
+		_body.clearLayout();
+		_body.setText(comment.body);
+		_body.setFont(st::normalFont->f);
+		auto option = QTextOption();
+		option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+		_body.setTextOption(option);
+		_body.beginLayout();
+		auto y = 0.;
+		while (true) {
+			const auto line = _body.createLine();
+			if (!line.isValid()) break;
+			line.setLineWidth(std::max(1, cardWidth - s(32)));
+			line.setPosition(QPointF(0., y));
+			y += line.height();
+		}
+		_body.endLayout();
+		resize(cardWidth, std::min(s(72) + int(std::ceil(y)),
+			std::max(0, parentWidget()->height() - s(28))));
+		setAccessibleName(_author + u"\n"_q + comment.body);
+		update();
+	}
+protected:
+	void paintEvent(QPaintEvent *) override {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		BoxParts::PaintCard(p, rect());
+		const auto avatarRect = QRect(s(16), s(16), s(28), s(28));
+		p.save();
+		auto clip = QPainterPath();
+		clip.addEllipse(avatarRect);
+		p.setClipPath(clip);
+		if (!_avatar.isNull()) {
+			p.drawImage(avatarRect, _avatar);
+		} else {
+			p.fillRect(avatarRect, st::windowBgActive);
+			p.setPen(st::windowFg);
+			p.setFont(st::semiboldFont);
+			p.drawText(avatarRect, Qt::AlignCenter, _author.left(1).toUpper());
+		}
+		p.restore();
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		const auto timeWidth = st::normalFont->width(_time);
+		p.drawText(QRect(width() - s(16) - timeWidth, s(16), timeWidth, s(28)), Qt::AlignVCenter, _time);
+		p.setFont(st::semiboldFont);
+		p.setPen(st::windowFg);
+		const auto authorWidth = std::max(0, width() - s(76) - timeWidth);
+		p.drawText(QRect(s(52), s(16), authorWidth, s(28)), Qt::AlignVCenter,
+			st::semiboldFont->elided(_author, authorWidth));
+		p.setClipRect(QRect(s(16), s(56), width() - s(32), std::max(0, height() - s(72))));
+		_body.draw(&p, QPointF(s(16), s(56)));
+	}
+private:
+	QString _author, _time;
+	QImage _avatar;
+	QTextLayout _body;
+};
+
 // Комментарии живут рядом с текстом в обоих вариантах плеера.
 class TimedComments final : public Ui::AbstractButton {
 public:
@@ -4864,13 +4937,18 @@ public:
 	}
 
 protected:
+	void leaveEventHook(QEvent *event) override {
+		if (_hoverCard) _hoverCard->hide();
+		AbstractButton::leaveEventHook(event);
+	}
+	void hideEvent(QHideEvent *event) override {
+		if (_hoverCard) _hoverCard->hide();
+		AbstractButton::hideEvent(event);
+	}
 	void mouseMoveEvent(QMouseEvent *event) override {
 		AbstractButton::mouseMoveEvent(event);
 		_hoverIndex = std::max(0, event->pos().x() / style::ConvertScale(32));
-		refreshTooltip();
-		if (!_active.empty()) {
-			QToolTip::showText(event->globalPosition().toPoint(), toolTip(), this, rect());
-		}
+		updateHoverCard();
 	}
 	void paintEvent(QPaintEvent *) override {
 		auto p = QPainter(this);
@@ -4914,20 +4992,29 @@ private:
 		const auto seconds = std::max<qint64>(0, ms / 1000);
 		return u"%1:%2"_q.arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'));
 	}
-	void refreshTooltip() {
-		auto tip = QString();
-		if (!_active.empty()) {
-			const auto slot = std::clamp(_hoverIndex, 0, std::min(
-				int(_active.size()), std::max(1, width() / style::ConvertScale(32))) - 1);
-			const auto &comment = _comments[_active[slot]];
-			tip = (comment.author + u" · "_q + time(comment.timestampMs)
-				+ u"\n"_q + comment.body).toHtmlEscaped().replace('\n', u"<br>"_q);
-		} else {
-			tip = (_note.isEmpty() ? QString::fromUtf8(Mokagram::Lang::Tr(
-				_loading ? "Загружаю комментарии…" : "Комментарии появятся в нужный момент трека")) : _note).toHtmlEscaped();
+	void updateHoverCard() {
+		if (_active.empty() || !isOver() || isHidden()) {
+			if (_hoverCard) _hoverCard->hide();
+			return;
 		}
-		tip = u"<qt>"_q + tip + u"</qt>"_q;
-		if (toolTip() != tip) setToolTip(tip);
+		const auto slot = std::clamp(_hoverIndex, 0, std::min(
+			int(_active.size()), std::max(1, width() / style::ConvertScale(32))) - 1);
+		const auto &comment = _comments[_active[slot]];
+		if (!_hoverCard) _hoverCard = base::make_unique_q<CommentHoverCard>(window());
+		const auto image = _avatars.find(comment.avatarUrl);
+		const auto root = window();
+		const auto margin = style::ConvertScale(14);
+		_hoverCard->setComment(comment, image == _avatars.end() ? QImage() : image->second,
+			root->width() - 2 * margin);
+		const auto anchor = mapTo(root, QPoint(slot * style::ConvertScale(32), 0));
+		const auto gap = style::ConvertScale(8);
+		const auto top = anchor.y() - gap - _hoverCard->height();
+		_hoverCard->move(
+			std::clamp(anchor.x(), margin, std::max(margin, root->width() - margin - _hoverCard->width())),
+			std::clamp(top >= margin ? top : anchor.y() + height() + gap,
+				margin, std::max(margin, root->height() - margin - _hoverCard->height())));
+		_hoverCard->show();
+		_hoverCard->raise();
 	}
 	void refresh() {
 		const auto wasActive = _active;
@@ -4951,10 +5038,11 @@ private:
 				if (generation != _generation) return;
 				_pendingAvatars.erase(url);
 				_avatars[url] = std::move(image);
+				updateHoverCard();
 				update();
 			}));
 		}
-		refreshTooltip();
+		updateHoverCard();
 		update();
 		if (wasActive != _active) _changes.fire({});
 		// Следующая страница нужна, когда воспроизведение дошло до её таймкодов.
@@ -4985,6 +5073,7 @@ private:
 			refresh();
 		}));
 	}
+	base::unique_qptr<CommentHoverCard> _hoverCard;
 	QString _trackId, _next, _note;
 	std::vector<TrackComment> _comments;
 	std::vector<int> _active;
