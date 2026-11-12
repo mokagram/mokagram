@@ -1001,7 +1001,7 @@ void LoadDiscoverPlaylists(Fn<void(std::vector<Album>, QString error)> done) {
 		ApiGet(
 			QString::fromLatin1(kPublicApi) + u"/me/playlists"_q,
 			accountQuery,
-			[=](QByteArray data, QString accountError) mutable {
+			[=](QByteArray data, QString accountError) {
 				if (accountError.isEmpty()) {
 					const auto document = QJsonDocument::fromJson(data);
 					const auto collection = document.isArray()

@@ -1542,14 +1542,18 @@ private:
 
 };
 
-// Шапка раздела «Лайкнутые»: вход в SoundCloud и состояние аккаунта.
-// Лайки аккаунта и локальные — один список, поэтому вход живёт прямо здесь.
+// Карточка SoundCloud: вход и обновление лайков или плейлистов.
 class SoundCloudAccountBar final : public Ui::AbstractButton {
 public:
-	SoundCloudAccountBar(QWidget *parent, Fn<void()> login, Fn<void()> logout)
+	SoundCloudAccountBar(
+			QWidget *parent,
+			Fn<void()> login,
+			Fn<void()> logout,
+			bool playlists = false)
 	: AbstractButton(parent)
 	, _login(std::move(login))
-	, _logout(std::move(logout)) {
+	, _logout(std::move(logout))
+	, _playlists(playlists) {
 		// Высоту задаёт раскладка: resize() в конструкторе дал бы нулевую
 		// высоту и кнопка не ловила бы клики.
 		setPointerCursor(true);
@@ -1571,13 +1575,17 @@ public:
 			_syncNote = QString::fromUtf8(Mokagram::Lang::Tr("Обновляем…"));
 			_refreshButton->setDisabled(true);
 			refresh();
-			Mokagram::Music::Account::SyncLikes(crl::guard(this,
-				[=](int, int, QString error) {
+			const auto finish = crl::guard(this, [=](int, int, QString error) {
 					_syncing = false;
 					_syncNote = std::move(error);
 					_refreshButton->setDisabled(false);
 					refresh();
-				}));
+				});
+			if (_playlists) {
+				Mokagram::Music::Account::SyncPlaylists(finish);
+			} else {
+				Mokagram::Music::Account::SyncLikes(finish);
+			}
 		});
 		refresh();
 		setClickedCallback([=] {
@@ -1588,9 +1596,15 @@ public:
 		Mokagram::Music::Account::Changes() | rpl::on_next([=] {
 			refresh();
 		}, lifetime());
-		LikesChanged() | rpl::on_next([=] {
-			refresh();
-		}, lifetime());
+		if (_playlists) {
+			PlaylistsChanged() | rpl::on_next([=] {
+				refresh();
+			}, lifetime());
+		} else {
+			LikesChanged() | rpl::on_next([=] {
+				refresh();
+			}, lifetime());
+		}
 	}
 
 protected:
@@ -1684,17 +1698,26 @@ private:
 	void refresh() {
 		_logged = Mokagram::Music::Account::IsLoggedIn();
 		const auto info = Mokagram::Music::Account::User();
-		const auto count = int(LikedTracks().size());
+		const auto playlists = Playlists();
+		const auto count = _playlists
+			? int(std::count_if(playlists.begin(), playlists.end(), [](const Playlist &p) {
+				return p.remote;
+			}))
+			: int(LikedTracks().size());
 		if (!_logged) {
 			_note = QString::fromUtf8(Mokagram::Lang::Tr(
-				"Лайки и рекомендации из аккаунта"));
+				_playlists
+					? "Плейлисты из аккаунта SoundCloud"
+					: "Лайки и рекомендации из аккаунта"));
 		} else {
 			const auto who = info.username.isEmpty()
 				? QString::fromUtf8(Mokagram::Lang::Tr("Аккаунт подключён"))
 				: (u"@"_q + info.username);
+			const auto countText = _playlists
+				? QString::fromUtf8(Mokagram::Lang::Tr("плейлистов: %1"))
+				: QString::fromUtf8(Mokagram::Lang::Tr("лайков: %1"));
 			_note = (count > 0)
-				? (who + u" · "_q + QString::fromUtf8(
-					Mokagram::Lang::Tr("лайков: %1")).arg(count))
+				? (who + u" · "_q + countText.arg(count))
 				: who;
 		}
 		if (_logged
@@ -1724,6 +1747,7 @@ private:
 	bool _syncing = false;
 	Fn<void()> _login;
 	Fn<void()> _logout;
+	bool _playlists = false;
 	QString _note;
 	QImage _avatar;
 	QString _avatarUrl;
@@ -2580,6 +2604,7 @@ public:
 		_menuButton = new TrackMenuButton(this);
 		_menuButton->setAccessibleName(PlaylistText("Действия с плейлистом"));
 		_menuButton->setToolTip(PlaylistText("Действия с плейлистом"));
+		_menuButton->setVisible(!_playlist.remote);
 		connect(_menuButton, &QToolButton::clicked, this, [=] {
 			showMenu(_menuButton->mapToGlobal(_menuButton->rect().bottomLeft()));
 		});
@@ -2608,11 +2633,19 @@ protected:
 		_menuButton->setGeometry(width() - s(54), (height() - s(32)) / 2, s(32), s(32));
 	}
 	void contextMenuEvent(QContextMenuEvent *event) override {
+		if (_playlist.remote) {
+			event->accept();
+			return;
+		}
 		showMenu(event->reason() == QContextMenuEvent::Keyboard
 			? mapToGlobal(rect().center()) : event->globalPos());
 		event->accept();
 	}
 	void keyPressEvent(QKeyEvent *event) override {
+		if (_playlist.remote) {
+			AbstractButton::keyPressEvent(event);
+			return;
+		}
 		if (event->key() == Qt::Key_Menu
 			|| (event->key() == Qt::Key_F10 && event->modifiers() == Qt::ShiftModifier)) {
 			showMenu(mapToGlobal(rect().center()));
@@ -7358,6 +7391,8 @@ protected:
 		}
 		if (tab == Tab::Library) {
 			syncLibrary();
+		} else if (tab == Tab::Playlists) {
+			syncPlaylists();
 		}
 		rebuildTab();
 		auto event = QResizeEvent(size(), size());
@@ -7378,6 +7413,28 @@ protected:
 				_librarySyncSucceeded = crl::now();
 			} else if (_tab == Tab::Library) {
 				_controller->showToast(error);
+			}
+		}));
+	}
+	void syncPlaylists() {
+		if (!Account::IsLoggedIn()
+			|| _playlistsSyncLoading
+			|| (_playlistsSyncSucceeded
+				&& crl::now() - _playlistsSyncSucceeded < 15 * 1000)) {
+			return;
+		}
+		_playlistsSyncLoading = true;
+		Account::SyncPlaylists(crl::guard(this, [=](int, int, QString error) {
+			_playlistsSyncLoading = false;
+			if (error.isEmpty() && Account::IsLoggedIn()) {
+				_playlistsSyncSucceeded = crl::now();
+			} else if (!Account::IsLoggedIn()) {
+				_playlistsSyncSucceeded = 0;
+			} else if (_tab == Tab::Playlists) {
+				_controller->showToast(error);
+			}
+			if (_tab == Tab::Playlists) {
+				rebuildTab();
 			}
 		}));
 	}
@@ -8012,8 +8069,16 @@ protected:
 					_openedPlaylist.clear();
 					rebuildTab();
 				}));
-				if (found->tracks.empty()) _tabNote = tr("Добавь треки через их контекстное меню.");
-				else addRows(found->tracks, RowMode::Results, found->id);
+				if (found->tracks.empty()) {
+					_tabNote = found->remote
+						? tr("В этом плейлисте SoundCloud нет доступных треков.")
+						: tr("Добавь треки через их контекстное меню.");
+				} else {
+					addRows(
+						found->tracks,
+						RowMode::Results,
+						found->remote ? QString() : found->id);
+				}
 			} else {
 				_openedPlaylist.clear();
 				_tabList->add(object_ptr<HomeSectionHeader>(_tabList, tr("Создать плейлист"), true, [=] {
@@ -8021,13 +8086,27 @@ protected:
 						_openedPlaylist = CreatePlaylist(name);
 					}));
 				}, true));
+				_tabList->add(object_ptr<SoundCloudAccountBar>(
+					_tabList,
+					[=] { ShowSoundCloudLogin(nullptr); },
+					[=] { Mokagram::Music::Account::Logout(); },
+					true),
+					QMargins(
+						style::ConvertScale(12),
+						style::ConvertScale(4),
+						style::ConvertScale(12),
+						style::ConvertScale(8)));
 				for (const auto &playlist : playlists) {
 					_tabList->add(object_ptr<PlaylistRow>(_tabList, _controller, playlist, [=](QString id) {
 						_openedPlaylist = std::move(id);
 						rebuildTab();
 					}));
 				}
-				if (playlists.empty()) _tabNote = tr("Создай плейлист или добавь трек через контекстное меню.");
+				if (playlists.empty()) {
+					_tabNote = _playlistsSyncLoading
+						? tr("Загружаю плейлисты SoundCloud…")
+						: tr("Создай плейлист или добавь трек через контекстное меню.");
+				}
 			}
 		} break;
 		case Tab::Queue:
@@ -8714,6 +8793,8 @@ private:
 	Tab _rebuiltTab = Tab::Queue;
 	bool _librarySyncLoading = false;
 	crl::time _librarySyncSucceeded = 0;
+	bool _playlistsSyncLoading = false;
+	crl::time _playlistsSyncSucceeded = 0;
 	QString _tabNote;
 	QString _openedPlaylist;
 	bool _heartOwn = false;
