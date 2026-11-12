@@ -120,7 +120,19 @@ def norm(text):
     return "".join(ch for ch in text.lower() if ch.isalnum())
 
 def is_jwt(value):
-    return isinstance(value, str) and value.count(".") == 2 and len(value) > 40
+    if not (isinstance(value, str) and value.count(".") == 2 and len(value) > 40):
+        return False
+    # Протухший токен (exp в прошлом) за токен не считаем: тогда страница
+    # soundcloud.com обновит его по refresh-токену из куки.
+    try:
+        import base64
+        part = value.split(".")[1]
+        exp = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))).get("exp")
+        if isinstance(exp, (int, float)) and exp < time.time() + 60:
+            return False
+    except Exception:
+        pass
+    return True
 
 def desktop_binaries():
     found = {}
