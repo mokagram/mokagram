@@ -1584,9 +1584,27 @@ void MergeRemotePlaylists(
 	auto &lib = Lib();
 	auto changed = false;
 	auto remoteIds = std::set<QString>();
+	const auto sameTracks = [](const std::vector<Track> &a, const std::vector<Track> &b) {
+		if (a.size() != b.size()) return false;
+		for (auto i = a.begin(), j = b.begin(); i != a.end(); ++i, ++j) {
+			if (i->id != j->id
+				|| i->title != j->title
+				|| i->artist != j->artist
+				|| i->artworkUrl != j->artworkUrl
+				|| i->unavailable != j->unavailable) {
+				return false;
+			}
+		}
+		return true;
+	};
 	for (const auto &incoming : remote) {
 		if (incoming.id.isEmpty() || incoming.name.trimmed().isEmpty()) continue;
 		remoteIds.insert(incoming.id);
+		auto tracks = incoming.tracks;
+		for (auto &track : tracks) {
+			track.transcodingUrl.clear();
+			track.authorization.clear();
+		}
 		auto found = std::find_if(lib.playlists.begin(), lib.playlists.end(),
 			[&](const Playlist &playlist) {
 				return playlist.remote && playlist.sourceId == incoming.id;
@@ -1595,15 +1613,15 @@ void MergeRemotePlaylists(
 			Playlist playlist;
 			playlist.id = u"soundcloud:"_q + incoming.id;
 			playlist.name = incoming.name.trimmed();
-			playlist.tracks = incoming.tracks;
+			playlist.tracks = std::move(tracks);
 			playlist.remote = true;
 			playlist.sourceId = incoming.id;
 			lib.playlists.push_back(std::move(playlist));
 			changed = true;
 		} else if (found->name != incoming.name.trimmed()
-			|| found->tracks.size() != incoming.tracks.size()) {
+			|| !sameTracks(found->tracks, tracks)) {
 			found->name = incoming.name.trimmed();
-			found->tracks = incoming.tracks;
+			found->tracks = std::move(tracks);
 			changed = true;
 		}
 	}
@@ -1618,6 +1636,18 @@ void MergeRemotePlaylists(
 		}
 	}
 	if (changed) {
+		Save();
+		lib.playlistsChanged.fire({});
+	}
+}
+
+void ClearRemotePlaylists() {
+	auto &lib = Lib();
+	const auto old = lib.playlists.size();
+	std::erase_if(lib.playlists, [](const Playlist &playlist) {
+		return playlist.remote;
+	});
+	if (old != lib.playlists.size()) {
 		Save();
 		lib.playlistsChanged.fire({});
 	}

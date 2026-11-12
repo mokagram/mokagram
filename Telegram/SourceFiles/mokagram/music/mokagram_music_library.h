@@ -50,6 +50,7 @@ void AddPlaylistTrack(const QString &id, const Track &track);
 void AddPlaylistTracks(const QString &id, const std::vector<Track> &tracks);
 void RemovePlaylistTrack(const QString &id, const QString &trackId);
 void MergeRemotePlaylists(const std::vector<RemotePlaylist> &playlists, bool complete);
+void ClearRemotePlaylists();
 [[nodiscard]] rpl::producer<> PlaylistsChanged();
 
 struct RecentItem {
