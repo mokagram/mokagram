@@ -1813,6 +1813,24 @@ struct HoverFade {
 		art.bottom() - s(8) - size + 1, size, size);
 }
 
+struct HomeTrackPlaybackState {
+	bool current = false;
+	bool playing = false;
+};
+
+[[nodiscard]] HomeTrackPlaybackState HomeTrackPlayback(const QString &id) {
+	if (PlayingTrack().id != id) {
+		return {};
+	}
+	const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+	return {
+		!Media::Player::IsStoppedOrStopping(state.state),
+		state.state == Media::Player::State::Playing
+			|| state.state == Media::Player::State::Starting
+			|| state.state == Media::Player::State::Resuming,
+	};
+}
+
 void PaintHomeCardAction(
 		QPainter &p,
 		const QRect &art,
@@ -1824,6 +1842,7 @@ void PaintHomeCardAction(
 	if (size < s(24)) {
 		return;
 	}
+	shown = std::max(shown, playing ? 1. : 0.);
 	if (shown <= 0.) {
 		return;
 	}
@@ -2016,11 +2035,13 @@ public:
 		std::shared_ptr<std::vector<Track>> results = nullptr,
 		int resultIndex = -1,
 		Fn<void(Track)> open = nullptr,
-		QString playlistId = {})
+		QString playlistId = {},
+		bool homePlaybackControls = true)
 	: AbstractButton(parent)
 	, _track(track)
 	, _mode(mode)
 	, _results(std::move(results))
+	, _homePlaybackControls(homePlaybackControls)
 	, _playlistId(std::move(playlistId)) {
 		resize(width(), kRowHeight);
 		setPointerCursor(true);
@@ -2088,6 +2109,11 @@ public:
 				if (!HomeActionRect(QRect(inset, inset, side, side)).contains(
 						mapFromGlobal(QCursor::pos()))) {
 					open(_track);
+					return;
+				}
+				if (_homePlaybackControls
+					&& HomeTrackPlayback(_track.id).current) {
+					Media::Player::instance()->playPause(AudioMsgId::Type::Song);
 					return;
 				}
 			}
@@ -2266,11 +2292,17 @@ private:
 	void paint() {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
-		const auto playing = (QueueState().currentId == _track.id);
+		const auto selected = (QueueState().currentId == _track.id);
 		if (_mode == RowMode::Home) {
-			paintHome(p, playing);
+			paintHome(
+				p,
+				selected,
+				_homePlaybackControls
+					? HomeTrackPlayback(_track.id)
+					: HomeTrackPlaybackState());
 			return;
 		}
+		const auto playing = selected;
 		const auto over = isOver() || isDown();
 		if (playing || over) {
 			p.setPen(Qt::NoPen);
@@ -2356,7 +2388,10 @@ private:
 			st::normalFont->elided(subtitle, textWidth));
 	}
 
-	void paintHome(QPainter &p, bool playing) {
+	void paintHome(
+			QPainter &p,
+			bool selected,
+			HomeTrackPlaybackState playback) {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto inset = s(12);
 		const auto artSize = std::max(width() - 2 * inset, 0);
@@ -2365,7 +2400,7 @@ private:
 		p.setBrush(anim::color(
 			QColor(0x24, 0x24, 0x24),
 			QColor(0x30, 0x30, 0x30),
-			playing ? 1. : _hoverFade.value()));
+			(selected || playback.current) ? 1. : _hoverFade.value()));
 		p.drawRoundedRect(rect(), s(8), s(8));
 		if (hasFocus()) {
 			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
@@ -2390,10 +2425,20 @@ private:
 			p.drawImage(art, _art);
 		}
 		p.restore();
-		PaintHomeCardAction(p, art, false, hasFocus() ? 1. : _hoverFade.value());
+		const auto actionShown = (hasFocus() || playback.current)
+			? 1.
+			: _hoverFade.value();
+		PaintHomeCardAction(
+			p,
+			art,
+			false,
+			actionShown,
+			_homePlaybackControls && playback.playing);
 		const auto textWidth = std::max(width() - 2 * inset - s(28), 0);
 		p.setFont(st::semiboldFont);
-		p.setPen(playing ? st::windowActiveTextFg : st::windowFg);
+		p.setPen((selected || playback.current)
+			? st::windowActiveTextFg
+			: st::windowFg);
 		p.drawText(QRect(inset, art.bottom() + s(8), width() - 2 * inset, s(22)),
 			Qt::AlignVCenter | Qt::AlignLeft,
 			st::semiboldFont->elided(_track.title, width() - 2 * inset));
@@ -2411,6 +2456,7 @@ private:
 	Track _track;
 	RowMode _mode;
 	std::shared_ptr<std::vector<Track>> _results;
+	bool _homePlaybackControls = true;
 	TrackLikeButton *_likeButton = nullptr;
 	bool _glass = false;
 	QImage _art;
@@ -2890,12 +2936,9 @@ public:
 			const auto s = [](int v) { return style::ConvertScale(v); };
 			const auto button = QRect(width() - s(56), (height() - s(44)) / 2, s(44), s(44));
 			if (button.contains(mapFromGlobal(QCursor::pos()))) {
-				const auto instance = Media::Player::instance();
-				const auto state = instance->getState(AudioMsgId::Type::Song);
 				if (!_item.isAlbum
-					&& PlayingTrack().id == _item.track.id
-					&& !Media::Player::IsStoppedOrStopping(state.state)) {
-					instance->playPause(AudioMsgId::Type::Song);
+					&& HomeTrackPlayback(_item.track.id).current) {
+					Media::Player::instance()->playPause(AudioMsgId::Type::Song);
 				} else {
 					play();
 				}
@@ -2904,14 +2947,12 @@ public:
 			}
 		});
 		const auto refreshPlayback = [=] {
-			const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
-			const auto playing = !_item.isAlbum
-				&& PlayingTrack().id == _item.track.id
-				&& (state.state == Media::Player::State::Playing
-					|| state.state == Media::Player::State::Starting
-					|| state.state == Media::Player::State::Resuming);
-			if (_playing != playing) {
-				_playing = playing;
+			const auto playback = _item.isAlbum
+				? HomeTrackPlaybackState()
+				: HomeTrackPlayback(_item.track.id);
+			if (_current != playback.current || _playing != playback.playing) {
+				_current = playback.current;
+				_playing = playback.playing;
 				update();
 			}
 		};
@@ -2978,16 +3019,19 @@ protected:
 		const auto available = std::max(width() - left - s(64), 0);
 		{
 			const auto art = QRect(width() - s(64), (height() - s(60)) / 2, s(60), s(60));
+			const auto actionShown = (hasFocus() || _current)
+				? 1.
+				: _hoverFade.value();
 			PaintHomeCardAction(
 				p,
 				art,
 				false,
-				hasFocus() ? 1. : _hoverFade.value(),
+				actionShown,
 				_playing);
 		}
 		const auto title = _item.isAlbum ? _item.album.title : _item.track.title;
 		p.setFont(st::semiboldFont);
-		p.setPen(st::windowFg);
+		p.setPen(_current ? st::windowActiveTextFg : st::windowFg);
 		p.drawText(QRect(left, 0, available, height()), Qt::AlignLeft | Qt::AlignVCenter,
 			st::semiboldFont->elided(title, available));
 		if (hasFocus()) {
@@ -3000,6 +3044,7 @@ protected:
 private:
 	RecentItem _item;
 	QImage _art;
+	bool _current = false;
 	bool _playing = false;
 
 	HoverFade _hoverFade;
@@ -3275,9 +3320,11 @@ public:
 		bool expanded,
 		std::shared_ptr<int> offset,
 		std::vector<Track> artists = {},
-		Fn<void(Track)> openArtist = nullptr)
+		Fn<void(Track)> openArtist = nullptr,
+		bool homePlaybackControls = true)
 	: RpWidget(parent)
 	, _expanded(expanded)
+	, _homePlaybackControls(homePlaybackControls)
 	, _offset(std::move(offset)) {
 		if (!_expanded) {
 			_scroll = Ui::CreateChild<Ui::ScrollArea>(this, st::defaultScrollArea);
@@ -3335,7 +3382,8 @@ public:
 			} else if (trackIndex < int(tracks.size())) {
 				const auto index = trackIndex++;
 				_items.push_back(Ui::CreateChild<Row>(
-					_content, controller, tracks[index], index, RowMode::Home, results, -1, openTrack));
+					_content, controller, tracks[index], index, RowMode::Home,
+					results, -1, openTrack, QString(), _homePlaybackControls));
 			} else if (albumIndex < int(albums.size())) {
 				const auto album = albums[albumIndex++];
 				_items.push_back(Ui::CreateChild<HomeAlbumCard>(_content, controller, album, [=] { open(album); }));
@@ -3401,6 +3449,7 @@ private:
 	}
 
 	bool _expanded = false;
+	bool _homePlaybackControls = true;
 	bool _restoring = true;
 	bool _restoreQueued = false;
 	std::shared_ptr<int> _offset;
@@ -7847,7 +7896,8 @@ protected:
 						crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); }),
 						true, nullptr,
 						pageTracks ? HomeRecommendationArtists(tracks) : std::vector<Track>(),
-						crl::guard(this, [=](Track track) { openHomeArtist(std::move(track)); })));
+						crl::guard(this, [=](Track track) { openHomeArtist(std::move(track)); }),
+						!pageTracks || page == 0));
 				}
 				break;
 			}
@@ -7892,7 +7942,8 @@ protected:
 					crl::guard(this, [=](Album album) { openHomeAlbum(std::move(album)); }),
 					crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); }),
 					false, page.shelfOffset, HomeRecommendationArtists(page.tracks),
-					crl::guard(this, [=](Track track) { openHomeArtist(std::move(track)); })));
+					crl::guard(this, [=](Track track) { openHomeArtist(std::move(track)); }),
+					i == 0));
 				if (!i) section(tr("Избранное"), 2, liked);
 			}
 			if (_homePages.empty() && !_homeLoaded) {
