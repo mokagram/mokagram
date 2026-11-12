@@ -5004,7 +5004,9 @@ protected:
 				p.setBrush(st::windowBg);
 				p.drawEllipse(badge);
 				p.setPen(st::windowFg);
-				p.setFont(st::smallFont);
+				auto font = st::normalFont->f;
+				font.setPixelSize(style::ConvertScale(10));
+				p.setFont(font);
 				p.drawText(badge, Qt::AlignCenter, slot.comments.size() > 99
 					? u"99+"_q : QString::number(slot.comments.size()));
 			}
@@ -5052,6 +5054,11 @@ private:
 				: bin * step + (step - side) / 2;
 			auto rect = QRect(std::clamp(x, 0, std::max(0, width() - side)),
 				(height() - side) / 2, side, side);
+			if (!_slots.empty() && _slots.back().rect.right() + style::ConvertScale(4) >= rect.left()) {
+				auto &previous = _slots.back().comments;
+				previous.insert(previous.end(), comments.begin(), comments.end());
+				continue;
+			}
 			mask += QRegion(rect);
 			_slots.push_back({ rect, std::move(comments) });
 		}
