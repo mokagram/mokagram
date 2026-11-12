@@ -4811,9 +4811,12 @@ public:
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Комментарии SoundCloud")));
 		setClickedCallback([=] {
 			_menu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
-			if (_shownTimestamp >= 0) {
-				const auto timestamp = _shownTimestamp;
-				_menu->addAction(time(timestamp), [=] { _seekRequests.fire_copy(timestamp); });
+			for (const auto index : _active) {
+				const auto &comment = _comments[index];
+				const auto timestamp = comment.timestampMs;
+				_menu->addAction(comment.author + u": "_q + comment.body, [=] {
+					_seekRequests.fire_copy(timestamp);
+				});
 			}
 			_menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Обновить")), [=] {
 				if (!_loading) load({});
@@ -4844,6 +4847,9 @@ public:
 		++_generation;
 		_loading = false;
 		_comments.clear();
+		_active.clear();
+		_avatars.clear();
+		_pendingAvatars.clear();
 		_next.clear();
 		_note.clear();
 		if (Settings::Bool(u"lyrics.comments"_q) && validTrack()) load({});
@@ -4862,6 +4868,11 @@ public:
 	}
 
 protected:
+	void mouseMoveEvent(QMouseEvent *event) override {
+		AbstractButton::mouseMoveEvent(event);
+		_hoverIndex = std::max(0, event->pos().x() / style::ConvertScale(32));
+		refreshTooltip();
+	}
 	void paintEvent(QPaintEvent *) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
@@ -4869,6 +4880,31 @@ protected:
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::windowBgOver);
 			p.drawEllipse(rect());
+		}
+		if (!_active.empty()) {
+			const auto side = style::ConvertScale(28);
+			const auto step = style::ConvertScale(32);
+			const auto count = std::min(int(_active.size()), std::max(1, width() / step));
+			for (auto i = 0; i < count; ++i) {
+				const auto &comment = _comments[_active[i]];
+				const auto avatarRect = QRect(i * step + (step - side) / 2,
+					(height() - side) / 2, side, side);
+				p.save();
+				auto clip = QPainterPath();
+				clip.addEllipse(avatarRect);
+				p.setClipPath(clip);
+				const auto image = _avatars.find(comment.avatarUrl);
+				if (image != _avatars.end() && !image->second.isNull()) {
+					p.drawImage(avatarRect, image->second);
+				} else {
+					p.fillRect(avatarRect, st::windowBgActive);
+					p.setPen(st::windowFg);
+					p.setFont(st::semiboldFont);
+					p.drawText(avatarRect, Qt::AlignCenter, comment.author.left(1).toUpper());
+				}
+				p.restore();
+			}
+			return;
 		}
 		p.setOpacity(_shownTimestamp >= 0 ? 1. : 0.5);
 		const auto size = style::ConvertScale(20);
@@ -4881,22 +4917,47 @@ private:
 		const auto seconds = std::max<qint64>(0, ms / 1000);
 		return u"%1:%2"_q.arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'));
 	}
+	void refreshTooltip() {
+		auto tip = QString();
+		if (!_active.empty()) {
+			const auto slot = std::clamp(_hoverIndex, 0, std::min(
+				int(_active.size()), std::max(1, width() / style::ConvertScale(32))) - 1);
+			const auto &comment = _comments[_active[slot]];
+			tip = (comment.author + u" · "_q + time(comment.timestampMs)
+				+ u"\n"_q + comment.body).toHtmlEscaped().replace('
+', u"<br>"_q);
+		} else {
+			tip = (_note.isEmpty() ? QString::fromUtf8(Mokagram::Lang::Tr(
+				_loading ? "Загружаю комментарии…" : "Комментарии появятся в нужный момент трека")) : _note).toHtmlEscaped();
+		}
+		tip = u"<qt>"_q + tip + u"</qt>"_q;
+		if (toolTip() != tip) setToolTip(tip);
+	}
 	void refresh() {
 		_shownTimestamp = -1;
-		auto lines = QStringList();
-		for (const auto &comment : _comments) {
+		_active.clear();
+		for (auto index = 0; index < int(_comments.size()); ++index) {
+			const auto &comment = _comments[index];
 			if (comment.timestampMs < 0 || comment.timestampMs > _position
 				|| _position - comment.timestampMs >= 7000) continue;
 			_shownTimestamp = std::max(_shownTimestamp, comment.timestampMs);
-			lines.push_back((comment.author + u" · "_q + time(comment.timestampMs)
-				+ u"\n"_q + comment.body).toHtmlEscaped().replace('\n', u"<br>"_q));
+			_active.push_back(index);
 		}
-		auto tip = lines.isEmpty()
-			? (_note.isEmpty() ? QString::fromUtf8(Mokagram::Lang::Tr(
-				_loading ? "Загружаю комментарии…" : "Комментарии появятся в нужный момент трека")) : _note).toHtmlEscaped()
-			: lines.join(u"<br><br>"_q);
-		tip = u"<qt>"_q + tip + u"</qt>"_q;
-		if (toolTip() != tip) setToolTip(tip);
+		std::stable_sort(_active.begin(), _active.end(), [&](int left, int right) {
+			return _comments[left].timestampMs > _comments[right].timestampMs;
+		});
+		const auto generation = _generation;
+		for (const auto index : _active) {
+			const auto url = _comments[index].avatarUrl;
+			if (url.isEmpty() || _avatars.contains(url) || !_pendingAvatars.insert(url).second) continue;
+			LoadImage(url, crl::guard(this, [=](QImage image) {
+				if (generation != _generation) return;
+				_pendingAvatars.erase(url);
+				_avatars[url] = std::move(image);
+				update();
+			}));
+		}
+		refreshTooltip();
 		update();
 	}
 	void load(const QString &cursor) {
@@ -4923,6 +4984,10 @@ private:
 	}
 	QString _trackId, _next, _note;
 	std::vector<TrackComment> _comments;
+	std::vector<int> _active;
+	std::map<QString, QImage> _avatars;
+	std::set<QString> _pendingAvatars;
+	int _hoverIndex = 0;
 	std::shared_ptr<void> _icon;
 	base::unique_qptr<Ui::PopupMenu> _menu;
 	rpl::event_stream<qint64> _seekRequests;
@@ -5362,12 +5427,13 @@ private:
 		_comments->setVisible(shown);
 		if (!shown) return;
 		const auto size = style::ConvertScale(32);
+		const auto rowWidth = std::min(width(), style::ConvertScale(96));
 		auto top = anchorY() - _scroll;
 		if (_lyrics.synced && _current >= 0) {
 			for (auto i = 0; i < _current; ++i) top += heightOf(i);
 		}
 		_comments->setGeometry(_big ? 0 : style::ConvertScale(24),
-			std::clamp(int(top) - size, 0, std::max(0, height() - size)), size, size);
+			std::clamp(int(top) - size, 0, std::max(0, height() - size)), rowWidth, size);
 		_comments->raise();
 	}
 	const not_null<TimedComments*> _comments;
@@ -6558,7 +6624,7 @@ protected:
 			? pad + s(56) + pad / 2
 			: std::clamp(int(bar.width() * 0.27), s(220), s(360));
 		const auto rightWidth = pad + _queueToggle->width() + s(2) + _heart->width() + pad
-			+ (Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable() ? s(36) : 0)
+			+ (Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable() ? s(100) : 0)
 			+ (result.compact ? 0 : iconWidth + volumeWidth + s(12));
 		const auto sideWidth = std::max(leftWidth, rightWidth);
 		const auto centerWidth = std::max(bar.width() - 2 * sideWidth, 0);
@@ -6590,7 +6656,7 @@ protected:
 		if (!result.compact) {
 			result.volume = QRect(
 				result.heart.x() - s(12) - volumeWidth
-					- (Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable() ? s(36) : 0),
+					- (Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable() ? s(100) : 0),
 				bar.y() + (bar.height() - _volume->height()) / 2,
 				volumeWidth,
 				_volume->height());
@@ -8537,10 +8603,11 @@ void AttachCommentsToPlayer(
 		button->setVisible(shown);
 		if (replaceAnchor) anchor->setVisible(allowed && !shown);
 		const auto size = style::ConvertScale(32);
+		const auto rowWidth = replaceAnchor ? size : style::ConvertScale(96);
 		button->setGeometry(replaceAnchor
 			? anchor->x() + (anchor->width() - size) / 2
-			: anchor->x() - size - style::ConvertScale(4),
-			anchor->y() + (anchor->height() - size) / 2, size, size);
+			: anchor->x() - rowWidth - style::ConvertScale(4),
+			anchor->y() + (anchor->height() - size) / 2, rowWidth, size);
 		const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
 		button->setPosition(state.position * 1000 / std::max<int64>(state.frequency, 1));
 		button->raise();
