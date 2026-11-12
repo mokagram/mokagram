@@ -25,6 +25,11 @@ jobs:
         shell: cmd
 
     steps:
+      - name: Python 3.12 для встроенных плагинов.
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+
       - name: Prepare directories.
         run: |
           mkdir %userprofile%\TBuild\Libraries
@@ -187,17 +192,24 @@ jobs:
           -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT= ^
           -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF ^
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF ^
+          -D Python3_ROOT_DIR="%pythonLocation%" ^
+          -D Python3_FIND_REGISTRY=NEVER ^
           %TDESKTOP_BUILD_DEFINE%
 
           cmake --build ..\out --config Debug --parallel
 
       - name: Move artifact.
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
+        shell: pwsh
         run: |
-          set OUT=%TBUILD%\%REPO_NAME%\out\Debug
-          mkdir artifact
-          move %OUT%\Telegram.exe artifact/
-          move %OUT%\Updater.exe artifact/
+          $out = "$env:TBUILD\$env:REPO_NAME\out\Debug"
+          New-Item -ItemType Directory -Force artifact | Out-Null
+          Move-Item "$out\Telegram.exe" artifact\
+          Move-Item "$out\Updater.exe" artifact\
+          $ver = (python --version).Split(' ')[1]
+          Invoke-WebRequest "https://www.python.org/ftp/python/$ver/python-$ver-embed-amd64.zip" -OutFile py-embed.zip
+          Expand-Archive py-embed.zip -DestinationPath artifact -Force
+          Remove-Item artifact\python.exe, artifact\pythonw.exe -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v7
         name: Upload artifact.
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
