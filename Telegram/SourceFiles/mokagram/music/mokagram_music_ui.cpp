@@ -2108,6 +2108,29 @@ public:
 		}, lifetime());
 	}
 
+	void setTextLinks(Fn<void(Track)> title, Fn<void(Track)> artist) {
+		const auto make = [&](Fn<void(Track)> action) {
+			const auto button = Ui::CreateChild<Ui::AbstractButton>(this);
+			button->setPointerCursor(true);
+			button->setFocusPolicy(Qt::TabFocus);
+			button->setClickedCallback([=] { action(_track); });
+			button->paintRequest() | rpl::on_next([=](QRect) {
+				if (button->isOver() || button->hasFocus()) {
+					auto p = QPainter(button);
+					p.setPen(st::windowActiveTextFg);
+					p.drawLine(0, button->height() - style::ConvertScale(2),
+						button->width(), button->height() - style::ConvertScale(2));
+				}
+			}, button->lifetime());
+			return button;
+		};
+		_titleLink = make(std::move(title));
+		_artistLink = make(std::move(artist));
+		_titleLink->setAccessibleName(_track.title);
+		_artistLink->setAccessibleName(_track.artist);
+		layoutTextLinks();
+	}
+
 	// Строка лежит на цветном фоне плеера: подсветка белым с прозрачностью, а не серым.
 	void setOnGlass(bool glass) {
 		_glass = glass;
@@ -2120,6 +2143,7 @@ protected:
 	void keyPressEvent(QKeyEvent *e) override;
 	void resizeEvent(QResizeEvent *e) override {
 		AbstractButton::resizeEvent(e);
+		layoutTextLinks();
 		if (_menuButton) _menuButton->setGeometry(width() - 48, (height() - 32) / 2, 32, 32);
 		if (_likeButton) {
 			_likeButton->setGeometry(heartRect());
@@ -2127,6 +2151,22 @@ protected:
 	}
 
 private:
+	void layoutTextLinks() {
+		if (!_titleLink || !_artistLink) return;
+		const auto left = 20 + kArtSize - 1 + 16;
+		const auto right = width() - (_menuButton ? 72 : 24);
+		const auto available = std::max((IsTelegramTrack(_track)
+			? right - st::normalFont->width(FormatDuration(_track.durationMs)) - 14
+			: heartRect().left() - 12) - left, 0);
+		_titleLink->setGeometry(left, height() / 2 - 24,
+			std::min(st::semiboldFont->width(_track.title), available), 22);
+		_artistLink->setGeometry(left, height() / 2 + 2,
+			std::min(st::normalFont->width(_track.artist), available), 20);
+		_titleLink->setVisible(!_track.title.isEmpty());
+		_artistLink->setVisible(!_track.artist.trimmed().isEmpty());
+	}
+	Ui::AbstractButton *_titleLink = nullptr;
+	Ui::AbstractButton *_artistLink = nullptr;
 	void updateAnimation();
 	QToolButton *_menuButton = nullptr;
 
@@ -7114,7 +7154,7 @@ protected:
 			auto resultIndex = 0;
 			for (auto i = 0; i != int(tracks.size()); ++i) {
 				const auto index = tracks[i].unavailable ? -1 : resultIndex++;
-				_tabList->add(object_ptr<Row>(
+				const auto row = _tabList->add(object_ptr<Row>(
 					_tabList,
 					_controller,
 					tracks[i],
@@ -7124,6 +7164,15 @@ protected:
 					index,
 					nullptr,
 					playlistId));
+				row->setTextLinks(
+					crl::guard(this, [=](Track track) {
+						setTab(Tab::Home);
+						openHomeTrack(std::move(track));
+					}),
+					crl::guard(this, [=](Track track) {
+						setTab(Tab::Home);
+						openHomeArtist(std::move(track));
+					}));
 			}
 		};
 		switch (_tab) {
