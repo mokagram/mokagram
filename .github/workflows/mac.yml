@@ -50,15 +50,24 @@ jobs:
           path: |
             Libraries
             ThirdParty
-          key: ${{ runner.OS }}-libs-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}
-          restore-keys: ${{ runner.OS }}-libs-
+          key: ${{ runner.OS }}-libs-v2-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}
+          restore-keys: |
+            ${{ runner.OS }}-libs-v2-
+            ${{ runner.OS }}-libs-
+
+      - name: Reset incomplete rust cache keys.
+        run: |
+          if [ ! -f Libraries/wallet-engine/Cargo.toml ] || [ -z "$(find Libraries -path '*/src/wallet_engine/wallet_engine.cpp' 2>/dev/null)" ]; then
+            rm -f Libraries/cache_keys/tlottie Libraries/cache_keys/wallet-engine Libraries/cache_keys/tdesktop_rust
+            echo "reset tlottie, wallet-engine, tdesktop_rust cache keys"
+          fi
 
       - name: Libraries.
         run: |
           ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
 
       - name: Free up some disk space.
-        run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -perm +111 ')' -type f ')' -o -empty ')' -delete
+        run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -name 'macos_toolchain.json' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/src/wallet_engine/*' -o '(' '(' -path '*/tlottie/*' -o -path '*/wallet-engine/*' ')' ! -path '*/target/*' ')' -o -perm +111 ')' -type f ')' -o '(' -empty ! -path '*/tlottie/*' ! -path '*/wallet-engine/*' ')' ')' -delete
 
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
