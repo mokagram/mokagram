@@ -4804,6 +4804,7 @@ private:
 class TimedComments final : public Ui::RpWidget {
 public:
 	explicit TimedComments(QWidget *parent) : RpWidget(parent) {
+		setMouseTracking(true);
 		_send = Ui::CreateChild<Ui::RoundButton>(this,
 			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Написать"))),
 			BoxParts::PillActive());
@@ -4877,6 +4878,7 @@ public:
 	void setTrack(const QString &id) {
 		if (id == _trackId) return;
 		_trackId = id;
+		_shownTimestamp = -1;
 		++_generation;
 		_comments.clear();
 		_next.clear();
@@ -4895,13 +4897,29 @@ public:
 
 	void setPosition(qint64 position) {
 		if (_position == position) return;
-		const auto newSecond = _position / 1000 != position / 1000;
 		_position = position;
-		if (newSecond) refreshButtons();
 		update();
 	}
 
+	[[nodiscard]] rpl::producer<qint64> seekRequests() const {
+		return _seekRequests.events();
+	}
+
 protected:
+	void mouseMoveEvent(QMouseEvent *event) override {
+		setCursor(!_editing && _shownTimestamp >= 0
+			&& event->pos().y() >= style::ConvertScale(32)
+			&& event->pos().y() < style::ConvertScale(96)
+			? style::cur_pointer : style::cur_default);
+	}
+	void mousePressEvent(QMouseEvent *event) override {
+		if (event->button() == Qt::LeftButton && !_editing
+			&& _shownTimestamp >= 0
+			&& event->pos().y() >= style::ConvertScale(32)
+			&& event->pos().y() < style::ConvertScale(96)) {
+			_seekRequests.fire_copy(_shownTimestamp);
+		}
+	}
 	void resizeEvent(QResizeEvent *e) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto half = std::max(0, (width() - s(36)) / 2);
@@ -4927,6 +4945,7 @@ protected:
 		if (!Account::IsLoggedIn()) {
 			note = QString::fromUtf8(Mokagram::Lang::Tr("Войди в SoundCloud в разделе лайков, чтобы комментировать"));
 		}
+		_shownTimestamp = -1;
 		if (!_editing) {
 			const TrackComment *active = nullptr;
 			for (const auto &comment : _comments) {
@@ -4937,6 +4956,7 @@ protected:
 				}
 			}
 			if (active) {
+				_shownTimestamp = active->timestampMs;
 				setToolTip(active->author + u"\n"_q + active->body);
 				if (_avatarUrl != active->avatarUrl) {
 					_avatarUrl = active->avatarUrl;
@@ -5017,6 +5037,8 @@ private:
 	QString _trackId, _next, _note, _avatarUrl;
 	QImage _avatar;
 	std::vector<TrackComment> _comments;
+	rpl::event_stream<qint64> _seekRequests;
+	qint64 _shownTimestamp = -1;
 	qint64 _position = 0, _stamp = 0;
 	int _generation = 0;
 	bool _editing = false, _posting = false, _loading = false;
@@ -5027,6 +5049,9 @@ public:
 	explicit LyricsView(QWidget *parent)
 	: RpWidget(parent)
 	, _comments(Ui::CreateChild<TimedComments>(this)) {
+		_comments->seekRequests() | rpl::on_next([=](qint64 ms) {
+			_lineClicked.fire_copy(ms);
+		}, lifetime());
 		resize(width(), 280);
 		setMouseTracking(true);
 		_clock.start();
