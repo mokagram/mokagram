@@ -214,7 +214,7 @@ void FetchClientId(Fn<void(QString)> done) {
 				const auto text = QString::fromUtf8(reply->readAll());
 				reply->deleteLater();
 				const auto found = QRegularExpression(
-					u"client_id:\"([A-Za-z0-9]{32})\""_q).match(text);
+					uR"(client_id["']?\s*[:=]\s*["']([A-Za-z0-9]{32})["'])"_q).match(text);
 				if (found.hasMatch()) {
 					done(found.captured(1));
 				} else {
@@ -303,13 +303,13 @@ void ApiGet(
 			const auto data = reply->readAll();
 			const auto error = reply->error();
 			reply->deleteLater();
-			// Токен входа протух: поиск и стрим работают и без него.
-			if (status == 401
-				&& retried
+			// Токен входа протух: поиск и стрим работают и без него, поэтому
+			// сразу повторяем без токена, а client_id трогаем только если и так отказ.
+			if ((status == 401 || status == 403)
 				&& !anonymous
 				&& !officialApi
 				&& !AccountToken().isEmpty()) {
-				ApiGet(base, query, done, true, true);
+				ApiGet(base, query, done, retried, true);
 				return;
 			}
 			if ((status == 401 || status == 403)
