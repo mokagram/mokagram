@@ -2,6 +2,7 @@
 
 #include "boxes/peer_list_box.h"
 #include "boxes/peer_list_controllers.h"
+#include "base/algorithm.h"
 #include "apiwrap.h"
 #include "base/call_delayed.h"
 #include "data/data_changes.h"
@@ -12,6 +13,7 @@
 #include "data/data_folder.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
+#include "data/data_document_resolver.h"
 #include "data/data_file_origin.h"
 #include "data/data_media_types.h"
 #include "data/data_photo_media.h"
@@ -23,6 +25,8 @@
 #include "lang/lang_keys.h"
 #include "main/session/session_show.h"
 #include "main/main_session.h"
+#include "media/audio/media_audio.h"
+#include "media/player/media_player_instance.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mtproto/sender.h"
@@ -30,6 +34,7 @@
 #include "ui/layers/generic_box.h"
 #include "ui/image/image.h"
 #include "ui/text/text.h"
+#include "ui/text/format_values.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
@@ -49,6 +54,7 @@
 #include <QtCore/QPointer>
 #include <QtCore/QUuid>
 #include <QtGui/QKeyEvent>
+#include <QtGui/QMouseEvent>
 
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
@@ -133,14 +139,23 @@ public:
 	PostRow(QWidget *parent, not_null<Window::SessionController*> controller,
 		const Post &post, Fn<void()> open, Fn<void()> comments,
 		Fn<void()> openMedia);
+	~PostRow() override;
 	QString accessibilityName() override;
 
 protected:
 	int resizeGetHeight(int newWidth) override;
 	void paintEvent(QPaintEvent *event) override;
 	bool eventFilter(QObject *object, QEvent *event) override;
+	void mousePressEvent(QMouseEvent *event) override;
+	void mouseMoveEvent(QMouseEvent *event) override;
+	void mouseReleaseEvent(QMouseEvent *event) override;
+	void leaveEventHook(QEvent *event) override;
 
 private:
+	[[nodiscard]] bool isVoiceState(const Media::Player::TrackState &state) const;
+	[[nodiscard]] float64 voiceProgress() const;
+	void updateVoiceButtonIcon();
+	void updateVoiceSeeking(QPoint position);
 	void syncReactions();
 	void scheduleReactionsUpdate();
 	void toggleReaction(const Data::ReactionId &id);
@@ -165,11 +180,14 @@ private:
 	QString _mediaLabel;
 	std::shared_ptr<Data::PhotoMedia> _photo;
 	std::shared_ptr<Data::DocumentMedia> _document;
+	DocumentData *_voiceDocument = nullptr;
 	Ui::LinkButton *_expand = nullptr;
 	Ui::LinkButton *_open = nullptr;
 	Ui::LinkButton *_comments = nullptr;
 	Ui::AbstractButton *_mediaButton = nullptr;
+	Ui::IconButton *_voiceButton = nullptr;
 	QSize _mediaSize;
+	QRect _voiceSeekRect;
 	int _padding = 0;
 	int _bodyHeight = 0;
 	int _mediaTop = 0;
@@ -177,6 +195,9 @@ private:
 	int _mediaWidth = 0;
 	bool _expanded = false;
 	bool _reactionUpdatePending = false;
+	bool _voiceSeeking = false;
+	float64 _voiceSeekProgress = 0.;
+	float64 _voiceHoverProgress = -1.;
 
 };
 
@@ -309,6 +330,7 @@ PostRow::PostRow(
 , _bodyStyle(st::feedPostLabel)
 , _date(QDateTime::fromSecsSinceEpoch(post.date).toLocalTime()
 	.toString(u"dd.MM · HH:mm"_q)) {
+	setMouseTracking(true);
 	setToolTip(_title.toString() + u" · "_q + _date);
 	_body = Ui::CreateChild<Ui::FlatLabel>(this, post.text, _bodyStyle);
 	_body->setSelectable(true);
@@ -397,14 +419,50 @@ PostRow::PostRow(
 		_mediaSize = photo->size(Data::PhotoSize::Large).value_or(QSize());
 		_photo->wanted(Data::PhotoSize::Thumbnail, item->fullId());
 	} else if (const auto document = media->document()) {
-		_mediaLabel = document->isVideoFile()
-			? Text("Видео") : document->filename();
-		if (_mediaLabel.isEmpty()) {
+		if (document->isVoiceMessage()) {
+			_voiceDocument = document;
 			_mediaLabel = media->notificationText().text;
+			if (_mediaLabel.isEmpty()) {
+				_mediaLabel = Text("Голосовые");
+			}
+			_voiceButton = Ui::CreateChild<Ui::IconButton>(
+				this,
+				st::feedVoiceButton);
+			_voiceButton->setIconOverride(
+				&st::feedVoicePlayIcon,
+				&st::feedVoicePlayIcon);
+			_voiceButton->setClickedCallback([=] {
+				if (const auto voiceItem = _session->data().message(_itemId)) {
+					Data::ResolveDocument(
+						_controller.get(),
+						_voiceDocument,
+						voiceItem,
+						voiceItem->topicRootId(),
+						PeerId(),
+						false);
+				}
+			});
+			_voiceButton->setAccessibleName(_mediaLabel);
+			_voiceButton->setFocusPolicy(Qt::StrongFocus);
+			_voiceButton->installEventFilter(this);
+			updateVoiceButtonIcon();
+			Media::Player::instance()->updatedNotifier(
+			) | rpl::filter([](const Media::Player::TrackState &state) {
+				return state.id.type() == AudioMsgId::Type::Voice;
+			}) | rpl::on_next([=] {
+				updateVoiceButtonIcon();
+				update();
+			}, lifetime());
+		} else {
+			_mediaLabel = document->isVideoFile()
+				? Text("Видео") : document->filename();
+			if (_mediaLabel.isEmpty()) {
+				_mediaLabel = media->notificationText().text;
+			}
+			_mediaSize = document->dimensions;
+			_document = document->createMediaView();
+			_document->thumbnailWanted(item->fullId());
 		}
-		_mediaSize = document->dimensions;
-		_document = document->createMediaView();
-		_document->thumbnailWanted(item->fullId());
 	}
 	if (_photo || _document) {
 		_mediaButton = Ui::CreateChild<Ui::AbstractButton>(this);
@@ -416,10 +474,66 @@ PostRow::PostRow(
 	}
 }
 
+PostRow::~PostRow() {
+	if (_voiceSeeking) {
+		Media::Player::instance()->cancelSeeking(AudioMsgId::Type::Voice);
+	}
+}
+
 QString PostRow::accessibilityName() {
 	return _title.toString() + u" · "_q + _date
 		+ '\n' + (_sender ? _sender->accessibilityName() + '\n' : QString())
 		+ _body->accessibilityName() + '\n' + _mediaLabel;
+}
+
+bool PostRow::isVoiceState(const Media::Player::TrackState &state) const {
+	return _voiceDocument
+		&& (state.id.audio() == _voiceDocument)
+		&& (state.id.contextId() == _itemId);
+}
+
+float64 PostRow::voiceProgress() const {
+	const auto state = Media::Player::instance()->getState(
+		AudioMsgId::Type::Voice);
+	if (!isVoiceState(state)
+		|| Media::Player::IsStoppedOrStopping(state.state)
+		|| !state.length) {
+		return 0.;
+	}
+	return std::clamp(
+		float64(state.position) / state.length,
+		0.,
+		1.);
+}
+
+void PostRow::updateVoiceButtonIcon() {
+	if (!_voiceButton) {
+		return;
+	}
+	const auto state = Media::Player::instance()->getState(
+		AudioMsgId::Type::Voice);
+	const auto icon = isVoiceState(state)
+		&& Media::Player::ShowPauseIcon(state.state)
+		? &st::feedVoicePauseIcon
+		: &st::feedVoicePlayIcon;
+	_voiceButton->setIconOverride(icon, icon);
+}
+
+void PostRow::updateVoiceSeeking(QPoint position) {
+	if (!_voiceSeeking || _voiceSeekRect.width() <= 0) {
+		return;
+	}
+	_voiceSeekProgress = std::clamp(
+		(rtl()
+			? _voiceSeekRect.x() + _voiceSeekRect.width() - position.x()
+			: position.x() - _voiceSeekRect.x())
+			/ float64(_voiceSeekRect.width()),
+		0.,
+		1.);
+	Media::Player::instance()->updateSeeking(
+		AudioMsgId::Type::Voice,
+		_voiceSeekProgress);
+	update();
 }
 
 int PostRow::resizeGetHeight(int newWidth) {
@@ -454,8 +568,10 @@ int PostRow::resizeGetHeight(int newWidth) {
 		top += _expand->height();
 	}
 	_mediaWidth = textWidth;
-	_mediaHeight = _mediaLabel.isEmpty() ? 0 : st::feedMediaLabelHeight;
-	if ((_photo || _document) && !_mediaSize.isEmpty()) {
+	_mediaHeight = _voiceDocument
+		? st::feedVoiceHeight
+		: _mediaLabel.isEmpty() ? 0 : st::feedMediaLabelHeight;
+	if (!_voiceDocument && (_photo || _document) && !_mediaSize.isEmpty()) {
 		const auto fitted = _mediaSize.scaled(
 			QSize(textWidth, st::feedMediaMaxHeight), Qt::KeepAspectRatio);
 		_mediaWidth = fitted.width();
@@ -468,6 +584,24 @@ int PostRow::resizeGetHeight(int newWidth) {
 	if (_mediaButton) {
 		_mediaButton->resize(_mediaWidth, _mediaHeight);
 		_mediaButton->moveToLeft(_padding, _mediaTop, newWidth);
+	}
+	if (_voiceButton) {
+		_voiceButton->resize(st::feedVoiceButtonSize, st::feedVoiceButtonSize);
+		_voiceButton->moveToLeft(_padding, _mediaTop
+			+ (_mediaHeight - st::feedVoiceButtonSize) / 2, newWidth);
+		const auto seekLeft = _padding
+			+ st::feedVoiceButtonSize
+			+ st::feedVoiceButtonGap;
+		const auto seekTop = _mediaTop
+			+ (_mediaHeight - st::feedVoiceWaveHeight) / 2;
+		_voiceSeekRect = style::rtlrect(
+			seekLeft,
+			seekTop - st::feedVoiceWaveLabelGap,
+			std::max(0, textWidth - st::feedVoiceButtonSize
+				- st::feedVoiceButtonGap),
+			st::feedVoiceWaveHeight + st::feedVoiceWaveLabelGap
+				+ st::feedMetaFont->height,
+			newWidth);
 	}
 	if (!_reactionControls.empty() || !_reactionMore->isHidden()) {
 		top += st::feedPostGap;
@@ -577,37 +711,127 @@ void PostRow::paintEvent(QPaintEvent *event) {
 		clip.addRoundedRect(area, st::feedMediaRadius, st::feedMediaRadius);
 		p.setClipPath(clip, Qt::IntersectClip);
 		p.fillRect(area, st::windowBgOver);
-		auto image = _photo
-			? _photo->image(Data::PhotoSize::Large)
-			: (_document ? _document->thumbnail() : nullptr);
-		if (!image && _photo) {
-			image = _photo->image(Data::PhotoSize::Thumbnail);
-		}
-		if (image && !image->isNull()) {
-			const auto fitted = image->size().scaled(area.size(), Qt::KeepAspectRatio);
-			p.drawPixmap(area.x() + (area.width() - fitted.width()) / 2,
-				area.y() + (area.height() - fitted.height()) / 2,
-				image->pix(fitted));
-			if (_document && _document->owner()->isVideoFile()) {
-				const auto size = st::feedMediaPlaySize;
-				const auto center = area.center();
+		if (_voiceDocument) {
+			if (_voiceButton) {
+				const auto button = QRect(
+					_voiceButton->x(),
+					_voiceButton->y(),
+					_voiceButton->width(),
+					_voiceButton->height());
+				auto hq = PainterHighQualityEnabler(p);
 				p.setPen(Qt::NoPen);
-				p.setBrush(st::mainMenuBg);
-				p.drawEllipse(center, size / 2, size / 2);
-				st::feedMediaPlayIcon.paintInCenter(p, area);
+				p.setBrush(st::windowBgActive->c);
+				p.drawEllipse(button);
 			}
-		} else {
+			const auto voiceData = _voiceDocument->voice();
+			const auto waveform = voiceData ? &voiceData->waveform : nullptr;
+			const auto validWaveform = waveform
+				&& !waveform->isEmpty()
+				&& (waveform->at(0) >= 0);
+			const auto waveTop = _mediaTop
+				+ (_mediaHeight - st::feedVoiceWaveHeight) / 2;
+			const auto waveWidth = _voiceSeekRect.width();
+			const auto barWidth = st::feedVoiceBarWidth;
+			const auto barSkip = st::feedVoiceBarSkip;
+			const auto barStep = barWidth + barSkip;
+			const auto sampleCount = validWaveform
+				? int(waveform->size())
+				: std::max(1, waveWidth / std::max(1, barStep));
+			const auto barCount = std::min(
+				std::max(0, waveWidth / std::max(1, barStep)),
+				sampleCount);
+			const auto state = Media::Player::instance()->getState(
+				AudioMsgId::Type::Voice);
+			const auto active = isVoiceState(state)
+				&& !Media::Player::IsStoppedOrStopping(state.state);
+			auto progress = voiceProgress();
+			auto duration = std::max<int64>(
+				0,
+				_voiceDocument->duration() / 1000);
+			auto played = int64();
+			if (isVoiceState(state) && state.length > 0 && state.frequency > 0) {
+				duration = state.length / state.frequency;
+				if (active) {
+					played = state.position / state.frequency;
+				}
+			}
+			if (_voiceSeeking) {
+				progress = _voiceSeekProgress;
+				played = base::SafeRound(progress * duration);
+			} else if (_voiceHoverProgress >= 0. && active) {
+				played = base::SafeRound(_voiceHoverProgress * duration);
+			}
+			const auto activeWidth = base::SafeRound(waveWidth * progress);
+			const auto maxValue = validWaveform
+				? std::max(1, int(voiceData->wavemax) + 1)
+				: 1;
+			const auto maxDelta = st::feedVoiceBarMax - st::feedVoiceBarMin;
+			p.setPen(Qt::NoPen);
+			auto hq = PainterHighQualityEnabler(p);
+			for (auto i = 0; i != barCount; ++i) {
+				const auto sample = validWaveform
+					? std::clamp(
+						int(waveform->at(i * waveform->size() / barCount)),
+						0,
+						maxValue - 1)
+					: 0;
+				const auto height = st::feedVoiceBarMin
+					+ (sample * maxDelta + maxValue / 2) / maxValue;
+				const auto x = rtl()
+					? _voiceSeekRect.x() + waveWidth - barWidth - i * barStep
+					: _voiceSeekRect.x() + i * barStep;
+				const auto y = waveTop + (st::feedVoiceWaveHeight - height) / 2;
+				p.setBrush(i * barStep < activeWidth
+					? st::windowActiveTextFg->c
+					: st::windowSubTextFg->c);
+				p.drawRoundedRect(
+					QRectF(x, y, barWidth, height),
+					barWidth / 2.,
+					barWidth / 2.);
+			}
 			p.setFont(st::feedMetaFont);
 			p.setPen(st::windowSubTextFg);
-			p.drawText(area.adjusted(st::feedPostGap, 0, -st::feedPostGap, 0),
-				Qt::AlignCenter, st::feedMetaFont->elided(_mediaLabel,
-					std::max(1, area.width() - 2 * st::feedPostGap)));
+			p.drawText(
+				QRect(_voiceSeekRect.x(), waveTop + st::feedVoiceWaveHeight
+					+ st::feedVoiceWaveLabelGap, waveWidth, st::feedMetaFont->height),
+				Qt::AlignLeading | Qt::AlignVCenter,
+				(active || _voiceSeeking || _voiceHoverProgress >= 0.)
+					? Ui::FormatPlayedText(played, duration)
+					: Ui::FormatDurationText(duration));
+		} else {
+			auto image = _photo
+				? _photo->image(Data::PhotoSize::Large)
+				: (_document ? _document->thumbnail() : nullptr);
+			if (!image && _photo) {
+				image = _photo->image(Data::PhotoSize::Thumbnail);
+			}
+			if (image && !image->isNull()) {
+				const auto fitted = image->size().scaled(area.size(), Qt::KeepAspectRatio);
+				p.drawPixmap(area.x() + (area.width() - fitted.width()) / 2,
+					area.y() + (area.height() - fitted.height()) / 2,
+					image->pix(fitted));
+				if (_document && _document->owner()->isVideoFile()) {
+					const auto size = st::feedMediaPlaySize;
+					const auto center = area.center();
+					p.setPen(Qt::NoPen);
+					p.setBrush(st::mainMenuBg);
+					p.drawEllipse(center, size / 2, size / 2);
+					st::feedMediaPlayIcon.paintInCenter(p, area);
+				}
+			} else {
+				p.setFont(st::feedMetaFont);
+				p.setPen(st::windowSubTextFg);
+				p.drawText(area.adjusted(st::feedPostGap, 0, -st::feedPostGap, 0),
+					Qt::AlignCenter, st::feedMetaFont->elided(_mediaLabel,
+						std::max(1, area.width() - 2 * st::feedPostGap)));
+			}
 		}
 		p.restore();
 	}
 
-	for (const auto child : std::array<QWidget*, 6>{
-			_open, _expand, _comments, _mediaButton, _reactionMore, _reactionExpand }) {
+	for (const auto child : std::array<QWidget*, 7>{
+			_open, _expand, _comments, _mediaButton, _voiceButton,
+			_reactionMore, _reactionExpand }) {
 		PaintFocus(p, this, child);
 	}
 	for (const auto &control : _reactionControls) {
@@ -620,6 +844,98 @@ bool PostRow::eventFilter(QObject *object, QEvent *event) {
 		update();
 	}
 	return Ui::RpWidget::eventFilter(object, event);
+}
+
+void PostRow::mousePressEvent(QMouseEvent *event) {
+	if (_voiceDocument
+		&& event->button() == Qt::LeftButton
+		&& _voiceSeekRect.contains(event->pos())) {
+		const auto state = Media::Player::instance()->getState(
+			AudioMsgId::Type::Voice);
+		if (isVoiceState(state)
+			&& !Media::Player::IsStoppedOrStopping(state.state)
+			&& state.length > 0) {
+			_voiceSeeking = true;
+			_voiceHoverProgress = -1.;
+			Media::Player::instance()->startSeeking(AudioMsgId::Type::Voice);
+			updateVoiceSeeking(event->pos());
+			event->accept();
+			return;
+		}
+	}
+	Ui::RpWidget::mousePressEvent(event);
+}
+
+void PostRow::mouseMoveEvent(QMouseEvent *event) {
+	if (_voiceSeeking) {
+		const auto state = Media::Player::instance()->getState(
+			AudioMsgId::Type::Voice);
+		if (isVoiceState(state)) {
+			updateVoiceSeeking(event->pos());
+		} else {
+			Media::Player::instance()->cancelSeeking(AudioMsgId::Type::Voice);
+			_voiceSeeking = false;
+			unsetCursor();
+			updateVoiceButtonIcon();
+			update();
+		}
+		event->accept();
+		return;
+	}
+	const auto state = Media::Player::instance()->getState(
+		AudioMsgId::Type::Voice);
+	const auto hover = _voiceDocument
+		&& isVoiceState(state)
+		&& !Media::Player::IsStoppedOrStopping(state.state)
+		&& state.length > 0
+		&& _voiceSeekRect.contains(event->pos());
+	if (hover) {
+		_voiceHoverProgress = std::clamp(
+			(rtl()
+				? _voiceSeekRect.x() + _voiceSeekRect.width() - event->pos().x()
+				: event->pos().x() - _voiceSeekRect.x())
+				/ float64(std::max(1, _voiceSeekRect.width())),
+			0.,
+			1.);
+		setCursor(style::cur_pointer);
+	} else {
+		_voiceHoverProgress = -1.;
+		unsetCursor();
+	}
+	update();
+	Ui::RpWidget::mouseMoveEvent(event);
+}
+
+void PostRow::mouseReleaseEvent(QMouseEvent *event) {
+	if (_voiceSeeking && event->button() == Qt::LeftButton) {
+		updateVoiceSeeking(event->pos());
+		const auto state = Media::Player::instance()->getState(
+			AudioMsgId::Type::Voice);
+		if (isVoiceState(state)) {
+			Media::Player::instance()->finishSeeking(
+				AudioMsgId::Type::Voice,
+				_voiceSeekProgress);
+		} else {
+			Media::Player::instance()->cancelSeeking(AudioMsgId::Type::Voice);
+		}
+		_voiceSeeking = false;
+		_voiceHoverProgress = -1.;
+		unsetCursor();
+		updateVoiceButtonIcon();
+		update();
+		event->accept();
+		return;
+	}
+	Ui::RpWidget::mouseReleaseEvent(event);
+}
+
+void PostRow::leaveEventHook(QEvent *event) {
+	if (!_voiceSeeking && _voiceHoverProgress >= 0.) {
+		_voiceHoverProgress = -1.;
+		unsetCursor();
+		update();
+	}
+	Ui::RpWidget::leaveEventHook(event);
 }
 
 void PostRow::scheduleReactionsUpdate() {
