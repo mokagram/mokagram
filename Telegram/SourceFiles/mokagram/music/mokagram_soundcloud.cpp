@@ -983,6 +983,86 @@ void SearchAlbums(
 	AlbumsRequest(u"/search/albums"_q, q, std::move(done));
 }
 
+void LoadDiscoverPlaylists(Fn<void(std::vector<Album>, QString error)> done) {
+	auto q = QUrlQuery();
+	q.addQueryItem(u"limit"_q, u"50"_q);
+	q.addQueryItem(u"linked_partitioning"_q, u"1"_q);
+	AlbumsRequest(u"/playlists/discovery"_q, q, [=](
+			std::vector<Album> discovery,
+			QString discoveryError) {
+		if (!Account::IsLoggedIn()) {
+			done(std::move(discovery), std::move(discoveryError));
+			return;
+		}
+		auto accountQuery = QUrlQuery();
+		accountQuery.addQueryItem(u"show_tracks"_q, u"false"_q);
+		accountQuery.addQueryItem(u"linked_partitioning"_q, u"true"_q);
+		accountQuery.addQueryItem(u"limit"_q, u"50"_q);
+		ApiGet(
+			QString::fromLatin1(kPublicApi) + u"/me/playlists"_q,
+			accountQuery,
+			[=](QByteArray data, QString accountError) {
+				if (accountError.isEmpty()) {
+					const auto document = QJsonDocument::fromJson(data);
+					const auto collection = document.isArray()
+						? document.array()
+						: document.object().value("collection").toArray();
+					for (const auto &value : collection) {
+						auto album = ParseAlbum(value.toObject());
+						if (album.id != u"0"_q
+							&& album.trackCount > 0
+							&& std::none_of(discovery.begin(), discovery.end(), [&](const Album &other) {
+								return other.id == album.id;
+							})) {
+							discovery.push_back(std::move(album));
+						}
+					}
+				}
+				if (!discovery.empty()) {
+					accountError.clear();
+				} else if (!discoveryError.isEmpty()) {
+					accountError = discoveryError;
+				}
+				done(std::move(discovery), std::move(accountError));
+			});
+	});
+}
+
+void LoadTrending(
+		int limit,
+		Fn<void(std::vector<Track>, QString error)> done) {
+	auto q = QUrlQuery();
+	q.addQueryItem(u"kind"_q, u"trending"_q);
+	q.addQueryItem(u"genre"_q, u"soundcloud:genres:all-music"_q);
+	q.addQueryItem(u"limit"_q, QString::number(std::clamp(limit, 1, 50)));
+	ApiGet(
+		QString::fromLatin1(kApi) + u"/charts"_q,
+		q,
+		[=](QByteArray data, QString error) {
+			auto tracks = std::vector<Track>();
+			if (error.isEmpty()) {
+				const auto document = QJsonDocument::fromJson(data);
+				if (!document.isObject()) {
+					error = QString::fromUtf8(Mokagram::Lang::Tr(
+						"SoundCloud вернул некорректный чарт."));
+				} else {
+					for (const auto &value : document.object()
+							.value("collection").toArray()) {
+						const auto item = value.toObject();
+						const auto object = item.value("track").isObject()
+							? item.value("track").toObject()
+							: item;
+						auto track = ParseTrack(object);
+						if (!track.id.isEmpty() && !track.transcodingUrl.isEmpty()) {
+							tracks.push_back(std::move(track));
+						}
+					}
+				}
+			}
+			done(std::move(tracks), std::move(error));
+		});
+}
+
 void TrackAlbums(
 		const QString &trackId,
 		Fn<void(std::vector<Album>)> done) {

@@ -104,6 +104,15 @@ void SearchAlbums(
 	int limit,
 	Fn<void(std::vector<Album>, QString error)> done);
 
+// Подборки из раздела discovery SoundCloud, если они доступны аккаунту.
+void LoadDiscoverPlaylists(
+	Fn<void(std::vector<Album>, QString error)> done);
+
+// Публичный чарт новых популярных треков SoundCloud.
+void LoadTrending(
+	int limit,
+	Fn<void(std::vector<Track>, QString error)> done);
+
 // Альбомы, в которые входит трек.
 void TrackAlbums(
 	const QString &trackId,
