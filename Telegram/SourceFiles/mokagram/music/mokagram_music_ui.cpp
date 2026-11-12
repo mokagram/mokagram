@@ -7412,7 +7412,9 @@ protected:
 			return;
 		}
 		const auto from = _tab;
-		const auto animateTransition = !anim::Disabled()
+		const auto animateTransition = _tab != Tab::Now
+			&& tab != Tab::Now
+			&& !anim::Disabled()
 			&& !PowerSaving::On(PowerSaving::kAnimations);
 		const auto oldLayout = computeLayout();
 		const auto transitionTop = oldLayout.center.isEmpty()
