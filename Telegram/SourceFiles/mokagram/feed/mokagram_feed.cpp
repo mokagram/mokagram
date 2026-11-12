@@ -552,18 +552,23 @@ void PostRow::paintEvent(QPaintEvent *event) {
 			width(), st::feedAvatarSize);
 	}
 	const auto textLeft = left + st::feedAvatarSize + st::feedPostGap;
+	const auto titleY = top
+		+ (st::feedAvatarSize - st::semiboldFont->height) / 2;
+	const auto dateY = top
+		+ (st::feedAvatarSize - st::feedMetaFont->height) / 2;
+	const auto titleWidth = std::max(0, width() - left - textLeft
+		- st::feedMetaGap - st::feedMetaFont->width(_date));
 	p.setPen(st::windowFg);
 	_title.draw(p, {
-		.position = { textLeft, top },
+		.position = { textLeft, titleY },
 		.outerWidth = width(),
-		.availableWidth = width() - textLeft - left,
+		.availableWidth = titleWidth,
 		.elisionLines = 1,
 	});
 	p.setFont(st::feedMetaFont);
 	p.setPen(st::windowSubTextFg);
-	p.drawTextLeft(textLeft, top + st::semiboldFont->height
-		+ st::feedMetaGap, width(), st::feedMetaFont->elided(
-			_date, std::max(1, width() - textLeft - left)));
+	p.drawTextRight(left, dateY, width(), st::feedMetaFont->elided(
+		_date, std::max(0, width() - 2 * left)));
 	p.setPen(st::windowFg);
 	if (_mediaHeight) {
 		const auto area = myrtlrect(left, _mediaTop, _mediaWidth, _mediaHeight);
