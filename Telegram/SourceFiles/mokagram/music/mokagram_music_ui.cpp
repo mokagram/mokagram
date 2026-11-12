@@ -6116,8 +6116,19 @@ public:
 
 	void setActive(bool active) {
 		if (_active != active) {
+			const auto from = _fade.value(_active ? 1. : 0.);
 			_active = active;
-			update();
+			if (anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations)) {
+				_fade.stop();
+				update();
+			} else {
+				_fade.start(
+					[=] { update(); },
+					from,
+					_active ? 1. : 0.,
+					kSwitchDuration,
+					anim::easeOutCubic);
+			}
 		}
 	}
 	void setActiveColor(QColor color) {
@@ -6147,9 +6158,16 @@ private:
 		auto font = st::semiboldFont->f;
 		font.setPixelSize(s(15));
 		p.setFont(font);
-		p.setPen(_active && _activeColor.isValid()
+		const auto inactive = isOver()
+			? st::windowFg->c
+			: st::windowSubTextFg->c;
+		const auto active = _activeColor.isValid()
 			? _activeColor
-			: (_active ? st::windowFg->c : st::windowSubTextFg->c));
+			: st::windowFg->c;
+		p.setPen(anim::color(
+			inactive,
+			active,
+			_fade.value(_active ? 1. : 0.)));
 		const auto inner = rect().adjusted(s(16), 0, -s(16), 0);
 		p.drawText(
 			inner,
@@ -6159,6 +6177,7 @@ private:
 
 	QString _text;
 	QColor _activeColor;
+	Ui::Animations::Simple _fade;
 	bool _centered = false;
 	bool _active = false;
 
@@ -6359,6 +6378,7 @@ public:
 	, _queueToggle(Ui::CreateChild<RoundGlyph>(this, Glyph::Queue, 44))
 	, _volume(Ui::CreateChild<SeekBar>(this))
 	, _tabScroll(Ui::CreateChild<Ui::ScrollArea>(this, st::defaultScrollArea))
+	, _tabTransition(Ui::CreateChild<Ui::RpWidget>(this))
 	, _shuffle(Ui::CreateChild<RoundGlyph>(this, Glyph::Shuffle, 44))
 	, _previous(Ui::CreateChild<RoundGlyph>(this, Glyph::Previous, 52))
 	, _play(Ui::CreateChild<RoundGlyph>(this, Glyph::Play, 68))
@@ -6442,6 +6462,28 @@ public:
 		_repeat->resize(s(36), s(36));
 		_seek->resize(_seek->width(), s(20));
 		_tabList = _tabScroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_tabScroll));
+		_tabTransition->setAttribute(Qt::WA_TransparentForMouseEvents);
+		_tabTransition->hide();
+		_tabTransition->paintRequest(
+		) | rpl::on_next([=] {
+			if (_tabTransitionNow.isNull()) {
+				return;
+			}
+			auto p = QPainter(_tabTransition);
+			const auto progress = _tabTransitionAnimation.value(1.);
+			const auto shift = style::ConvertScale(28) * _tabTransitionDirection;
+			p.drawPixmap(0, 0, _tabTransitionNow);
+			p.setOpacity(1. - progress);
+			p.drawPixmap(
+				int(base::SafeRound(-shift * progress)),
+				0,
+				_tabTransitionWas);
+			p.setOpacity(progress);
+			p.drawPixmap(
+				int(base::SafeRound(shift * (1. - progress))),
+				0,
+				_tabTransitionNow);
+		}, lifetime());
 		_topFade = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Top);
 		_topFade->setColor([=] {
 			auto color = pageBackgroundAt(_topFade->y());
@@ -7369,6 +7411,25 @@ protected:
 			}
 			return;
 		}
+		const auto from = _tab;
+		const auto animateTransition = !anim::Disabled()
+			&& !PowerSaving::On(PowerSaving::kAnimations);
+		const auto oldLayout = computeLayout();
+		const auto transitionTop = oldLayout.center.isEmpty()
+			? oldLayout.lyrics.y()
+			: oldLayout.center.y();
+		const auto transitionArea = QRect(
+			0,
+			transitionTop,
+			width(),
+			std::max(oldLayout.bar.y() - style::ConvertScale(12) - transitionTop, 0));
+		auto was = animateTransition
+			? Ui::GrabWidget(this, transitionArea)
+			: QPixmap();
+		_tabTransitionAnimation.stop();
+		_tabTransition->hide();
+		_tabTransitionWas = QPixmap();
+		_tabTransitionNow = QPixmap();
 		_homeEntrance.stop();
 		_tabScroll->setGraphicsEffect(nullptr);
 		_coverClosing.stop();
@@ -7379,8 +7440,9 @@ protected:
 			220,
 			anim::easeOutCubic);
 		const auto navFrom = _navSlide.value(float64(int(_tab)));
+		_navSlideFrom = navFrom;
 		_tab = tab;
-		if (anim::Disabled()) {
+		if (anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations)) {
 			_navSlide.stop();
 		} else {
 			_navSlide.start(
@@ -7409,6 +7471,24 @@ protected:
 		auto event = QResizeEvent(size(), size());
 		resizeEvent(&event);
 		refresh();
+		if (animateTransition && !was.isNull()) {
+			_tabTransitionWas = std::move(was);
+			_tabTransitionNow = Ui::GrabWidget(this, transitionArea);
+			if (!_tabTransitionNow.isNull()) {
+				_tabTransitionDirection = (int(tab) > int(from)) ? 1 : -1;
+				_tabTransition->setGeometry(transitionArea);
+				_tabTransition->show();
+				_tabTransition->raise();
+				_tabTransitionAnimation.start([=] {
+					_tabTransition->update();
+					if (!_tabTransitionAnimation.animating()) {
+						_tabTransition->hide();
+						_tabTransitionWas = QPixmap();
+						_tabTransitionNow = QPixmap();
+					}
+				}, 0., 1., kSwitchDuration, anim::easeOutCubic);
+			}
+		}
 	}
 	void syncLibrary() {
 		if (!Account::IsLoggedIn()
@@ -8395,10 +8475,15 @@ protected:
 		const auto inset = s(4);
 		const auto segment = std::max(layout.nav.width() - 2 * inset, 0) / float64(_nav.size());
 		const auto at = _navSlide.value(float64(int(_tab)));
+		const auto distance = std::abs(float64(int(_tab)) - _navSlideFrom);
+		const auto progress = distance > 0.
+			? std::clamp(std::abs(at - _navSlideFrom) / distance, 0., 1.)
+			: 1.;
+		const auto stretch = segment * 0.18 * (1. - std::abs(2. * progress - 1.));
 		const auto active = QRectF(
-			layout.nav.x() + inset + segment * at,
+			layout.nav.x() + inset + segment * at - stretch / 2.,
 			layout.nav.y() + inset,
-			segment,
+			segment + stretch,
 			std::max(layout.nav.height() - 2 * inset, 0));
 		const auto coverColor = _accent.isValid()
 			? _accent
@@ -8892,6 +8977,7 @@ private:
 	const not_null<RoundGlyph*> _queueToggle;
 	const not_null<SeekBar*> _volume;
 	const not_null<Ui::ScrollArea*> _tabScroll;
+	const not_null<Ui::RpWidget*> _tabTransition;
 	// Цвет фона страницы на высоте y: плоский или градиент тонировки альбома.
 	[[nodiscard]] QColor pageBackgroundAt(int y) const {
 		const auto base = QColor(0x1c, 0x1c, 0x1c);
@@ -8924,6 +9010,11 @@ private:
 	QPointer<HomeAlbumHeader> _homeAlbumHeader;
 	std::array<NavItem*, 6> _nav = {};
 	Ui::Animations::Simple _navSlide;
+	float64 _navSlideFrom = 0.;
+	Ui::Animations::Simple _tabTransitionAnimation;
+	QPixmap _tabTransitionWas;
+	QPixmap _tabTransitionNow;
+	int _tabTransitionDirection = 0;
 	Ui::Animations::Simple _homeEntrance;
 	QLineEdit *_searchField = nullptr;
 	SearchIndicator *_searchIndicator = nullptr;
