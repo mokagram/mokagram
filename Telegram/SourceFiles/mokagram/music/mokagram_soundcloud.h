@@ -190,6 +190,10 @@ void SyncLikes(
 	Fn<void(int remote, int pushed, QString error)> done = nullptr,
 	bool refreshed = false);
 
+// Импортирует собственные sets, лайкнутые плейлисты и треки в «Плейлисты».
+void SyncPlaylists(
+	Fn<void(int playlists, int tracks, QString error)> done = nullptr);
+
 // Ставит лайк в аккаунте при входе. Для локального лайка это фоновая операция.
 void SetTrackLiked(
 	const QString &trackId,
