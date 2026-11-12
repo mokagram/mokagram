@@ -6483,6 +6483,17 @@ public:
 			if (_tab == Tab::Library) {
 				syncLibrary();
 			}
+			++_homeSoundCloudGeneration;
+			_homeSoundCloudLoading = false;
+			_homeSoundCloudLoaded = false;
+			_homeSoundCloudError.clear();
+			_homeTrending.clear();
+			_homeWeeklyWave = {};
+			_homeDailyDrops = {};
+			if (_tab == Tab::Home && !_homeAlbumOpen) {
+				_homeSection = 0;
+				rebuildTab();
+			}
 		}, lifetime());
 		Account::LikeWriteErrors() | rpl::on_next([=](QString error) {
 			_controller->showToast(error);
@@ -7483,6 +7494,68 @@ protected:
 		}));
 	}
 
+	void loadHomeSoundCloudSections() {
+		if (_homeSoundCloudLoading || _homeSoundCloudLoaded
+			|| _homeSection || _homeAlbumOpen) {
+			return;
+		}
+		_homeSoundCloudLoading = true;
+		_homeSoundCloudError.clear();
+		const auto generation = ++_homeSoundCloudGeneration;
+		const auto pending = std::make_shared<int>(2);
+		const auto finished = [=] {
+			if (generation != _homeSoundCloudGeneration) {
+				return;
+			}
+			if (--*pending) {
+				return;
+			}
+			_homeSoundCloudLoading = false;
+			_homeSoundCloudLoaded = true;
+			if (_homeTrending.empty()
+				&& _homeWeeklyWave.id.isEmpty()
+				&& _homeDailyDrops.id.isEmpty()
+				&& _homeSoundCloudError.isEmpty()) {
+				_homeSoundCloudError = QString::fromUtf8(Mokagram::Lang::Tr(
+					"SoundCloud не вернул подборки для этого аккаунта."));
+			}
+			if (_tab == Tab::Home && !_homeSection && !_homeAlbumOpen) {
+				rebuildTab();
+			}
+		};
+		LoadDiscoverPlaylists(crl::guard(this, [=](
+				std::vector<Album> albums,
+				QString error) {
+			if (generation != _homeSoundCloudGeneration) {
+				return;
+			}
+			if (!error.isEmpty()) {
+				_homeSoundCloudError = error;
+			}
+			for (auto &album : albums) {
+				const auto title = album.title.simplified().toCaseFolded();
+				if (title == u"weekly wave"_q) {
+					_homeWeeklyWave = std::move(album);
+				} else if (title == u"daily drops"_q) {
+					_homeDailyDrops = std::move(album);
+				}
+			}
+			finished();
+		}));
+		LoadTrending(24, crl::guard(this, [=](
+				std::vector<Track> tracks,
+				QString error) {
+			if (generation != _homeSoundCloudGeneration) {
+				return;
+			}
+			if (!error.isEmpty() && _homeSoundCloudError.isEmpty()) {
+				_homeSoundCloudError = error;
+			}
+			_homeTrending = std::move(tracks);
+			finished();
+		}));
+	}
+
 	void loadHomeAccent(const QString &url, int generation) {
 		_homeAccent = QColor();
 		_nav[1]->setActiveColor(Qt::white);
@@ -7929,29 +8002,53 @@ protected:
 				}
 				break;
 			}
+			loadHomeSoundCloudSections();
 			if (_homeSection) {
 				const auto page = (_homeSection - 100) / 2;
 				const auto pageTracks = _homeSection >= 100
 					&& !((_homeSection - 100) % 2)
 					&& page < int(_homePages.size());
-				const auto title = _homeSection == 2 ? tr("Избранное") : tr("Для вас");
+				const auto title = (_homeSection == 2) ? tr("Избранное")
+					: (_homeSection == 3) ? tr("Trending")
+					: (_homeSection == 4) ? tr("Weekly Wave")
+					: (_homeSection == 5) ? tr("Daily Drops")
+					: tr("Для вас");
 				_tabList->add(object_ptr<HomeSectionHeader>(
 					_tabList, title, true, crl::guard(this, [=] {
 						_homeSection = 0;
 						rebuildTab();
 						_tabScroll->scrollToY(_homeFeedScroll);
 					})));
-				const auto &tracks = pageTracks ? _homePages[page].tracks : _homeSection == 2 ? liked : queue.forYou;
-				if (tracks.empty()) {
+				const auto emptyTracks = std::vector<Track>();
+				const auto &tracks = pageTracks ? _homePages[page].tracks
+					: (_homeSection == 2) ? liked
+					: (_homeSection == 3) ? _homeTrending
+					: (_homeSection == 4 || _homeSection == 5) ? emptyTracks
+					: queue.forYou;
+				auto albums = pageTracks ? _homePages[page].albums : std::vector<Album>();
+				if (_homeSection == 4 && !_homeWeeklyWave.id.isEmpty()) {
+					albums.push_back(_homeWeeklyWave);
+				} else if (_homeSection == 5 && !_homeDailyDrops.id.isEmpty()) {
+					albums.push_back(_homeDailyDrops);
+				}
+				if (tracks.empty() && albums.empty()) {
 					_tabList->add(object_ptr<Ui::FlatLabel>(_tabList,
-						tr("Добавьте треки в избранное с помощью сердечка."), st::boxLabel));
+						_homeSection == 2
+							? tr("Добавьте треки в избранное с помощью сердечка.")
+							: tr("Нет доступной музыки в этой подборке."),
+						st::boxLabel));
 				} else {
-					const auto albums = pageTracks ? _homePages[page].albums : std::vector<Album>();
+					const auto offset = pageTracks ? _homePages[page].shelfOffset
+						: (_homeSection == 2) ? _homeLikedOffset
+						: (_homeSection == 3) ? _homeTrendingOffset
+						: (_homeSection == 4) ? _homeWeeklyWaveOffset
+						: (_homeSection == 5) ? _homeDailyDropsOffset
+						: std::shared_ptr<int>();
 					_tabList->add(object_ptr<HomeMixedGrid>(_tabList, _controller,
 						tracks, albums,
 						crl::guard(this, [=](Album album) { openHomeAlbum(std::move(album)); }),
 						crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); }),
-						true, nullptr,
+						true, offset,
 						pageTracks ? HomeRecommendationArtists(tracks) : std::vector<Track>(),
 						crl::guard(this, [=](Track track) { openHomeArtist(std::move(track)); }),
 						!pageTracks || page == 0));
@@ -7973,12 +8070,71 @@ protected:
 					crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); }),
 					false, _homeLikedOffset));
 			};
+			const auto playlistSection = [&](
+					QString title,
+					int id,
+					const Album &album,
+					std::shared_ptr<int> offset) {
+				if (album.id.isEmpty()) return;
+				_tabList->add(object_ptr<HomeSectionHeader>(
+					_tabList, std::move(title), false, crl::guard(this, [=] {
+						_homeFeedScroll = _tabScroll->scrollTop();
+						_homeSection = id;
+						rebuildTab();
+						_tabScroll->scrollToY(0);
+					})));
+				_tabList->add(object_ptr<HomeMixedGrid>(
+					_tabList,
+					_controller,
+					std::vector<Track>(),
+					std::vector<Album>{ album },
+					crl::guard(this, [=](Album album) {
+						openHomeAlbum(std::move(album));
+					}),
+					crl::guard(this, [=](Track track) {
+						openHomeTrack(std::move(track));
+					}),
+					false,
+					std::move(offset)));
+			};
 			const auto recent = RecentItems();
 			if (!recent.empty()) {
 				_tabList->add(object_ptr<Ui::FlatLabel>(_tabList, tr("Недавно"), st::boxLabel), QMargins(12, 8, 12, 4));
 				_tabList->add(object_ptr<HomeRecentGrid>(_tabList, _controller, recent,
 					crl::guard(this, [=](Album album) { openHomeAlbum(std::move(album)); }),
 					crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); })));
+			}
+			if (_homeSoundCloudLoading) {
+				_tabList->add(object_ptr<HomeLoadingView>(
+					_tabList, tr("Загружаю подборки SoundCloud…")));
+			}
+			playlistSection(
+				tr("Weekly Wave"),
+				4,
+				_homeWeeklyWave,
+				_homeWeeklyWaveOffset);
+			section(tr("Trending"), 3, _homeTrending);
+			playlistSection(
+				tr("Daily Drops"),
+				5,
+				_homeDailyDrops,
+				_homeDailyDropsOffset);
+			if (_homeSoundCloudLoaded
+				&& _homeTrending.empty()
+				&& _homeWeeklyWave.id.isEmpty()
+				&& _homeDailyDrops.id.isEmpty()) {
+				_tabList->add(object_ptr<HomeRetryView>(
+					_tabList,
+					_homeSoundCloudError.isEmpty()
+						? tr("Подборки SoundCloud недоступны.")
+						: _homeSoundCloudError,
+					crl::guard(this, [=] {
+						_homeSoundCloudLoaded = false;
+						_homeTrending.clear();
+						_homeWeeklyWave = {};
+						_homeDailyDrops = {};
+						loadHomeSoundCloudSections();
+					})));
 			}
 			if (_homePages.empty() && !queue.forYou.empty()) {
 				_homePages.push_back({ queue.forYou, {}, {} });
@@ -8805,6 +8961,13 @@ private:
 		std::shared_ptr<int> shelfOffset = std::make_shared<int>(0);
 	};
 	std::vector<HomePage> _homePages;
+	std::vector<Track> _homeTrending;
+	Album _homeWeeklyWave;
+	Album _homeDailyDrops;
+	std::shared_ptr<int> _homeWeeklyWaveOffset = std::make_shared<int>(0);
+	std::shared_ptr<int> _homeTrendingOffset = std::make_shared<int>(0);
+	std::shared_ptr<int> _homeDailyDropsOffset = std::make_shared<int>(0);
+	QString _homeSoundCloudError;
 	std::shared_ptr<int> _homeLikedOffset = std::make_shared<int>(0);
 	std::set<QString> _homeArtists;
 	std::set<QString> _homeAlbumIds;
@@ -8836,6 +8999,9 @@ private:
 	bool _rebuildingTab = false;
 	bool _homeLoading = false;
 	bool _homeLoaded = false;
+	bool _homeSoundCloudLoading = false;
+	bool _homeSoundCloudLoaded = false;
+	int _homeSoundCloudGeneration = 0;
 	std::unique_ptr<ChatMusicSearch> _context;
 	PeerId _contextPeer;
 	QString _queueFor;
