@@ -73,6 +73,13 @@ void SyncLyricsPanel(
 	not_null<Window::SessionController*> controller,
 	not_null<Ui::RpWidget*> anchor);
 
+// Значок комментариев в баре, когда у трека нет текста песни.
+void AttachCommentsToPlayer(
+	not_null<Window::SessionController*> controller,
+	not_null<Ui::RpWidget*> parent,
+	not_null<Ui::RpWidget*> anchor,
+	bool replaceAnchor = true);
+
 // Найден ли текст для играющего трека (кнопка в плеере неактивна, пока нет).
 [[nodiscard]] bool LyricsAvailable();
 [[nodiscard]] rpl::producer<> LyricsAvailabilityChanges();

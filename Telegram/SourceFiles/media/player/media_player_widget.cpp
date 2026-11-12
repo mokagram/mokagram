@@ -411,6 +411,8 @@ Widget::Widget(
 	Mokagram::Music::LyricsAvailabilityChanges(
 	) | rpl::on_next(updateLyricsToggle, lifetime());
 	updateLyricsToggle();
+	// Mokagram: без lyrics комментарии показываются в слоте кнопки текста.
+	Mokagram::Music::AttachCommentsToPlayer(_controller, this, _lyricsToggle.data());
 	_lyricsToggle->setClickedCallback([=] {
 		Mokagram::Music::ToggleLyricsPanel(_controller, this);
 		_lyricsToggle->update();

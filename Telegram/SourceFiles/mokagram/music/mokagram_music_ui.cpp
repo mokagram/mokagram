@@ -5444,6 +5444,7 @@ public:
 	, _controller(controller)
 	, _anchor(anchor)
 	, _view(Ui::CreateChild<LyricsView>(this)) {
+		Settings::PreloadRowIcons(&controller->session());
 		_view->setCoverTint(Mokagram::Settings::Bool(u"lyrics.plasma"_q));
 		_close = Mokagram::Plugins::MakeHeaderButton(this, true, [] {
 			Mokagram::Settings::SetBool(u"lyrics.enabled"_q, false);
@@ -5980,6 +5981,7 @@ public:
 			_tabScroll->scrollToY(_homeAlbumReturnScroll);
 		}));
 		_homeBack->hide();
+		AttachCommentsToPlayer(controller, this, _heart, false);
 		_filter->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Звуковой фильтр")));
 		_filter->setClickedCallback([=] {
 			_filterMenu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
@@ -6554,6 +6556,7 @@ protected:
 			? pad + s(56) + pad / 2
 			: std::clamp(int(bar.width() * 0.27), s(220), s(360));
 		const auto rightWidth = pad + _queueToggle->width() + s(2) + _heart->width() + pad
+			+ (Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable() ? s(36) : 0)
 			+ (result.compact ? 0 : iconWidth + volumeWidth + s(12));
 		const auto sideWidth = std::max(leftWidth, rightWidth);
 		const auto centerWidth = std::max(bar.width() - 2 * sideWidth, 0);
@@ -6584,7 +6587,8 @@ protected:
 			bar.y() + (bar.height() - _heart->height()) / 2);
 		if (!result.compact) {
 			result.volume = QRect(
-				result.heart.x() - s(12) - volumeWidth,
+				result.heart.x() - s(12) - volumeWidth
+					- (Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable() ? s(36) : 0),
 				bar.y() + (bar.height() - _volume->height()) / 2,
 				volumeWidth,
 				_volume->height());
@@ -8511,6 +8515,51 @@ void SyncLyricsPanel(
 	if (!panel) {
 		panel = Ui::CreateChild<LyricsPanel>(parent.get(), controller, anchor);
 	}
+}
+
+void AttachCommentsToPlayer(
+		not_null<Window::SessionController*> controller,
+		not_null<Ui::RpWidget*> parent,
+		not_null<Ui::RpWidget*> anchor,
+		bool replaceAnchor) {
+	Settings::PreloadRowIcons(&controller->session());
+	const auto button = Ui::CreateChild<TimedComments>(parent);
+	const auto refresh = [=] {
+		const auto track = PlayingTrack();
+		const auto enabled = Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable();
+		button->setTrack(enabled ? track.id : QString());
+		const auto shown = enabled && button->validTrack()
+			&& (replaceAnchor || !anchor->isHidden());
+		button->setVisible(shown);
+		if (replaceAnchor) anchor->setVisible(!shown);
+		const auto size = style::ConvertScale(32);
+		button->setGeometry(replaceAnchor
+			? anchor->x() + (anchor->width() - size) / 2
+			: anchor->x() - size - style::ConvertScale(4),
+			anchor->y() + (anchor->height() - size) / 2, size, size);
+		const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+		button->setPosition(state.position * 1000 / std::max<int64>(state.frequency, 1));
+		button->raise();
+	};
+	button->seekRequests() | rpl::on_next([](qint64 ms) {
+		const auto instance = Media::Player::instance();
+		const auto state = instance->getState(AudioMsgId::Type::Song);
+		const auto length = state.length * 1000 / std::max<int64>(state.frequency, 1);
+		if (length <= 0) return;
+		instance->startSeeking(AudioMsgId::Type::Song);
+		instance->finishSeeking(AudioMsgId::Type::Song, std::clamp(double(ms) / length, 0., 1.));
+	}, button->lifetime());
+	Media::Player::instance()->updatedNotifier() | rpl::on_next(refresh, button->lifetime());
+	QueueChanges() | rpl::on_next(refresh, button->lifetime());
+	LyricsAvailabilityChanges() | rpl::on_next(refresh, button->lifetime());
+	Settings::Changed() | rpl::on_next([=](const QString &key) {
+		if (key == u"lyrics.comments"_q) refresh();
+	}, button->lifetime());
+	anchor->events() | rpl::on_next([=](not_null<QEvent*> event) {
+		if (event->type() == QEvent::Move || event->type() == QEvent::Resize
+			|| (!replaceAnchor && (event->type() == QEvent::Show || event->type() == QEvent::Hide))) refresh();
+	}, button->lifetime());
+	crl::on_main(button, refresh);
 }
 
 bool LyricsAvailable() {
