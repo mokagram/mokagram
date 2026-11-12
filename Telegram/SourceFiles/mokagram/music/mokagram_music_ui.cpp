@@ -3496,16 +3496,32 @@ public:
 		Fn<void(QImage, QRect)> showCover,
 		bool isArtist = false,
 		QString bannerUrl = QString(),
-		Fn<void()> bannerReady = nullptr)
+		Fn<void()> bannerReady = nullptr,
+		Fn<void()> openArtist = nullptr)
 	: RpWidget(parent)
 	, _album(std::move(album))
 	, _count(count)
 	, _isTrack(isTrack)
 	, _isArtist(isArtist)
 	, _bannerUrl(std::move(bannerUrl))
-	, _showCover(std::move(showCover)) {
+	, _showCover(std::move(showCover))
+	, _openArtist(std::move(openArtist)) {
 		setMouseTracking(true);
 		setToolTip(_album.title + u" - "_q + _album.artist);
+		_artistButton = Ui::CreateChild<Ui::AbstractButton>(this);
+		_artistButton->setFocusPolicy(Qt::TabFocus);
+		_artistButton->setAccessibleName(_album.artist);
+		_artistButton->setClickedCallback([=] {
+			if (_openArtist) _openArtist();
+		});
+		_artistButton->paintOn([=](QPainter &p) {
+			if (_artistButton->isOver() || _artistButton->hasFocus()) {
+				const auto underline = style::ConvertScale(2);
+				p.setPen(st::windowActiveTextFg);
+				p.drawLine(0, _artistButton->height() - underline,
+					_artistButton->width(), _artistButton->height() - underline);
+			}
+		});
 		LoadImage(ArtUrl(_album.artworkUrl, u"t500x500"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
 			_scaledArt = QImage();
@@ -3555,6 +3571,11 @@ public:
 	}
 
 protected:
+	void resizeEvent(QResizeEvent *e) override {
+		RpWidget::resizeEvent(e);
+		updateArtistButtonGeometry();
+	}
+
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		if (_isArtist) {
@@ -3697,6 +3718,34 @@ protected:
 	}
 
 private:
+	void updateArtistButtonGeometry() {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto narrow = width() < s(480);
+		const auto margin = s(24);
+		const auto art = coverRect();
+		const auto left = narrow ? margin : art.right() + s(25);
+		const auto top = narrow ? art.bottom() + s(12) : s(76);
+		const auto titleHeight = s(narrow ? 56 : 72);
+		const auto available = std::max(width() - left - margin, 0);
+		auto font = st::normalFont->f;
+		font.setPixelSize(s(14));
+		const auto artistWidth = std::min(
+			QFontMetrics(font).horizontalAdvance(_album.artist),
+			available);
+		_artistButton->setGeometry(
+			left,
+			top + s(28) + titleHeight,
+			artistWidth,
+			s(24));
+		const auto hasArtist = !_isArtist
+			&& bool(_openArtist)
+			&& !_album.artist.trimmed().isEmpty()
+			&& artistWidth > 0;
+		_artistButton->setVisible(hasArtist);
+		_artistButton->setDisabled(!hasArtist);
+		_artistButton->setPointerCursor(hasArtist);
+	}
+
 	[[nodiscard]] QRect coverRect() const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		if (_isArtist) {
@@ -3722,6 +3771,8 @@ private:
 	QImage _scaledBanner;
 	QSize _scaledBannerSize;
 	Fn<void(QImage, QRect)> _showCover;
+	Fn<void()> _openArtist;
+	Ui::AbstractButton *_artistButton = nullptr;
 
 };
 
@@ -7637,7 +7688,21 @@ protected:
 						source.moveTopLeft(mapFromGlobal(source.topLeft()));
 						Ui::CreateChild<HomeCoverPreview>(this, std::move(image), source);
 					}), _homeArtistOpen, _homeArtistBannerUrl,
-					crl::guard(this, [=] { update(); })), QMargins(0, 0, 0, style::ConvertScale(8)));
+					crl::guard(this, [=] { update(); }),
+					crl::guard(this, [=] {
+						const auto artistTrack = std::find_if(
+							_homeAlbumTracks.begin(),
+							_homeAlbumTracks.end(),
+							[=](const Track &track) {
+								return track.artist.trimmed().compare(
+									_homeAlbum.artist.trimmed(), Qt::CaseInsensitive) == 0;
+							});
+						if (artistTrack != _homeAlbumTracks.end()) {
+							openHomeArtist(*artistTrack);
+						} else if (!_homeAlbumTracks.empty()) {
+							openHomeArtist(_homeAlbumTracks.front());
+						}
+					})), QMargins(0, 0, 0, style::ConvertScale(8)));
 				_homeAlbumHeader = albumHeader;
 				albumHeader->setBannerTopInset(_tabScroll->y());
 				if (!_homeAlbumIsTrack && !_homeArtistOpen) InstallAlbumContextMenu(albumHeader, _controller, _homeAlbum);
