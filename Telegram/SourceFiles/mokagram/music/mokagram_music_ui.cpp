@@ -4816,7 +4816,7 @@ public:
 		_input->setMaxLength(1000);
 		_input->hide();
 		_send->setClickedCallback([=] {
-			if (_posting) return;
+			if (_posting || !Account::IsLoggedIn()) return;
 			if (!_editing) {
 				_editing = true;
 				_stamp = _position;
@@ -4866,7 +4866,7 @@ public:
 			}
 		});
 		_input->submits() | rpl::on_next([=] {
-			if (_editing && !_posting) _send->click();
+			if (_editing && !_posting) _send->clicked(Qt::NoModifier, Qt::LeftButton);
 		}, lifetime());
 		Account::Changes() | rpl::on_next([=] {
 			refreshButtons();
@@ -4894,9 +4894,10 @@ public:
 	}
 
 	void setPosition(qint64 position) {
-		if (_position / 1000 == position / 1000 && _position == position) return;
+		if (_position == position) return;
+		const auto newSecond = _position / 1000 != position / 1000;
 		_position = position;
-		refreshButtons();
+		if (newSecond) refreshButtons();
 		update();
 	}
 
