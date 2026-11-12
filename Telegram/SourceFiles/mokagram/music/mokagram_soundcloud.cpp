@@ -31,6 +31,7 @@
 #include <memory>
 #include <deque>
 #include <set>
+#include <algorithm>
 
 namespace Mokagram::Music {
 namespace {
@@ -44,6 +45,8 @@ constexpr auto kMaxImageBytes = 32 * 1024 * 1024;  // предел на разм
 constexpr auto kMaxHlsSegments = 512;              // предел числа сегментов HLS
 constexpr auto kUserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0";
 constexpr auto kMaxLikesPages = 50;   // предел страниц лайков при синхронизации
+constexpr auto kMaxPlaylistPages = 50;
+constexpr auto kMaxSyncedPlaylists = 200;
 constexpr auto kMaxPushedLikes = 200; // за один проход отправляем не больше
 constexpr auto kConcurrentImages = 6;
 
@@ -1338,6 +1341,369 @@ struct SyncState {
 	Fn<void(int, int, QString)> done;
 };
 
+struct PlaylistSyncEntry {
+	RemotePlaylist playlist;
+	QString resourceId;
+	int trackCount = 0;
+};
+
+struct PlaylistCollectionPage {
+	std::vector<PlaylistSyncEntry> playlists;
+	QString next;
+	QString error;
+};
+
+struct PlaylistSyncState {
+	std::vector<PlaylistSyncEntry> playlists;
+	std::vector<Track> likedTracks;
+	std::set<QString> playlistIds;
+	std::set<QString> likedTrackIds;
+	QString userId;
+	QString error;
+	bool complete = true;
+	bool likesComplete = true;
+	bool refreshed = false;
+	quint64 generation = 0;
+};
+
+struct PlaylistSyncControl {
+	std::vector<Fn<void(int, int, QString)>> waiters;
+	quint64 generation = 0;
+	bool active = false;
+};
+
+PlaylistSyncControl &PlaylistSync() {
+	static auto result = PlaylistSyncControl();
+	return result;
+}
+
+void FinishPlaylistSync(quint64 generation, int playlists, int tracks, QString error) {
+	auto &control = PlaylistSync();
+	if (control.generation != generation) {
+		return;
+	}
+	control.active = false;
+	auto waiters = std::move(control.waiters);
+	for (const auto &done : waiters) {
+		if (done) done(playlists, tracks, error);
+	}
+}
+
+void CancelPlaylistSync() {
+	auto &control = PlaylistSync();
+	if (!control.active) {
+		return;
+	}
+	++control.generation;
+	control.active = false;
+	auto waiters = std::move(control.waiters);
+	for (const auto &done : waiters) {
+		if (done) done(0, 0, QString());
+	}
+}
+
+void LoadPlaylistCollection(
+		const QString &nextHref,
+		bool liked,
+		Fn<void(PlaylistCollectionPage)> done) {
+	if (!nextHref.isEmpty() && !ValidApiUrl(nextHref)) {
+		done({ .error = QString::fromUtf8(Mokagram::Lang::Tr(
+			"некорректная ссылка SoundCloud")) });
+		return;
+	}
+	const auto path = liked
+		? u"/me/likes/playlists"_q
+		: u"/me/playlists"_q;
+	const auto url = nextHref.isEmpty()
+		? QString::fromLatin1(kPublicApi) + path
+		: nextHref;
+	auto query = QUrlQuery();
+	if (nextHref.isEmpty()) {
+		query.addQueryItem(u"limit"_q, u"50"_q);
+		query.addQueryItem(u"linked_partitioning"_q, u"true"_q);
+	}
+	const auto parse = [=](QByteArray data, QString error) {
+		auto result = PlaylistCollectionPage();
+		if (!error.isEmpty()) {
+			result.error = error;
+			done(std::move(result));
+			return;
+		}
+		auto parseError = QJsonParseError();
+		const auto json = QJsonDocument::fromJson(data, &parseError);
+		if (parseError.error != QJsonParseError::NoError
+			|| (!json.isObject() && !json.isArray())) {
+			result.error = QString::fromUtf8(Mokagram::Lang::Tr(
+				"SoundCloud вернул некорректный список плейлистов."));
+			done(std::move(result));
+			return;
+		}
+		const auto root = json.object();
+		const auto values = json.isArray()
+			? json.array()
+			: root.value("collection").toArray();
+		for (const auto &value : values) {
+			auto object = value.toObject();
+			if (object.contains(u"playlist"_q)) {
+				object = object.value(u"playlist"_q).toObject();
+			}
+			const auto id = ResourceId(object, u"id"_q);
+			const auto title = object.value(u"title"_q).toString().trimmed();
+			if (id.isEmpty() || title.isEmpty()) {
+				continue;
+			}
+			auto entry = PlaylistSyncEntry();
+			entry.resourceId = id;
+			entry.playlist.id = (liked ? u"liked-playlist:"_q : u"set:"_q) + id;
+			entry.playlist.name = liked
+				? QString::fromUtf8(Mokagram::Lang::Tr("Избранное: %1")).arg(title)
+				: title;
+			entry.trackCount = object.value(u"track_count"_q).toInt();
+			for (const auto &trackValue : object.value(u"tracks"_q).toArray()) {
+				auto track = ParseTrack(trackValue.toObject());
+				if (!track.id.isEmpty() && !track.title.isEmpty()) {
+					entry.playlist.tracks.push_back(std::move(track));
+				}
+			}
+			entry.trackCount = std::max(
+				entry.trackCount,
+				int(entry.playlist.tracks.size()));
+			result.playlists.push_back(std::move(entry));
+		}
+		const auto next = root.value(u"next_href"_q).toString();
+		if (!next.isEmpty()) {
+			if (ValidApiUrl(next)) {
+				result.next = next;
+			} else {
+				result.error = QString::fromUtf8(Mokagram::Lang::Tr(
+					"некорректная ссылка SoundCloud"));
+			}
+		}
+		done(std::move(result));
+	};
+	ApiGet(url, query, [=](QByteArray data, QString error) {
+		if (nextHref.isEmpty()
+			&& error.contains(u"HTTP 403"_q)
+			&& !User().id.isEmpty()) {
+			const auto legacyPath = liked
+				? u"/users/"_q + User().id + u"/likes/playlists"_q
+				: u"/users/"_q + User().id + u"/playlists"_q;
+			ApiGet(QString::fromLatin1(kApi) + legacyPath, QUrlQuery(), parse);
+			return;
+		}
+		parse(std::move(data), std::move(error));
+	});
+}
+
+void SetPlaylistSyncError(
+		const std::shared_ptr<PlaylistSyncState> &state,
+		const QString &error,
+		bool likes = false) {
+	if (state->error.isEmpty()
+		|| (error.contains(u"HTTP 401"_q)
+			&& !state->error.contains(u"HTTP 401"_q))) {
+		state->error = error;
+	}
+	state->complete = false;
+	if (likes) {
+		state->likesComplete = false;
+	}
+}
+
+void AppendPlaylistPage(
+		const std::shared_ptr<PlaylistSyncState> &state,
+		PlaylistCollectionPage page) {
+	for (auto &entry : page.playlists) {
+		if (state->playlistIds.contains(entry.resourceId)) {
+			continue;
+		}
+		if (int(state->playlists.size()) >= kMaxSyncedPlaylists) {
+			SetPlaylistSyncError(state, QString::fromUtf8(Mokagram::Lang::Tr(
+				"Слишком много плейлистов для синхронизации.")));
+			return;
+		}
+		state->playlistIds.insert(entry.resourceId);
+		state->playlists.push_back(std::move(entry));
+	}
+}
+
+void LoadPlaylistPages(
+		const std::shared_ptr<PlaylistSyncState> &state,
+		bool liked,
+		Fn<void()> done) {
+	const auto load = std::make_shared<Fn<void(QString, int)>>();
+	*load = [=](QString next, int pages) {
+		if (pages >= kMaxPlaylistPages
+			|| int(state->playlists.size()) >= kMaxSyncedPlaylists) {
+			if (!next.isEmpty()
+				|| int(state->playlists.size()) >= kMaxSyncedPlaylists) {
+				SetPlaylistSyncError(state, QString::fromUtf8(Mokagram::Lang::Tr(
+					"Список плейлистов обрезан по лимиту.")));
+			}
+			done();
+			return;
+		}
+		LoadPlaylistCollection(next, liked, [=](PlaylistCollectionPage page) {
+			if (!page.error.isEmpty()) {
+				SetPlaylistSyncError(state, page.error);
+				done();
+				return;
+			}
+			const auto nextHref = page.next;
+			AppendPlaylistPage(state, std::move(page));
+			if (!nextHref.isEmpty()) {
+				(*load)(nextHref, pages + 1);
+			} else {
+				done();
+			}
+		});
+	};
+	(*load)(QString(), 0);
+}
+
+void LoadLikedTrackPages(
+		const std::shared_ptr<PlaylistSyncState> &state,
+		Fn<void()> done) {
+	const auto load = std::make_shared<Fn<void(QString, int)>>();
+	*load = [=](QString next, int pages) {
+		if (pages >= kMaxLikesPages) {
+			state->likesComplete = false;
+			state->complete = false;
+			state->error = state->error.isEmpty()
+				? QString::fromUtf8(Mokagram::Lang::Tr(
+					"Список лайков обрезан по лимиту."))
+				: state->error;
+			done();
+			return;
+		}
+		LoadLikes(next, [=](LikesPage page) {
+			if (!page.error.isEmpty()) {
+				SetPlaylistSyncError(state, page.error, true);
+				done();
+				return;
+			}
+			for (auto &track : page.tracks) {
+				if (!track.id.isEmpty()
+					&& state->likedTrackIds.insert(track.id).second) {
+					state->likedTracks.push_back(std::move(track));
+				}
+			}
+			if (!page.next.isEmpty()) {
+				(*load)(page.next, pages + 1);
+			} else {
+				done();
+			}
+		});
+	};
+	(*load)(QString(), 0);
+}
+
+void LoadPlaylistDetails(
+		const std::shared_ptr<PlaylistSyncState> &state,
+		Fn<void()> done) {
+	const auto load = std::make_shared<Fn<void(int)>>();
+	*load = [=](int index) {
+		if (index >= int(state->playlists.size())) {
+			done();
+			return;
+		}
+		auto &entry = state->playlists[index];
+		if (entry.trackCount <= int(entry.playlist.tracks.size())
+			|| entry.resourceId.isEmpty()) {
+			(*load)(index + 1);
+			return;
+		}
+		AlbumTracks(entry.resourceId, [=](std::vector<Track> tracks, QString error) {
+			if (!error.isEmpty()) {
+				SetPlaylistSyncError(state, error);
+				if (error.contains(u"HTTP 401"_q)) {
+					done();
+					return;
+				}
+			} else {
+				state->playlists[index].playlist.tracks = std::move(tracks);
+			}
+			(*load)(index + 1);
+		});
+	};
+	(*load)(0);
+}
+
+void BeginPlaylistSync(const std::shared_ptr<PlaylistSyncState> &state);
+
+void FinishPlaylistSyncData(const std::shared_ptr<PlaylistSyncState> &state) {
+	if (!IsLoggedIn() || User().id != state->userId) {
+		FinishPlaylistSync(state->generation, 0, 0, QString());
+		return;
+	}
+	if (!state->refreshed && state->error.contains(u"HTTP 401"_q)) {
+		state->refreshed = true;
+		RefreshSoundCloudToken([=](bool ok) {
+			if (!ok || !IsLoggedIn() || User().id != state->userId) {
+				FinishPlaylistSync(state->generation, 0, 0, state->error);
+				return;
+			}
+			state->playlists.clear();
+			state->likedTracks.clear();
+			state->playlistIds.clear();
+			state->likedTrackIds.clear();
+			state->error.clear();
+			state->complete = true;
+			state->likesComplete = true;
+			BeginPlaylistSync(state);
+		});
+		return;
+	}
+
+	auto remote = std::vector<RemotePlaylist>();
+	remote.reserve(state->playlists.size() + (state->likesComplete ? 1 : 0));
+	for (auto &entry : state->playlists) {
+		remote.push_back(std::move(entry.playlist));
+	}
+	if (state->likesComplete) {
+		auto likes = RemotePlaylist();
+		likes.id = u"liked-tracks:"_q + state->userId;
+		likes.name = QString::fromUtf8(Mokagram::Lang::Tr(
+			"Понравившиеся треки SoundCloud"));
+		likes.tracks = state->likedTracks;
+		remote.push_back(std::move(likes));
+	}
+	const auto complete = state->complete && state->likesComplete;
+	::Mokagram::Music::MergeRemotePlaylists(remote, complete);
+	::Mokagram::Music::MergeRemoteLikes(
+		state->likedTracks,
+		state->likesComplete);
+	FinishPlaylistSync(
+		state->generation,
+		int(remote.size()),
+		int(state->likedTracks.size()),
+		state->error);
+}
+
+void BeginPlaylistSync(const std::shared_ptr<PlaylistSyncState> &state) {
+	LoadPlaylistPages(state, false, [=] {
+		if (state->error.contains(u"HTTP 401"_q)) {
+			FinishPlaylistSyncData(state);
+			return;
+		}
+		LoadPlaylistPages(state, true, [=] {
+			if (state->error.contains(u"HTTP 401"_q)) {
+				FinishPlaylistSyncData(state);
+				return;
+			}
+			LoadLikedTrackPages(state, [=] {
+				if (state->error.contains(u"HTTP 401"_q)) {
+					FinishPlaylistSyncData(state);
+					return;
+				}
+				LoadPlaylistDetails(state, [=] {
+					FinishPlaylistSyncData(state);
+				});
+			});
+		});
+	});
+}
+
 } // namespace
 
 bool IsLoggedIn() {
@@ -1384,8 +1750,10 @@ void Logout() {
 	AccountToken().clear();
 	UserObject() = QJsonObject();
 	RemoveSessionFile();
+	CancelPlaylistSync();
 	ChangesStream().fire({});
 	::Mokagram::Music::ClearRemoteLikes();
+	::Mokagram::Music::ClearRemotePlaylists();
 }
 
 rpl::producer<> Changes() {
@@ -1418,7 +1786,17 @@ void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done) {
 			done(std::move(result));
 			return;
 		}
-		const auto root = QJsonDocument::fromJson(data).object();
+		auto parseError = QJsonParseError();
+		const auto document = QJsonDocument::fromJson(data, &parseError);
+		if (parseError.error != QJsonParseError::NoError
+			|| !document.isObject()
+			|| !document.object().value(u"collection"_q).isArray()) {
+			result.error = QString::fromUtf8(Mokagram::Lang::Tr(
+				"SoundCloud вернул некорректный список лайков."));
+			done(std::move(result));
+			return;
+		}
+		const auto root = document.object();
 		for (const auto &value : root.value("collection").toArray()) {
 			// Коллекция /likes — это лайки, а не треки: сам трек лежит в поле
 			// "track". Плейлисты (kind like с "playlist") пропускаем.
@@ -1432,7 +1810,14 @@ void LoadLikes(const QString &nextHref, Fn<void(LikesPage)> done) {
 			}
 		}
 		const auto next = root.value("next_href").toString();
-		result.next = ValidApiUrl(next) ? next : QString();
+		if (!next.isEmpty()) {
+			if (ValidApiUrl(next)) {
+				result.next = next;
+			} else {
+				result.error = QString::fromUtf8(Mokagram::Lang::Tr(
+					"некорректная ссылка SoundCloud"));
+			}
+		}
 		done(std::move(result));
 	};
 	ApiGet(url, query, [=](QByteArray data, QString error) {
@@ -1653,6 +2038,25 @@ void SyncLikes(
 		});
 	};
 	(*load)();
+}
+
+void SyncPlaylists(Fn<void(int playlists, int tracks, QString error)> done) {
+	if (!IsLoggedIn()) {
+		if (done) done(0, 0, QString());
+		return;
+	}
+	auto &control = PlaylistSync();
+	if (done) {
+		control.waiters.push_back(std::move(done));
+	}
+	if (control.active) {
+		return;
+	}
+	control.active = true;
+	const auto state = std::make_shared<PlaylistSyncState>();
+	state->generation = ++control.generation;
+	state->userId = User().id;
+	BeginPlaylistSync(state);
 }
 
 } // namespace Account
