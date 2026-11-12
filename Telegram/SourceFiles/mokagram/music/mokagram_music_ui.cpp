@@ -4844,6 +4844,10 @@ public:
 		Settings::RowIconsUpdated() | rpl::on_next([=] { update(); }, lifetime());
 	}
 
+	void setShowAvatars(bool show) {
+		_showAvatars = show;
+		refresh();
+	}
 	void setTrack(const QString &id) {
 		if (id == _trackId) return;
 		_trackId = id;
@@ -4884,7 +4888,7 @@ protected:
 			p.setBrush(st::windowBgOver);
 			p.drawEllipse(rect());
 		}
-		if (!_active.empty()) {
+		if (_showAvatars && !_active.empty()) {
 			const auto side = style::ConvertScale(28);
 			const auto step = style::ConvertScale(32);
 			const auto count = std::min(int(_active.size()), std::max(1, width() / step));
@@ -4923,7 +4927,7 @@ private:
 	void refreshTooltip() {
 		auto tip = QString();
 		if (!_active.empty()) {
-			const auto slot = std::clamp(_hoverIndex, 0, std::min(
+			const auto slot = std::clamp(_showAvatars ? _hoverIndex : 0, 0, std::min(
 				int(_active.size()), std::max(1, width() / style::ConvertScale(32))) - 1);
 			const auto &comment = _comments[_active[slot]];
 			tip = (comment.author + u" · "_q + time(comment.timestampMs)
@@ -4997,6 +5001,7 @@ private:
 	qint64 _position = 0;
 	int _generation = 0;
 	bool _loading = false;
+	bool _showAvatars = false;
 };
 
 class LyricsView final : public Ui::RpWidget {
@@ -5429,7 +5434,7 @@ private:
 		_comments->setVisible(shown);
 		if (!shown) return;
 		const auto size = style::ConvertScale(32);
-		const auto rowWidth = std::min(width(), style::ConvertScale(96));
+		const auto rowWidth = size;
 		auto top = anchorY() - _scroll;
 		if (_lyrics.synced && _current >= 0) {
 			for (auto i = 0; i < _current; ++i) top += heightOf(i);
@@ -8595,6 +8600,7 @@ void AttachCommentsToPlayer(
 		Fn<bool()> available) {
 	Settings::PreloadRowIcons(&controller->session());
 	const auto button = Ui::CreateChild<TimedComments>(parent);
+	button->setShowAvatars(true);
 	const auto refresh = [=] {
 		const auto track = PlayingTrack();
 		const auto allowed = !available || available();
