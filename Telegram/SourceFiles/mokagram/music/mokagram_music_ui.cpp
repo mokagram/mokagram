@@ -4825,7 +4825,7 @@ public:
 		_body.beginLayout();
 		auto y = 0.;
 		while (true) {
-			const auto line = _body.createLine();
+			auto line = _body.createLine();
 			if (!line.isValid()) break;
 			line.setLineWidth(std::max(1, cardWidth - s(32)));
 			line.setPosition(QPointF(0., y));
