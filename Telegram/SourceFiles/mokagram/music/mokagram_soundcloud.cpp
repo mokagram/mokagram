@@ -1158,6 +1158,141 @@ void Download(
 	});
 }
 
+namespace {
+
+TrackComment ParseTrackComment(const QJsonObject &object) {
+	const auto user = object.value("user").toObject();
+	auto result = TrackComment();
+	result.id = ResourceId(object, u"id"_q);
+	result.author = user.value("username").toString();
+	result.avatarUrl = user.value("avatar_url").toString();
+	if (!SafeMediaUrl(QUrl(result.avatarUrl))) {
+		result.avatarUrl.clear();
+	}
+	result.body = object.value("body").toString();
+	const auto timestamp = object.value("timestamp");
+	if (timestamp.isDouble()) {
+		result.timestampMs = timestamp.toVariant().toLongLong();
+	}
+	return result;
+}
+
+} // namespace
+
+void LoadTrackComments(
+		const QString &trackId,
+		const QString &cursor,
+		Fn<void(TrackCommentsPage)> done) {
+	const auto path = u"/tracks/"_q + trackId + u"/comments"_q;
+	auto url = cursor.isEmpty()
+		? QUrl(QString::fromLatin1(kApi) + path) : QUrl(cursor);
+	if (!ValidTrackId(trackId) || !SafeMediaUrl(url)
+		|| (url.host() != u"api-v2.soundcloud.com"_q
+			&& url.host() != u"api.soundcloud.com"_q)
+		|| url.path() != path) {
+		done({ .error = QString::fromUtf8(Mokagram::Lang::Tr("некорректная ссылка SoundCloud")) });
+		return;
+	}
+	auto query = QUrlQuery();
+	if (cursor.isEmpty()) {
+		query.addQueryItem(u"limit"_q, u"200"_q);
+		query.addQueryItem(u"linked_partitioning"_q, u"true"_q);
+	}
+	ApiGet(url.toString(), query, [=](QByteArray data, QString error) {
+		auto result = TrackCommentsPage();
+		result.error = std::move(error);
+		if (result.error.isEmpty()) {
+			auto parseError = QJsonParseError();
+			const auto document = QJsonDocument::fromJson(data, &parseError);
+			if (parseError.error != QJsonParseError::NoError
+				|| (!document.isObject() && !document.isArray())) {
+				result.error = QString::fromUtf8(Mokagram::Lang::Tr("Не удалось загрузить комментарии"));
+			} else {
+				const auto root = document.object();
+				const auto list = document.isArray()
+					? document.array() : root.value("collection").toArray();
+				for (const auto &value : list) {
+					auto comment = ParseTrackComment(value.toObject());
+					if (!comment.id.isEmpty() && !comment.body.isEmpty()) {
+						result.comments.push_back(std::move(comment));
+					}
+				}
+				const auto next = QUrl(root.value("next_href").toString());
+				if (SafeMediaUrl(next) && next.host() == url.host()
+					&& next.path() == path && next != url) {
+					result.next = next.toString();
+				}
+			}
+		}
+		done(std::move(result));
+	});
+}
+
+void PostTrackComment(
+		const QString &trackId,
+		qint64 timestampMs,
+		const QString &body,
+		Fn<void(TrackComment, QString)> done) {
+	const auto text = body.trimmed();
+	if (!Account::IsLoggedIn() || !ValidTrackId(trackId)
+		|| timestampMs < 0 || text.isEmpty() || text.size() > 1000) {
+		done({}, QString::fromUtf8(Mokagram::Lang::Tr("Для комментария нужен вход в SoundCloud и текст до 1000 символов")));
+		return;
+	}
+	const auto token = AccountToken();
+	EnsureAnyClientId([=](bool ok) {
+		if (!ok || AccountToken() != token) {
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("Не удалось отправить комментарий")));
+			return;
+		}
+		auto url = QUrl(QString::fromLatin1(kApi)
+			+ u"/tracks/"_q + trackId + u"/comments"_q);
+		auto query = QUrlQuery();
+		query.addQueryItem(u"client_id"_q, ClientId());
+		url.setQuery(query);
+		auto request = QNetworkRequest(url);
+		request.setRawHeader("User-Agent", kUserAgent);
+		request.setRawHeader("Authorization", QByteArray("OAuth ") + token.toUtf8());
+		request.setRawHeader("Accept", "application/json");
+		request.setRawHeader("Content-Type", "application/json");
+		request.setRawHeader("Origin", "https://soundcloud.com");
+		request.setRawHeader("Referer", "https://soundcloud.com/");
+		request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+			QNetworkRequest::ManualRedirectPolicy);
+		request.setTransferTimeout(20000);
+		const auto payload = QJsonDocument(QJsonObject{
+			{ u"comment"_q, QJsonObject{
+				{ u"body"_q, text },
+				{ u"timestamp"_q, double(timestampMs) },
+			} },
+		}).toJson(QJsonDocument::Compact);
+		const auto reply = Net().post(request, payload);
+		QObject::connect(reply, &QNetworkReply::finished, reply, [=] {
+			const auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			const auto data = reply->readAll();
+			reply->deleteLater();
+			// Не повторяем POST: при потере ответа комментарий мог сохраниться.
+			if (status >= 200 && status < 300) {
+				auto comment = ParseTrackComment(QJsonDocument::fromJson(data).object());
+				if (comment.body.isEmpty()) {
+					comment.body = text;
+					comment.timestampMs = timestampMs;
+					comment.author = Account::User().username;
+					comment.avatarUrl = Account::User().avatarUrl;
+				}
+				done(std::move(comment), {});
+			} else {
+				auto error = QString::fromUtf8(Mokagram::Lang::Tr("Не удалось отправить комментарий"));
+				if (status) error += u" (HTTP %1)"_q.arg(status);
+				if (!status || status >= 500) {
+					error += u". "_q + QString::fromUtf8(Mokagram::Lang::Tr("Проверь комментарии в SoundCloud перед повторной отправкой"));
+				}
+				done({}, std::move(error));
+			}
+		});
+	}, false);
+}
+
 namespace Account {
 namespace {
 

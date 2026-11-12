@@ -1546,3 +1546,7 @@
 	{ "Подключение", "Connection" },
 	{ "Пробовать WebSocket для Telegram", "Try WebSocket for Telegram" },
 	{ "При прямом подключении сначала используется WebSocket, при сбое клиент подключится по TCP.", "For direct connections, try WebSocket first and fall back to TCP if it fails." },
+	{ "Не удалось загрузить комментарии", "Could not load comments" },
+	{ "Для комментария нужен вход в SoundCloud и текст до 1000 символов", "Sign in to SoundCloud and enter up to 1000 characters to comment" },
+	{ "Не удалось отправить комментарий", "Could not send comment" },
+	{ "Проверь комментарии в SoundCloud перед повторной отправкой", "Check comments on SoundCloud before sending again" },

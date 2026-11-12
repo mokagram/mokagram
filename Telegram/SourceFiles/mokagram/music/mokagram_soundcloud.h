@@ -137,6 +137,30 @@ void SetCover(uint64 documentId, QImage image);
 // Папка кэша скачанных треков.
 [[nodiscard]] QString CacheDir();
 
+struct TrackComment {
+	QString id;
+	QString author;
+	QString avatarUrl;
+	QString body;
+	qint64 timestampMs = -1;
+};
+
+struct TrackCommentsPage {
+	std::vector<TrackComment> comments;
+	QString next;
+	QString error;
+};
+
+void LoadTrackComments(
+	const QString &trackId,
+	const QString &cursor,
+	Fn<void(TrackCommentsPage)> done);
+void PostTrackComment(
+	const QString &trackId,
+	qint64 timestampMs,
+	const QString &body,
+	Fn<void(TrackComment, QString)> done);
+
 namespace Account {
 
 // Аккаунт SoundCloud. Вход идёт в браузере через обычный OAuth сайта: после входа
