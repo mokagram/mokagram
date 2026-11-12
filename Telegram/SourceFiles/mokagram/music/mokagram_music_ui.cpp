@@ -4885,8 +4885,8 @@ public:
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Комментарии SoundCloud")));
 		setClickedCallback([=] {
 			if (_active.empty()) return;
-			const auto slot = std::clamp(_hoverIndex, 0, int(_active.size()) - 1);
-			_seekRequests.fire_copy(_comments[_active[slot]].timestampMs);
+			if (_slots.empty()) return;
+			_seekRequests.fire_copy(_comments[hoveredComment()].timestampMs);
 		});
 		Settings::Changed() | rpl::on_next([=](const QString &key) {
 			if (key != u"lyrics.comments"_q) return;
@@ -4918,6 +4918,11 @@ public:
 		if (Settings::Bool(u"lyrics.comments"_q) && validTrack()) load({});
 		refresh();
 	}
+	void setTimelineDuration(qint64 duration) {
+		if (_timelineDuration == duration) return;
+		_timelineDuration = duration;
+		refresh();
+	}
 	void setPosition(qint64 position) {
 		if (_position == position) return;
 		_position = position;
@@ -4945,68 +4950,132 @@ protected:
 		if (_hoverCard) _hoverCard->hide();
 		AbstractButton::hideEvent(event);
 	}
+	void resizeEvent(QResizeEvent *event) override {
+		layoutSlots();
+		AbstractButton::resizeEvent(event);
+	}
 	void mouseMoveEvent(QMouseEvent *event) override {
 		AbstractButton::mouseMoveEvent(event);
-		_hoverIndex = std::max(0, event->pos().x() / style::ConvertScale(32));
+		for (auto i = 0; i < int(_slots.size()); ++i) {
+			if (_slots[i].rect.contains(event->pos()) && _hoverIndex != i) {
+				_hoverIndex = i;
+				_hoverComment = 0;
+				break;
+			}
+		}
 		updateHoverCard();
+	}
+	void wheelEvent(QWheelEvent *event) override {
+		if (_slots.empty()) return;
+		const auto slot = std::clamp(_hoverIndex, 0, int(_slots.size()) - 1);
+		const auto count = int(_slots[slot].comments.size());
+		_hoverComment = (_hoverComment + (event->angleDelta().y() < 0 ? 1 : count - 1)) % count;
+		updateHoverCard();
+		update();
+		event->accept();
 	}
 	void paintEvent(QPaintEvent *) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
-		if (_active.empty()) return;
-		if (isOver() || isDown() || hasFocus()) {
-			p.setPen(Qt::NoPen);
-			p.setBrush(st::windowBgOver);
-			p.drawEllipse(rect());
-		}
-		if (!_active.empty()) {
-			const auto side = style::ConvertScale(28);
-			const auto step = style::ConvertScale(32);
-			const auto count = std::min(int(_active.size()), std::max(1, width() / step));
-			for (auto i = 0; i < count; ++i) {
-				const auto &comment = _comments[_active[i]];
-				const auto avatarRect = QRect(i * step + (step - side) / 2,
-					(height() - side) / 2, side, side);
-				p.save();
-				auto clip = QPainterPath();
-				clip.addEllipse(avatarRect);
-				p.setClipPath(clip);
-				const auto image = _avatars.find(comment.avatarUrl);
-				if (image != _avatars.end() && !image->second.isNull()) {
-					p.drawImage(avatarRect, image->second);
-				} else {
-					p.fillRect(avatarRect, st::windowBgActive);
-					p.setPen(st::windowFg);
-					p.setFont(st::semiboldFont);
-					p.drawText(avatarRect, Qt::AlignCenter, comment.author.left(1).toUpper());
-				}
-				p.restore();
+		for (auto i = 0; i < int(_slots.size()); ++i) {
+			const auto &slot = _slots[i];
+			const auto selected = i == _hoverIndex
+				? std::clamp(_hoverComment, 0, int(slot.comments.size()) - 1) : 0;
+			const auto &comment = _comments[slot.comments[selected]];
+			p.save();
+			auto clip = QPainterPath();
+			clip.addEllipse(slot.rect);
+			p.setClipPath(clip);
+			const auto image = _avatars.find(comment.avatarUrl);
+			if (image != _avatars.end() && !image->second.isNull()) {
+				p.drawImage(slot.rect, image->second);
+			} else {
+				p.fillRect(slot.rect, st::windowBgActive);
+				p.setPen(st::windowFg);
+				p.setFont(st::semiboldFont);
+				p.drawText(slot.rect, Qt::AlignCenter, comment.author.left(1).toUpper());
 			}
-			return;
+			p.restore();
+			if (slot.comments.size() > 1) {
+				const auto badgeSize = style::ConvertScale(16);
+				const auto badge = QRect(slot.rect.right() - badgeSize + 1,
+					slot.rect.bottom() - badgeSize + 1, badgeSize, badgeSize);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::windowBg);
+				p.drawEllipse(badge);
+				p.setPen(st::windowFg);
+				p.setFont(st::smallFont);
+				p.drawText(badge, Qt::AlignCenter, slot.comments.size() > 99
+					? u"99+"_q : QString::number(slot.comments.size()));
+			}
 		}
-
 	}
 
 private:
-	static QString time(qint64 ms) {
-		const auto seconds = std::max<qint64>(0, ms / 1000);
-		return u"%1:%2"_q.arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'));
+	struct Slot {
+		QRect rect;
+		std::vector<int> comments;
+	};
+	int hoveredComment() const {
+		const auto &slot = _slots[std::clamp(_hoverIndex, 0, int(_slots.size()) - 1)];
+		return slot.comments[std::clamp(_hoverComment, 0, int(slot.comments.size()) - 1)];
+	}
+	void ensureAvatar(int index) {
+		const auto url = _comments[index].avatarUrl;
+		if (url.isEmpty() || _avatars.contains(url) || !_pendingAvatars.insert(url).second) return;
+		const auto generation = _generation;
+		LoadImage(url, crl::guard(this, [=](QImage image) {
+			if (generation != _generation) return;
+			_pendingAvatars.erase(url);
+			_avatars[url] = std::move(image);
+			updateHoverCard();
+			update();
+		}));
+	}
+	void layoutSlots() {
+		_slots.clear();
+		const auto step = style::ConvertScale(32);
+		const auto side = std::min(style::ConvertScale(28), height());
+		const auto capacity = std::max(1, width() / step);
+		auto groups = std::map<int, std::vector<int>>();
+		for (auto i = 0; i < int(_active.size()); ++i) {
+			const auto index = _active[i];
+			const auto bin = _timelineDuration > 0
+				? std::clamp(int(double(_comments[index].timestampMs) / _timelineDuration * capacity), 0, capacity - 1)
+				: std::min(i, capacity - 1);
+			groups[bin].push_back(index);
+		}
+		auto mask = QRegion();
+		for (auto &[bin, comments] : groups) {
+			const auto x = _timelineDuration > 0
+				? int(double(_comments[comments.front()].timestampMs) / _timelineDuration * std::max(0, width() - side))
+				: bin * step + (step - side) / 2;
+			auto rect = QRect(std::clamp(x, 0, std::max(0, width() - side)),
+				(height() - side) / 2, side, side);
+			mask += QRegion(rect, QRegion::Ellipse);
+			_slots.push_back({ rect, std::move(comments) });
+		}
+		setMask(mask);
+		for (const auto &slot : _slots) ensureAvatar(slot.comments.front());
 	}
 	void updateHoverCard() {
-		if (_active.empty() || !isOver() || isHidden()) {
+		if (_slots.empty() || !isOver() || isHidden()) {
 			if (_hoverCard) _hoverCard->hide();
 			return;
 		}
-		const auto slot = std::clamp(_hoverIndex, 0, std::min(
-			int(_active.size()), std::max(1, width() / style::ConvertScale(32))) - 1);
-		const auto &comment = _comments[_active[slot]];
+		const auto slot = std::clamp(_hoverIndex, 0, int(_slots.size()) - 1);
+		auto comment = _comments[hoveredComment()];
+		const auto count = int(_slots[slot].comments.size());
+		if (count > 1) comment.author += u" · %1/%2"_q
+			.arg(std::clamp(_hoverComment, 0, count - 1) + 1).arg(count);
+		ensureAvatar(hoveredComment());
 		if (!_hoverCard) _hoverCard = base::make_unique_q<CommentHoverCard>(window());
 		const auto image = _avatars.find(comment.avatarUrl);
 		const auto root = window();
 		const auto margin = style::ConvertScale(14);
 		_hoverCard->setComment(comment, image == _avatars.end() ? QImage() : image->second,
 			root->width() - 2 * margin);
-		const auto anchor = mapTo(root, QPoint(slot * style::ConvertScale(32), 0));
+		const auto anchor = mapTo(root, _slots[slot].rect.topLeft());
 		const auto gap = style::ConvertScale(8);
 		const auto top = anchor.y() - gap - _hoverCard->height();
 		_hoverCard->move(
@@ -5022,32 +5091,21 @@ private:
 		_active.clear();
 		for (auto index = 0; index < int(_comments.size()); ++index) {
 			const auto &comment = _comments[index];
-			if (comment.timestampMs < 0 || comment.timestampMs > _position
-				|| _position - comment.timestampMs >= 7000) continue;
+			if (comment.timestampMs < 0 || (_timelineDuration <= 0
+				&& (comment.timestampMs > _position || _position - comment.timestampMs >= 7000))) continue;
 			_shownTimestamp = std::max(_shownTimestamp, comment.timestampMs);
 			_active.push_back(index);
 		}
 		std::stable_sort(_active.begin(), _active.end(), [&](int left, int right) {
 			return _comments[left].timestampMs > _comments[right].timestampMs;
 		});
-		const auto generation = _generation;
-		for (const auto index : _active) {
-			const auto url = _comments[index].avatarUrl;
-			if (url.isEmpty() || _avatars.contains(url) || !_pendingAvatars.insert(url).second) continue;
-			LoadImage(url, crl::guard(this, [=](QImage image) {
-				if (generation != _generation) return;
-				_pendingAvatars.erase(url);
-				_avatars[url] = std::move(image);
-				updateHoverCard();
-				update();
-			}));
-		}
+		layoutSlots();
 		updateHoverCard();
 		update();
 		if (wasActive != _active) _changes.fire({});
 		// Следующая страница нужна, когда воспроизведение дошло до её таймкодов.
 		if (!_loading && _note.isEmpty() && !_next.isEmpty()
-			&& (_comments.empty() || _comments.back().timestampMs <= _position + 7000)) {
+			&& (_timelineDuration > 0 || _comments.empty() || _comments.back().timestampMs <= _position + 7000)) {
 			load(_next);
 		}
 	}
@@ -5077,9 +5135,12 @@ private:
 	QString _trackId, _next, _note;
 	std::vector<TrackComment> _comments;
 	std::vector<int> _active;
+	std::vector<Slot> _slots;
 	std::map<QString, QImage> _avatars;
 	std::set<QString> _pendingAvatars;
 	int _hoverIndex = 0;
+	int _hoverComment = 0;
+	qint64 _timelineDuration = 0;
 	rpl::event_stream<> _changes;
 	rpl::event_stream<qint64> _seekRequests;
 	qint64 _shownTimestamp = -1;
@@ -5098,7 +5159,12 @@ public:
 			_lineClicked.fire_copy(ms);
 		}, lifetime());
 		Settings::Changed() | rpl::on_next([=](const QString &key) {
-			if (key == u"lyrics.comments"_q) layoutComments();
+			if (key == u"lyrics.comments"_q) {
+				_heights.clear();
+				_layouts.clear();
+				layoutComments();
+				update();
+			}
 		}, lifetime());
 		resize(width(), 280);
 		setMouseTracking(true);
@@ -5333,7 +5399,9 @@ private:
 		return lyricsHeight() * (_big ? 0.4 : 0.5);
 	}
 	[[nodiscard]] int textWidth() const {
-		return width() - (_big ? 0 : style::ConvertScale(48));
+		const auto gutter = Settings::Bool(u"lyrics.comments"_q) && _comments->validTrack()
+			? style::ConvertScale(108) : 0;
+		return std::max(1, width() - (_big ? 0 : style::ConvertScale(48)) - gutter);
 	}
 	[[nodiscard]] QFont lineFont() const {
 		auto font = st::semiboldFont->f;
@@ -5481,7 +5549,7 @@ private:
 				// Без масштабирования: текст с трансформацией не берётся из кэша глифов и тормозит.
 				const auto origin = _big
 					? QPointF(0., top + style::ConvertScale(13))
-					: QPointF((width() - textWidth()) / 2., top + style::ConvertScale(12));
+					: QPointF(style::ConvertScale(24), top + style::ConvertScale(12));
 				drawLayout(
 					p,
 					layoutOf(i),
@@ -5519,15 +5587,14 @@ private:
 		_comments->setVisible(shown);
 		if (!shown) return;
 		const auto size = style::ConvertScale(32);
-		const auto left = _big ? 0 : style::ConvertScale(24);
-		const auto rowWidth = std::min(std::max(0, width() - left),
-			_comments->avatarCount() * size);
+		const auto rowWidth = std::min(width(), style::ConvertScale(96));
 		auto top = anchorY() - _scroll;
 		if (_lyrics.synced && _current >= 0) {
 			for (auto i = 0; i < _current; ++i) top += heightOf(i);
 		}
-		_comments->setGeometry(_big ? 0 : style::ConvertScale(24),
-			std::clamp(int(top) - size, 0, std::max(0, height() - size)), rowWidth, size);
+		const auto lineHeight = _current >= 0 ? heightOf(_current) : size;
+		_comments->setGeometry(std::max(0, width() - rowWidth - style::ConvertScale(8)),
+			std::clamp(int(top + lineHeight / 2.) - size / 2, 0, std::max(0, height() - size)), rowWidth, size);
 		_comments->raise();
 	}
 	const not_null<TimedComments*> _comments;
@@ -6141,7 +6208,7 @@ public:
 			_tabScroll->scrollToY(_homeAlbumReturnScroll);
 		}));
 		_homeBack->hide();
-		AttachCommentsToPlayer(controller, this, _heart, false);
+		AttachCommentsToPlayer(controller, this, _seek, false);
 		_filter->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Звуковой фильтр")));
 		_filter->setClickedCallback([=] {
 			_filterMenu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
@@ -6718,7 +6785,6 @@ protected:
 			? pad + s(56) + pad / 2
 			: std::clamp(int(bar.width() * 0.27), s(220), s(360));
 		const auto rightWidth = pad + _queueToggle->width() + s(2) + _heart->width() + pad
-			+ (Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable() ? s(100) : 0)
 			+ (result.compact ? 0 : iconWidth + volumeWidth + s(12));
 		const auto sideWidth = std::max(leftWidth, rightWidth);
 		const auto centerWidth = std::max(bar.width() - 2 * sideWidth, 0);
@@ -6749,8 +6815,7 @@ protected:
 			bar.y() + (bar.height() - _heart->height()) / 2);
 		if (!result.compact) {
 			result.volume = QRect(
-				result.heart.x() - s(12) - volumeWidth
-					- (Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable() ? s(100) : 0),
+				result.heart.x() - s(12) - volumeWidth,
 				bar.y() + (bar.height() - _volume->height()) / 2,
 				volumeWidth,
 				_volume->height());
@@ -8683,7 +8748,7 @@ void AttachCommentsToPlayer(
 		not_null<Window::SessionController*> controller,
 		not_null<Ui::RpWidget*> parent,
 		not_null<Ui::RpWidget*> anchor,
-		bool replaceAnchor,
+		bool compactTimeline,
 		Fn<bool()> available) {
 	Settings::PreloadRowIcons(&controller->session());
 	const auto button = Ui::CreateChild<TimedComments>(parent);
@@ -8691,18 +8756,18 @@ void AttachCommentsToPlayer(
 		const auto track = PlayingTrack();
 		const auto allowed = !available || available();
 		const auto enabled = allowed && Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable();
+		const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+		button->setTimelineDuration(std::max<qint64>(track.durationMs,
+			state.length * 1000 / std::max<int64>(state.frequency, 1)));
 		button->setTrack(enabled ? track.id : QString());
 		const auto shown = enabled && button->validTrack() && button->avatarCount() > 0
-			&& (replaceAnchor || !anchor->isHidden());
+			&& !anchor->isHidden();
 		button->setVisible(shown);
-		if (replaceAnchor) anchor->setVisible(allowed && !shown);
-		const auto size = style::ConvertScale(32);
-		const auto rowWidth = replaceAnchor ? size : style::ConvertScale(96);
-		button->setGeometry(replaceAnchor
-			? anchor->x() + (anchor->width() - size) / 2
-			: anchor->x() - rowWidth - style::ConvertScale(4),
-			anchor->y() + (anchor->height() - size) / 2, rowWidth, size);
-		const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+		const auto size = style::ConvertScale(compactTimeline ? 24 : 28);
+		const auto anchorTop = anchor->mapTo(parent, QPoint());
+		button->setGeometry(anchorTop.x(),
+			std::clamp(anchorTop.y() + (anchor->height() - size) / 2,
+				0, std::max(0, parent->height() - size)), anchor->width(), size);
 		button->setPosition(state.position * 1000 / std::max<int64>(state.frequency, 1));
 		button->raise();
 	};
@@ -8723,7 +8788,7 @@ void AttachCommentsToPlayer(
 	}, button->lifetime());
 	anchor->events() | rpl::on_next([=](not_null<QEvent*> event) {
 		if (event->type() == QEvent::Move || event->type() == QEvent::Resize
-			|| (!replaceAnchor && (event->type() == QEvent::Show || event->type() == QEvent::Hide))) refresh();
+			|| event->type() == QEvent::Show || event->type() == QEvent::Hide) refresh();
 	}, button->lifetime());
 	parent->events() | rpl::on_next([=](not_null<QEvent*> event) {
 		if (event->type() == QEvent::Resize || event->type() == QEvent::Show) refresh();
