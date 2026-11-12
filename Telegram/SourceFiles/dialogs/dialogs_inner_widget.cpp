@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_inner_widget.h"
 #include "base/call_delayed.h"
 
+#include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/history/mokagram_history.h"
 
 #include "dialogs/dialogs_three_state_icon.h"
@@ -4144,10 +4145,12 @@ void InnerWidget::contextMenuEvent(QContextMenuEvent *e) {
 	_menu = base::make_unique_q<Ui::PopupMenu>(
 		this,
 		row.fullId ? st::defaultPopupMenu : st::popupMenuExpandedSeparator);
+	// Mokagram: localize bulk chat selection menu actions.
 	if (_bulkMode && !row.fullId) {
 		const auto controller = _controller;
 		_menu->addAction(
-			QString::fromUtf8("Удалить мои сообщения (%1)").arg(_bulkSelected.size()),
+			QString::fromUtf8(Mokagram::Lang::Tr("Удалить мои сообщения (%1)"))
+				.arg(_bulkSelected.size()),
 			[=] {
 				auto peers = std::vector<PeerId>();
 				for (const auto history : _bulkSelected) {
@@ -4160,7 +4163,7 @@ void InnerWidget::contextMenuEvent(QContextMenuEvent *e) {
 			},
 			&st::menuIconDelete);
 		_menu->addAction(
-			QString::fromUtf8("Снять выделение"),
+			QString::fromUtf8(Mokagram::Lang::Tr("Снять выделение")),
 			[=] { clearBulkSelect(); },
 			&st::menuIconCancel);
 	} else if (row.fullId) {
@@ -4186,7 +4189,7 @@ void InnerWidget::contextMenuEvent(QContextMenuEvent *e) {
 		const auto addAction = Ui::Menu::CreateAddActionCallback(_menu);
 		if (const auto history = row.key.history()) {
 			addAction(
-				QString::fromUtf8("Выделить"),
+				QString::fromUtf8(Mokagram::Lang::Tr("Выделить")),
 				[=] { startBulkSelect(history); },
 				&st::menuIconSelect);
 		}
