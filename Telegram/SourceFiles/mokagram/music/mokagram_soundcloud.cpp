@@ -1245,11 +1245,8 @@ void PostTrackComment(
 			done({}, QString::fromUtf8(Mokagram::Lang::Tr("Не удалось отправить комментарий")));
 			return;
 		}
-		auto url = QUrl(QString::fromLatin1(kApi)
+		auto url = QUrl(QString::fromLatin1(kPublicApi)
 			+ u"/tracks/"_q + trackId + u"/comments"_q);
-		auto query = QUrlQuery();
-		query.addQueryItem(u"client_id"_q, ClientId());
-		url.setQuery(query);
 		auto request = QNetworkRequest(url);
 		request.setRawHeader("User-Agent", kUserAgent);
 		request.setRawHeader("Authorization", QByteArray("OAuth ") + token.toUtf8());
