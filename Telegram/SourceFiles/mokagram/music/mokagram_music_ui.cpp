@@ -4833,6 +4833,9 @@ public:
 			++_generation;
 			_loading = false;
 			_comments.clear();
+			_active.clear();
+			_avatars.clear();
+			_pendingAvatars.clear();
 			_next.clear();
 			_note.clear();
 			if (Settings::Bool(key) && validTrack()) load({});
@@ -4924,8 +4927,7 @@ private:
 				int(_active.size()), std::max(1, width() / style::ConvertScale(32))) - 1);
 			const auto &comment = _comments[_active[slot]];
 			tip = (comment.author + u" · "_q + time(comment.timestampMs)
-				+ u"\n"_q + comment.body).toHtmlEscaped().replace('
-', u"<br>"_q);
+				+ u"\n"_q + comment.body).toHtmlEscaped().replace('\n', u"<br>"_q);
 		} else {
 			tip = (_note.isEmpty() ? QString::fromUtf8(Mokagram::Lang::Tr(
 				_loading ? "Загружаю комментарии…" : "Комментарии появятся в нужный момент трека")) : _note).toHtmlEscaped();
