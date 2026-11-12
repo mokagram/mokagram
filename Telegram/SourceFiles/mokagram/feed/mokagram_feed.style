@@ -35,7 +35,7 @@ feedPostText: TextStyle(defaultTextStyle) {
 feedScroll: ScrollArea(defaultScrollArea) {
     bg: mainMenuBg;
 }
-feedCategoryButton: RoundButton(defaultLightButton) {
+feedCategoryButton: RoundButton(defaultActiveButton) {
     height: 36px;
     radius: 18px;
     textTop: 8px;
@@ -43,7 +43,8 @@ feedCategoryButton: RoundButton(defaultLightButton) {
     textFgOver: windowFg;
     textBg: windowBgOver;
     textBgOver: windowBgRipple;
-    icon: icon {{ "intro_country_dropdown", windowSubTextFg }};
+    icon: icon {{ "intro_country_dropdown", activeButtonFg }};
+    iconOver: icon {{ "intro_country_dropdown", activeButtonFgOver }};
     iconPosition: point(-8px, 16px);
     style: defaultTextStyle;
 }
