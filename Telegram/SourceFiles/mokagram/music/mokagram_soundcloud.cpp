@@ -1243,65 +1243,6 @@ void LoadTrackComments(
 	});
 }
 
-void PostTrackComment(
-		const QString &trackId,
-		qint64 timestampMs,
-		const QString &body,
-		Fn<void(TrackComment, QString)> done) {
-	const auto text = body.trimmed();
-	if (!Account::IsLoggedIn() || !ValidTrackId(trackId)
-		|| timestampMs < 0 || text.isEmpty() || text.size() > 1000) {
-		done({}, QString::fromUtf8(Mokagram::Lang::Tr("Для комментария нужен вход в SoundCloud и текст до 1000 символов")));
-		return;
-	}
-	const auto token = AccountToken();
-	const auto user = Account::User();
-	auto url = QUrl(QString::fromLatin1(kPublicApi)
-		+ u"/tracks/"_q + trackId + u"/comments"_q);
-	auto request = QNetworkRequest(url);
-	request.setRawHeader("User-Agent", kUserAgent);
-	request.setRawHeader("Authorization", QByteArray("OAuth ") + token.toUtf8());
-	request.setRawHeader("Accept", "application/json");
-	request.setRawHeader("Content-Type", "application/json");
-	request.setRawHeader("Origin", "https://soundcloud.com");
-	request.setRawHeader("Referer", "https://soundcloud.com/");
-	request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-		QNetworkRequest::ManualRedirectPolicy);
-	request.setTransferTimeout(20000);
-	const auto payload = QJsonDocument(QJsonObject{
-		{ u"comment"_q, QJsonObject{
-			{ u"body"_q, text },
-			{ u"timestamp"_q, double(timestampMs) },
-		} },
-	}).toJson(QJsonDocument::Compact);
-	const auto reply = Net().post(request, payload);
-	QObject::connect(reply, &QNetworkReply::finished, reply, [=] {
-		const auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-		const auto data = reply->readAll();
-		reply->deleteLater();
-		// Не повторяем POST: при потере ответа комментарий мог сохраниться.
-		if (status >= 200 && status < 300) {
-			auto comment = ParseTrackComment(QJsonDocument::fromJson(data).object());
-			if (comment.body.isEmpty()) {
-				comment.body = text;
-				comment.timestampMs = timestampMs;
-				comment.author = user.username;
-				comment.avatarUrl = user.avatarUrl;
-			}
-			done(std::move(comment), {});
-		} else {
-			auto error = QString::fromUtf8(Mokagram::Lang::Tr(
-				status == 401
-					? "Вход в SoundCloud устарел: открой soundcloud.com в браузере и войди заново в mokaGram."
-					: "Не удалось отправить комментарий"));
-			if (status) error += u" (HTTP %1)"_q.arg(status);
-			if (!status || status >= 500) {
-				error += u". "_q + QString::fromUtf8(Mokagram::Lang::Tr("Проверь комментарии в SoundCloud перед повторной отправкой"));
-			}
-			done({}, std::move(error));
-		}
-	});
-}
 
 namespace Account {
 namespace {

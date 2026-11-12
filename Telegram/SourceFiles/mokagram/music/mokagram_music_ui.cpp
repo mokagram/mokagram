@@ -4805,74 +4805,12 @@ class TimedComments final : public Ui::RpWidget {
 public:
 	explicit TimedComments(QWidget *parent) : RpWidget(parent) {
 		setMouseTracking(true);
-		_send = Ui::CreateChild<Ui::RoundButton>(this,
-			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Написать"))),
-			BoxParts::PillActive());
 		_more = Ui::CreateChild<Ui::RoundButton>(this,
 			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Обновить"))),
 			BoxParts::PillLight());
-		_input = Ui::CreateChild<Ui::InputField>(this,
-			BoxParts::CardField(st::defaultInputField),
-			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Комментарий в SoundCloud"))));
-		_input->setMaxLength(1000);
-		_input->hide();
-		_send->setClickedCallback([=] {
-			if (_posting || !Account::IsLoggedIn()) return;
-			if (!_editing) {
-				_editing = true;
-				_stamp = _position;
-				_note.clear();
-				_input->show();
-				_input->setFocusFast();
-				refreshButtons();
-				update();
-				return;
-			}
-			const auto body = _input->getLastText().trimmed();
-			if (body.isEmpty()) {
-				_input->setFocusFast();
-				return;
-			}
-			_posting = true;
-			_input->setDisabled(true);
-			refreshButtons();
-			const auto id = _trackId;
-			const auto generation = _generation;
-			PostTrackComment(id, _stamp, body, crl::guard(this,
-				[=](TrackComment comment, QString error) {
-					if (_generation != generation) return;
-					_posting = false;
-					_input->setDisabled(false);
-					_note = std::move(error);
-					if (_note.isEmpty()) {
-						_comments.push_back(std::move(comment));
-						_input->setTextWithTags({});
-						_editing = false;
-						_input->hide();
-						_note = QString::fromUtf8(Mokagram::Lang::Tr("Комментарий опубликован в SoundCloud"));
-					}
-					refreshButtons();
-					update();
-				}));
-		});
 		_more->setClickedCallback([=] {
-			if (_editing) {
-				_editing = false;
-				_input->hide();
-				_note.clear();
-				refreshButtons();
-				update();
-			} else if (!_loading) {
-				load(_next);
-			}
+			if (!_loading) load(_next);
 		});
-		_input->submits() | rpl::on_next([=] {
-			if (_editing && !_posting) _send->clicked(Qt::NoModifier, Qt::LeftButton);
-		}, lifetime());
-		Account::Changes() | rpl::on_next([=] {
-			refreshButtons();
-			update();
-		}, lifetime());
 	}
 
 	void setTrack(const QString &id) {
@@ -4885,10 +4823,7 @@ public:
 		_note.clear();
 		_avatar = {};
 		_avatarUrl.clear();
-		_editing = _posting = _loading = false;
-		_input->setDisabled(false);
-		_input->setTextWithTags({});
-		_input->hide();
+		_loading = false;
 		const auto number = id.toULongLong();
 		setVisible(number && QString::number(number) == id);
 		if (isHidden()) return;
@@ -4907,13 +4842,13 @@ public:
 
 protected:
 	void mouseMoveEvent(QMouseEvent *event) override {
-		setCursor(!_editing && _shownTimestamp >= 0
+		setCursor(_shownTimestamp >= 0
 			&& event->pos().y() >= style::ConvertScale(32)
 			&& event->pos().y() < style::ConvertScale(96)
 			? style::cur_pointer : style::cur_default);
 	}
 	void mousePressEvent(QMouseEvent *event) override {
-		if (event->button() == Qt::LeftButton && !_editing
+		if (event->button() == Qt::LeftButton
 			&& _shownTimestamp >= 0
 			&& event->pos().y() >= style::ConvertScale(32)
 			&& event->pos().y() < style::ConvertScale(96)) {
@@ -4922,12 +4857,9 @@ protected:
 	}
 	void resizeEvent(QResizeEvent *e) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto half = std::max(0, (width() - s(36)) / 2);
-		_send->setFullWidth(half);
-		_more->setFullWidth(half);
-		_send->setGeometry(s(14), height() - s(48), half, s(40));
-		_more->setGeometry(s(22) + half, height() - s(48), half, s(40));
-		_input->setGeometry(s(14), s(36), std::max(0, width() - s(28)), s(54));
+		const auto available = std::max(0, width() - s(28));
+		_more->setFullWidth(available);
+		_more->setGeometry(s(14), height() - s(48), available, s(40));
 		RpWidget::resizeEvent(e);
 	}
 
@@ -4940,60 +4872,55 @@ protected:
 		p.drawText(QRect(s(14), s(6), width() - s(28), s(24)),
 			Qt::AlignVCenter, st::normalFont->elided(
 				QString::fromUtf8(Mokagram::Lang::Tr("Комментарии SoundCloud"))
-					+ u" · "_q + time(_editing ? _stamp : _position), width() - s(28)));
-		auto note = _note;
-		if (!Account::IsLoggedIn()) {
-			note = QString::fromUtf8(Mokagram::Lang::Tr("Войди в SoundCloud в разделе лайков, чтобы комментировать"));
-		}
+					+ u" · "_q + time(_position), width() - s(28)));
+
 		_shownTimestamp = -1;
-		if (!_editing) {
-			const TrackComment *active = nullptr;
-			for (const auto &comment : _comments) {
-				if (comment.timestampMs >= 0 && comment.timestampMs <= _position
-					&& _position - comment.timestampMs < 7000
-					&& (!active || comment.timestampMs >= active->timestampMs)) {
-					active = &comment;
-				}
+		const TrackComment *active = nullptr;
+		for (const auto &comment : _comments) {
+			if (comment.timestampMs >= 0 && comment.timestampMs <= _position
+				&& _position - comment.timestampMs < 7000
+				&& (!active || comment.timestampMs >= active->timestampMs)) {
+				active = &comment;
 			}
-			if (active) {
-				_shownTimestamp = active->timestampMs;
-				setToolTip(active->author + u"\n"_q + active->body);
-				if (_avatarUrl != active->avatarUrl) {
-					_avatarUrl = active->avatarUrl;
-					_avatar = {};
-					const auto url = _avatarUrl;
-					if (!url.isEmpty()) LoadImage(url, crl::guard(this, [=](QImage image) {
-						if (_avatarUrl != url) return;
-						_avatar = std::move(image);
-						update();
-					}));
-				}
-				if (!_avatar.isNull()) {
-					p.save();
-					auto clip = QPainterPath();
-					clip.addEllipse(QRect(s(14), s(36), s(32), s(32)));
-					p.setClipPath(clip);
-					p.drawImage(QRect(s(14), s(36), s(32), s(32)), _avatar);
-					p.restore();
-				}
-				p.setPen(st::windowFg);
-				p.setFont(st::semiboldFont);
-				p.drawText(QRect(s(54), s(32), width() - s(68), s(22)),
-					Qt::AlignVCenter, st::semiboldFont->elided(
-						active->author + u" · "_q + time(active->timestampMs), width() - s(68)));
-				p.setFont(st::normalFont);
-				p.drawText(QRect(s(54), s(56), width() - s(68), s(40)),
-					Qt::TextWordWrap, active->body);
-			} else {
-				setToolTip({});
-				p.drawText(QRect(s(14), s(34), width() - s(28), s(48)),
-					Qt::TextWordWrap, QString::fromUtf8(Mokagram::Lang::Tr(
-						_loading ? "Загружаю комментарии…" : "Комментарии появятся в нужный момент трека")));
+		}
+		if (active) {
+			_shownTimestamp = active->timestampMs;
+			setToolTip(active->author + u"\n"_q + active->body);
+			if (_avatarUrl != active->avatarUrl) {
+				_avatarUrl = active->avatarUrl;
+				_avatar = {};
+				const auto url = _avatarUrl;
+				if (!url.isEmpty()) LoadImage(url, crl::guard(this, [=](QImage image) {
+					if (_avatarUrl != url) return;
+					_avatar = std::move(image);
+					update();
+				}));
 			}
+			if (!_avatar.isNull()) {
+				p.save();
+				auto clip = QPainterPath();
+				clip.addEllipse(QRect(s(14), s(36), s(32), s(32)));
+				p.setClipPath(clip);
+				p.drawImage(QRect(s(14), s(36), s(32), s(32)), _avatar);
+				p.restore();
+			}
+			p.setPen(st::windowFg);
+			p.setFont(st::semiboldFont);
+			p.drawText(QRect(s(54), s(32), width() - s(68), s(22)),
+				Qt::AlignVCenter, st::semiboldFont->elided(
+					active->author + u" · "_q + time(active->timestampMs), width() - s(68)));
+			p.setFont(st::normalFont);
+			p.drawText(QRect(s(54), s(56), width() - s(68), s(40)),
+				Qt::TextWordWrap, active->body);
+		} else {
+			setToolTip({});
+			p.drawText(QRect(s(14), s(34), width() - s(28), s(48)),
+				Qt::TextWordWrap, QString::fromUtf8(Mokagram::Lang::Tr(
+					_loading ? "Загружаю комментарии…" : "Комментарии появятся в нужный момент трека")));
 		}
 		p.setPen(st::windowSubTextFg);
 		p.drawText(QRect(s(14), s(96), width() - s(28), s(40)),
-			Qt::TextWordWrap, note);
+			Qt::TextWordWrap, _note);
 	}
 
 private:
@@ -5002,12 +4929,9 @@ private:
 		return u"%1:%2"_q.arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'));
 	}
 	void refreshButtons() {
-		_send->setText(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr(
-			_editing ? "Отправить" : "Написать"))));
-		_send->setDisabled(_posting || !Account::IsLoggedIn());
 		_more->setText(rpl::single(QString::fromUtf8(Mokagram::Lang::Tr(
-			_editing ? "Отмена" : _next.isEmpty() ? "Обновить" : "Загрузить ещё"))));
-		_more->setDisabled(_posting || (!_editing && _loading));
+			_next.isEmpty() ? "Обновить" : "Загрузить ещё"))));
+		_more->setDisabled(_loading);
 	}
 	void load(const QString &cursor) {
 		_loading = true;
@@ -5031,17 +4955,15 @@ private:
 			update();
 		}));
 	}
-	Ui::RoundButton *_send = nullptr;
 	Ui::RoundButton *_more = nullptr;
-	Ui::InputField *_input = nullptr;
 	QString _trackId, _next, _note, _avatarUrl;
 	QImage _avatar;
 	std::vector<TrackComment> _comments;
 	rpl::event_stream<qint64> _seekRequests;
 	qint64 _shownTimestamp = -1;
-	qint64 _position = 0, _stamp = 0;
+	qint64 _position = 0;
 	int _generation = 0;
-	bool _editing = false, _posting = false, _loading = false;
+	bool _loading = false;
 };
 
 class LyricsView final : public Ui::RpWidget {

@@ -155,11 +155,6 @@ void LoadTrackComments(
 	const QString &trackId,
 	const QString &cursor,
 	Fn<void(TrackCommentsPage)> done);
-void PostTrackComment(
-	const QString &trackId,
-	qint64 timestampMs,
-	const QString &body,
-	Fn<void(TrackComment, QString)> done);
 
 namespace Account {
 
