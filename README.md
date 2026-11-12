@@ -64,13 +64,6 @@ mokaGram собирается так же, как Telegram Desktop:
 
 Устройство репозитория: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Исходники Telegram Desktop и список сторонних библиотек: [telegramdesktop/tdesktop](https://github.com/telegramdesktop/tdesktop).
 
-## Контрибьюторы
-
-<a href="https://github.com/ecronxy"><img src="https://github.com/ecronxy.png?size=96" width="48" height="48" alt="ecronxy" title="ecronxy"></a>
-<a href="https://github.com/xdshkaaa"><img src="https://github.com/xdshkaaa.png?size=96" width="48" height="48" alt="xdshkaaa" title="xdshkaaa"></a>
-<a href="https://github.com/kierradev"><img src="https://github.com/kierradev.png?size=96" width="48" height="48" alt="kierradev" title="kierradev"></a>
-<a href="https://github.com/misterbazed"><img src="https://github.com/misterbazed.png?size=96" width="48" height="48" alt="misterbazed" title="misterbazed"></a>
-
 ## Авторство и лицензия
 
 > **Основано на mokaGram, автор [@ecronx](https://t.me/ecronx) (https://t.me/ecronx). https://github.com/mokagram/mokagram**
