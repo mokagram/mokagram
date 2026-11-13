@@ -5782,7 +5782,7 @@ private:
 				const auto past = _lyrics.synced && i < _current;
 				const auto rest = !_lyrics.synced
 					? 0.84
-					: std::max(0.3, (past ? 0.43 : 0.56) - 0.04 * distance);
+					: std::max(0.22, (past ? 0.34 : 0.44) - 0.04 * distance);
 				const auto cy = top + lineHeight / 2.;
 				auto edge = 1.;
 				if (_big) {
@@ -5804,7 +5804,7 @@ private:
 					origin,
 					(_lyrics.synced && i == _current) ? _fill : -1.,
 					(rest + (1. - rest) * w) * edge,
-					(rest + (0.8 - rest) * w) * edge);
+					(rest + (0.45 - rest) * w) * edge);
 			}
 			top += lineHeight;
 			if (top > height() + 400) {
