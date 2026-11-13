@@ -63,6 +63,10 @@ void CleanTemp() {
 
 [[nodiscard]] QString TempPath(const QString &name) {
 	QDir().mkpath(TempDir());
+	// Копии защищённых файлов: в общем /tmp их видит только владелец.
+	QFile::setPermissions(
+		TempDir(),
+		QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
 	const auto clean = QString(name).replace('/', '_').replace('\\', '_');
 	return TempDir()
 		+ QString::number(base::RandomValue<uint32>(), 16)
@@ -145,6 +149,7 @@ void Process(std::shared_ptr<Job> job);
 		if (!file.open(QIODevice::WriteOnly)) {
 			return {};
 		}
+		file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 		file.write(view->bytes());
 	}
 	if (path.isEmpty()) {
@@ -157,6 +162,9 @@ void Process(std::shared_ptr<Job> job);
 		if (!info.isFile() || info.size() != document->size) {
 			return { .waiting = true };
 		}
+		QFile::setPermissions(
+			target,
+			QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 		path = target;
 	}
 	if (voice) {
