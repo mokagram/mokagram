@@ -4910,6 +4910,8 @@ void HistoryInner::updateSize() {
 	if (aboutBelowHistory) {
 		accumulate_max(newHistoryMarginBottom, _aboutView->height);
 	}
+	// Mokagram: лента заходит под баббл ввода, низ держим над ним.
+	newHistoryMarginBottom += _scroll->property("mokaBottomSkip").toInt();
 	auto newHistoryMarginTop = std::max(
 		visibleHeight - itemsHeight - newHistoryMarginBottom,
 		0);

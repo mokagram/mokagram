@@ -200,6 +200,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session_settings.h"
 #include "main/session/send_as_peers.h"
 #include "webrtc/webrtc_environment.h"
+#include "mainwidget.h"
 #include "window/notifications_manager.h"
 #include "window/window_adaptive.h"
 #include "window/window_controller.h"
@@ -267,6 +268,86 @@ constexpr auto kMokaComposerButton = "moka-composer-button";
 // Mokagram: панель ввода парит баббло́м, отступ от краёв окна.
 [[nodiscard]] int MokaBubbleSkip() {
 	return style::ConvertScale(10);
+}
+
+constexpr auto kMokaComposeOverlay = "moka-compose-overlay";
+
+// Mokagram: часть ленты, ушедшая под баббл ввода.
+[[nodiscard]] int MokaScrollBottomSkip(not_null<QWidget*> scroll) {
+	return scroll->property("mokaBottomSkip").toInt();
+}
+
+[[nodiscard]] QRect MokaVisibleScrollGeometry(not_null<QWidget*> scroll) {
+	return scroll->geometry().marginsRemoved(
+		{ 0, 0, 0, MokaScrollBottomSkip(scroll) });
+}
+
+[[nodiscard]] Ui::RpWidget *MokaComposeOverlay(not_null<QWidget*> parent) {
+	return parent->findChild<Ui::RpWidget*>(
+		kMokaComposeOverlay,
+		Qt::FindDirectChildrenOnly);
+}
+
+[[nodiscard]] int MokaBubbleRadius(int height) {
+	return std::min(style::ConvertScale(22), height / 2);
+}
+
+// Mokagram: плашки вместо поля (JOIN, UNMUTE, START, UNBLOCK) тоже баббл.
+// Базовая кнопка рисует только текст и рипл, фон рисуем скруглённым.
+[[nodiscard]] const style::FlatButton &MokaBubbleButtonStyle(
+		const style::FlatButton &st) {
+	static auto cache = base::flat_map<
+		const style::FlatButton*,
+		std::unique_ptr<style::FlatButton>>();
+	auto &result = cache[&st];
+	if (!result) {
+		result = std::make_unique<style::FlatButton>(st);
+		result->bgColor = st::transparent;
+		result->overBgColor = st::transparent;
+	}
+	return *result;
+}
+
+class MokaBubbleButton final : public Ui::FlatButton {
+public:
+	MokaBubbleButton(
+		QWidget *parent,
+		const QString &text,
+		const style::FlatButton &st)
+	: FlatButton(parent, text, MokaBubbleButtonStyle(st))
+	, _bg(st) {
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		{
+			auto p = QPainter(this);
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(isOver() ? _bg.overBgColor : _bg.bgColor);
+			const auto radius = MokaBubbleRadius(height());
+			p.drawRoundedRect(rect(), radius, radius);
+		}
+		FlatButton::paintEvent(e);
+	}
+
+	QImage prepareRippleMask() const override {
+		return Ui::RippleAnimation::RoundRectMask(
+			size(),
+			MokaBubbleRadius(height()));
+	}
+
+private:
+	const style::FlatButton &_bg;
+
+};
+
+[[nodiscard]] object_ptr<Ui::FlatButton> MakeMokaBubbleButton(
+		QWidget *parent,
+		const QString &text,
+		const style::FlatButton &st) {
+	return object_ptr<Ui::FlatButton>::fromRaw(
+		new MokaBubbleButton(parent, text, st));
 }
 
 // Mokagram: кнопки плагинов рядом с полем ввода (место "composer").
@@ -355,23 +436,26 @@ HistoryWidget::HistoryWidget(
 , _discardRichDraft(Ui::CreateChild<Ui::IconButton>(
 	this,
 	st::historyDiscardRichDraftButton))
-, _unblock(
+, _unblock(MakeMokaBubbleButton(
 	this,
 	tr::lng_unblock_button(tr::now).toUpper(),
-	st::historyUnblock)
-, _botStart(
+	st::historyUnblock))
+, _botStart(MakeMokaBubbleButton(
 	this,
 	tr::lng_bot_start(tr::now).toUpper(),
-	st::historyComposeButton)
-, _joinChannel(
+	st::historyComposeButton))
+, _joinChannel(MakeMokaBubbleButton(
 	this,
 	tr::lng_profile_join_channel(tr::now).toUpper(),
-	st::historyComposeButton)
-, _muteUnmute(
+	st::historyComposeButton))
+, _muteUnmute(MakeMokaBubbleButton(
 	this,
 	tr::lng_channel_mute(tr::now).toUpper(),
-	st::historyComposeButton)
-, _reportMessages(this, QString(), st::historyComposeButton)
+	st::historyComposeButton))
+, _reportMessages(MakeMokaBubbleButton(
+	this,
+	QString(),
+	st::historyComposeButton))
 , _attachToggle(this, st::historyAttach)
 , _tabbedSelectorToggle(this, st::historyAttachEmoji)
 , _botKeyboardShow(this, st::historyBotKeyboardShow)
@@ -430,6 +514,70 @@ HistoryWidget::HistoryWidget(
 , _topShadow(this) {
 	setAcceptDrops(true);
 	setVisualTabOrder(true);
+
+	// Mokagram: панель ввода рисуется слоем поверх ленты, чтобы
+	// переписка была видна под скруглёнными углами и по бокам баббла.
+	{
+		const auto overlay = Ui::CreateChild<Ui::RpWidget>(this);
+		overlay->setObjectName(kMokaComposeOverlay);
+		overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+		overlay->stackUnder(_send.get());
+		_fieldBarCancel->stackUnder(_send.get());
+		overlay->paintRequest() | rpl::on_next([=](QRect clip) {
+			if (_list && MokaScrollBottomSkip(_scroll.data()) > 0) {
+				// лента под бабблом растворяется в обои
+				const auto ratio = style::DevicePixelRatio();
+				auto image = QImage(
+					overlay->size() * ratio,
+					QImage::Format_ARGB32_Premultiplied);
+				image.setDevicePixelRatio(ratio);
+				image.fill(Qt::transparent);
+				{
+					auto q = QPainter(&image);
+					const auto fromy
+						= controller->content()->backgroundFromY();
+					q.translate(-overlay->x(), -overlay->y() + fromy);
+					Window::SectionWidget::PaintBackground(
+						q,
+						controller->currentChatTheme(),
+						QSize(width(), controller->content()->height()),
+						overlay->geometry().translated(0, -fromy),
+						controller->isGifPausedAtLeastFor(
+							Window::GifPauseReason::Any));
+					q.resetTransform();
+					q.setCompositionMode(
+						QPainter::CompositionMode_DestinationIn);
+					auto mask = QLinearGradient(
+						0,
+						0,
+						0,
+						overlay->height());
+					mask.setStops({
+						{ 0., QColor(0, 0, 0, 0) },
+						{ 1., QColor(0, 0, 0, 255) },
+					});
+					q.fillRect(overlay->rect(), mask);
+				}
+				auto p = QPainter(overlay);
+				p.drawImage(0, 0, image);
+			}
+			if (!_list || isSearching()) {
+				return;
+			}
+			const auto restrictionHidden = fieldOrDisabledShown()
+				|| isRecording();
+			if (!restrictionHidden
+				&& !replyTo()
+				&& !readyToForward()
+				&& !_kbShown
+				&& !_suggestOptions) {
+				return;
+			}
+			Painter p(overlay);
+			p.translate(-overlay->pos());
+			drawField(p, clip.translated(overlay->pos()));
+		}, overlay->lifetime());
+	}
 
 	// The controls inside these are created in an order of their own - the
 	// top bar's selection buttons start with the one placed last, the bars
@@ -2998,8 +3146,8 @@ void HistoryWidget::setupGiftToChannelButton() {
 		_muteUnmute.data(),
 		st::historyGiftToChannel);
 	_giftToChannel->setAccessibleName(tr::lng_gift_channel_title(tr::now));
-	widthValue() | rpl::on_next([=](int width) {
-		_giftToChannel->moveToRight(0, 0, width);
+	widthValue() | rpl::on_next([=](int) {
+		_giftToChannel->moveToRight(0, 0);
 	}, _giftToChannel->lifetime());
 	_giftToChannel->setClickedCallback([=] {
 		Ui::ShowStarGiftBox(controller(), _peer);
@@ -3026,8 +3174,8 @@ void HistoryWidget::setupDirectMessageButton() {
 		_muteUnmute.data(),
 		st::historyDirectMessage);
 		_directMessage->setAccessibleName(tr::lng_profile_direct_messages(tr::now));
-	widthValue() | rpl::on_next([=](int width) {
-		_directMessage->moveToLeft(0, 0, width);
+	widthValue() | rpl::on_next([=](int) {
+		_directMessage->moveToLeft(0, 0);
 	}, _directMessage->lifetime());
 	_directMessage->setClickedCallback([=] {
 		if (const auto channel = _peer ? _peer->asChannel() : nullptr) {
@@ -6931,7 +7079,9 @@ bool HistoryWidget::floatPlayerHandleWheelEvent(QEvent *e) {
 }
 
 QRect HistoryWidget::floatPlayerAvailableRect() {
-	return _peer ? mapToGlobal(_scroll->geometry()) : mapToGlobal(rect());
+	return _peer
+		? mapToGlobal(MokaVisibleScrollGeometry(_scroll.data()))
+		: mapToGlobal(rect());
 }
 
 bool HistoryWidget::readyToForward() const {
@@ -7765,9 +7915,9 @@ void HistoryWidget::moveFieldControls() {
 	}
 
 	const auto fullWidthButtonRect = myrtlrect(
-		0,
+		MokaBubbleSkip(),
 		bottom - _botStart->height(),
-		width(),
+		width() - 2 * MokaBubbleSkip(),
 		_botStart->height());
 	_botStart->setGeometry(fullWidthButtonRect);
 	_unblock->setGeometry(fullWidthButtonRect);
@@ -7776,6 +7926,12 @@ void HistoryWidget::moveFieldControls() {
 	_reportMessages->setGeometry(fullWidthButtonRect);
 	if (_sendRestriction) {
 		_sendRestriction->setGeometry(fullWidthButtonRect);
+	}
+	if (_giftToChannel) {
+		_giftToChannel->moveToRight(0, 0);
+	}
+	if (_directMessage) {
+		_directMessage->moveToLeft(0, 0);
 	}
 }
 
@@ -8454,10 +8610,12 @@ void HistoryWidget::updateControlsGeometry() {
 	if (_scroll->y() != scrollAreaTop || _scroll->x() != tabsLeftSkip) {
 		_scroll->moveToLeft(tabsLeftSkip, scrollAreaTop);
 		if (_autocomplete) {
-			_autocomplete->setBoundings(_scroll->geometry());
+			_autocomplete->setBoundings(
+				MokaVisibleScrollGeometry(_scroll.data()));
 		}
 		if (_supportAutocomplete) {
-			_supportAutocomplete->setBoundings(_scroll->geometry());
+			_supportAutocomplete->setBoundings(
+				MokaVisibleScrollGeometry(_scroll.data()));
 		}
 	}
 
@@ -8734,6 +8892,7 @@ void HistoryWidget::updateHistoryGeometry(
 	if (_businessBotStatus) {
 		newScrollHeight -= _businessBotStatus->bar().height();
 	}
+	const auto mokaHeightAboveBottom = newScrollHeight;
 	if (isChoosingTheme()) {
 		newScrollHeight -= _chooseTheme->height();
 	} else if (!editingMessage()
@@ -8743,7 +8902,7 @@ void HistoryWidget::updateHistoryGeometry(
 			|| isJoinChannel()
 			|| isMuteUnmute()
 			|| isReportMessages())) {
-		newScrollHeight -= _unblock->height();
+		newScrollHeight -= _unblock->height() + MokaBubbleSkip();
 	} else {
 		if (editingMessage() || _canSendMessages) {
 			newScrollHeight -= (fieldHeight()
@@ -8766,6 +8925,34 @@ void HistoryWidget::updateHistoryGeometry(
 	if (newScrollHeight <= 0) {
 		return;
 	}
+	// Mokagram: лента уходит под баббл ввода до низа окна, а снизу
+	// получает такой же отступ, так что сообщения стоят на месте.
+	const auto mokaBottomZone = mokaHeightAboveBottom - newScrollHeight;
+	const auto mokaButtons = !editingMessage()
+		&& (isBlocked()
+			|| isBotStart()
+			|| isJoinChannel()
+			|| isMuteUnmute()
+			|| isReportMessages());
+	const auto mokaField = (editingMessage() || _canSendMessages);
+	const auto mokaFloat = !isChoosingTheme()
+		&& !isSearching()
+		&& !_kbShown
+		&& (mokaButtons || mokaField);
+	const auto mokaBottomSkip = mokaFloat ? mokaBottomZone : 0;
+	const auto mokaSkipChanged
+		= (MokaScrollBottomSkip(_scroll.data()) != mokaBottomSkip);
+	_scroll->setProperty("mokaBottomSkip", mokaBottomSkip);
+	if (const auto overlay = MokaComposeOverlay(this)) {
+		overlay->setGeometry(
+			0,
+			height() - mokaBottomZone,
+			width(),
+			mokaBottomZone);
+		overlay->show();
+	}
+	const auto visibleScrollHeight = newScrollHeight;
+	newScrollHeight += mokaBottomSkip;
 	const auto wasScrollTop = _scroll->scrollTop();
 	const auto wasAtBottom = (wasScrollTop >= _scroll->scrollTopMax());
 	const auto needResize = (_scroll->width() != newScrollWidth)
@@ -8779,19 +8966,21 @@ void HistoryWidget::updateHistoryGeometry(
 			visibleAreaUpdated();
 		}
 	}
-	if (needResize || initial) {
+	if (needResize || initial || mokaSkipChanged) {
 		if (_autocomplete) {
-			_autocomplete->setBoundings(_scroll->geometry());
+			_autocomplete->setBoundings(
+				MokaVisibleScrollGeometry(_scroll.data()));
 		}
 		if (_supportAutocomplete) {
-			_supportAutocomplete->setBoundings(_scroll->geometry());
+			_supportAutocomplete->setBoundings(
+				MokaVisibleScrollGeometry(_scroll.data()));
 		}
 		_cornerButtons.updatePositions();
 		controller()->floatPlayerAreaUpdated();
 	}
 	if (_subsectionTabs) {
 		const auto tabsBottomSkip = _subsectionTabs->bottomSkip();
-		const auto scrollBottom = _scroll->y() + newScrollHeight;
+		const auto scrollBottom = _scroll->y() + visibleScrollHeight;
 		const auto areaHeight = scrollBottom
 			+ tabsBottomSkip
 			- subsectionTabsTop;
@@ -11409,7 +11598,7 @@ void HistoryWidget::updateField() {
 		return;
 	}
 	_repaintFieldScheduled = true;
-	const auto fieldAreaTop = _scroll->y() + _scroll->height();
+	const auto fieldAreaTop = MokaVisibleScrollGeometry(_scroll.data()).bottom() + 1;
 	rtlupdate(0, fieldAreaTop, width(), height() - fieldAreaTop);
 }
 
@@ -11733,17 +11922,8 @@ void HistoryWidget::paintEvent(QPaintEvent *e) {
 	const auto clip = e->rect();
 	if (_list) {
 		Mokagram::Commands::QuoteStageReset();
-		const auto restrictionHidden = fieldOrDisabledShown()
-			|| isRecording();
-		if (restrictionHidden
-			|| replyTo()
-			|| readyToForward()
-			|| _kbShown
-			|| _suggestOptions) {
-			if (!isSearching()) {
-				drawField(p, clip);
-			}
-		}
+		// Mokagram: панель ввода рисует слой kMokaComposeOverlay поверх
+		// ленты, он перерисовывается вместе с этой областью.
 	} else if (Mokagram::Commands::PaintQuoteStage(
 			p,
 			rect(),

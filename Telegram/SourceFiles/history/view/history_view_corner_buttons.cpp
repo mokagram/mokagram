@@ -538,10 +538,13 @@ void CornerButtons::updatePositions() {
 	};
 
 	// All corner buttons is a child widgets of _column over _scroll, not me.
+	// Mokagram: лента уходит под баббл ввода, кнопки держим над ним.
+	const auto parentHeight = _parent->height()
+		- _parent->property("mokaBottomSkip").toInt();
 
 	const auto columnWidth = st::historyToDown.width
 		+ 2 * st::historyToDownPosition.x();
-	_column.resize(columnWidth, _parent->height());
+	_column.resize(columnWidth, parentHeight);
 	_column.moveToRight(0, 0, _parent->width());
 
 	const auto historyDownShown = shown(_down);
@@ -557,7 +560,7 @@ void CornerButtons::updatePositions() {
 			historyDownShown);
 		_down.widget->moveToRight(
 			st::historyToDownPosition.x(),
-			_parent->height() - top);
+			parentHeight - top);
 	}
 	{
 		const auto right = anim::interpolate(
@@ -568,7 +571,7 @@ void CornerButtons::updatePositions() {
 			0,
 			_down.widget->height() + skip,
 			historyDownShown);
-		const auto top = _parent->height()
+		const auto top = parentHeight
 			- _mentions.widget->height()
 			- st::historyToDownPosition.y()
 			- shift;
@@ -587,7 +590,7 @@ void CornerButtons::updatePositions() {
 			0,
 			_mentions.widget->height() + skip,
 			unreadMentionsShown);
-		const auto top = _parent->height()
+		const auto top = parentHeight
 			- _reactions.widget->height()
 			- st::historyToDownPosition.y()
 			- shift;
@@ -610,7 +613,7 @@ void CornerButtons::updatePositions() {
 				0,
 				_reactions.widget->height() + skip,
 				unreadReactionsShown);
-		const auto top = _parent->height()
+		const auto top = parentHeight
 			- _pollVotes.widget->height()
 			- st::historyToDownPosition.y()
 			- shift;
@@ -637,7 +640,7 @@ void CornerButtons::updatePositions() {
 				0,
 				_pollVotes.widget->height() + skip,
 				unreadPollVotesShown);
-		const auto top = _parent->height()
+		const auto top = parentHeight
 			- _stash.widget->height()
 			- st::historyToDownPosition.y()
 			- shift;
