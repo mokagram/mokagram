@@ -744,6 +744,45 @@ Widget::Widget(
 		listScrollUpdated();
 	}, lifetime());
 
+	{
+		// Mokagram: нижний правый угол списка чатов скруглён.
+		// Рисуем поверх списка, геометрию строк не трогаем.
+		const auto corner = Ui::CreateChild<Ui::RpWidget>(this);
+		corner->setAttribute(Qt::WA_TransparentForMouseEvents);
+		const auto radius = [] { return style::ConvertScale(28); };
+		sizeValue(
+		) | rpl::on_next([=](QSize size) {
+			const auto r = radius();
+			corner->setGeometry(size.width() - r, size.height() - r, r, r);
+			corner->raise();
+			corner->show();
+		}, corner->lifetime());
+		corner->paintRequest(
+		) | rpl::on_next([=] {
+			auto p = QPainter(corner);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto r = radius();
+			auto path = QPainterPath();
+			path.addRect(QRectF(0, 0, r, r));
+			auto body = QPainterPath();
+			body.addRoundedRect(QRectF(-r, -r, r * 2, r * 2), r, r);
+			// Цвет угла берём у соседнего пикселя чата справа от угла,
+			// чтобы он совпадал с обоями, а не с windowBg.
+			auto color = QColor(st::windowBg->c);
+			if (const auto top = corner->window()) {
+				const auto at = corner->mapTo(top, QPoint(r, r - 1));
+				const auto image = top->grab(QRect(at, QSize(1, 1)))
+					.toImage();
+				if (!image.isNull()) {
+					color = image.pixelColor(0, 0);
+				}
+			}
+			p.setPen(Qt::NoPen);
+			p.setBrush(color);
+			p.drawPath(path.subtracted(body));
+		}, corner->lifetime());
+	}
+
 	session().data().chatsListChanges(
 	) | rpl::filter([=](Data::Folder *folder) {
 		return (folder == _inner->shownFolder());
