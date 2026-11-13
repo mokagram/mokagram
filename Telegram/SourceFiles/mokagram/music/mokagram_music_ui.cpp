@@ -412,6 +412,54 @@ void ChatMusicSearch::searchMore() {
 	return result;
 }
 
+// Mokagram: один поиск обложки для одинаковых локальных песен в списке и плеере.
+void LoadLocalArtwork(const Track &track, Fn<void(QImage)> done) {
+	using Key = std::pair<QString, QString>;
+	static auto urls = std::map<Key, QString>();
+	static auto pending = std::map<Key, std::vector<Fn<void(QImage)>>>();
+	const auto key = Key(track.title.trimmed(), track.artist.trimmed());
+	if (key.first.isEmpty()) {
+		done(QImage());
+		return;
+	}
+	if (const auto i = urls.find(key); i != urls.end()) {
+		LoadImage(i->second, std::move(done));
+		return;
+	}
+	const auto active = pending.contains(key);
+	pending[key].push_back(std::move(done));
+	if (active) {
+		return;
+	}
+	Search(key.first, 0, [=](SearchResult result) {
+		auto matches = std::vector<Track>();
+		for (const auto &candidate : result.tracks) {
+			if (candidate.title.trimmed() == key.first
+				&& candidate.id.toULongLong()) {
+				matches.push_back(candidate);
+			}
+		}
+		if (matches.size() > 1) {
+			std::erase_if(matches, [&](const Track &candidate) {
+				return key.second.isEmpty()
+					|| candidate.artist.trimmed() != key.second;
+			});
+		}
+		const auto url = result.error.isEmpty() && matches.size() == 1
+			? ArtUrl(matches.front().artworkUrl, u"t500x500"_q)
+			: QString();
+		if (result.error.isEmpty()) {
+			if (urls.size() >= 256) urls.erase(urls.begin());
+			urls[key] = url;
+		}
+		auto callbacks = std::move(pending[key]);
+		pending.erase(key);
+		for (auto &callback : callbacks) {
+			LoadImage(url, std::move(callback));
+		}
+	});
+}
+
 [[nodiscard]] not_null<DocumentData*> MakeDocument(
 		not_null<Main::Session*> session,
 		const Track &track,
@@ -2106,6 +2154,13 @@ public:
 				const auto document = item->media()->document();
 				_media = document->createMediaView();
 				_media->thumbnailWanted(item->fullId());
+				LoadLocalArtwork(track, crl::guard(this, [=](QImage image) {
+					if (!image.isNull()) {
+						_media = nullptr;
+						_art = std::move(image);
+						update();
+					}
+				}));
 				document->session().downloaderTaskFinished(
 				) | rpl::on_next([=] { update(); }, lifetime());
 			} else if (!IsTelegramTrack(track)) {
@@ -9243,26 +9298,31 @@ void RefreshAvailability() {
 				state.changes.fire({});
 			}
 		});
-	// У трека из чата обложка - мелкая миниатюра документа: ищем ту же
-	// обложку в высоком качестве тем же поиском, что и текст.
+	// Обложка SC имеет приоритет; прежний поиск остаётся запасным вариантом.
 	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
 	const auto document = current.audio();
 	if (!document
-		|| OwnsTrack(current)
+		|| !IsTelegramTrack(track)
 		|| !CoverForDocument(document->id).isNull()) {
 		return;
 	}
 	const auto documentId = document->id;
-	FetchArtwork(
-		id,
-		track.title,
-		track.artist,
-		track.durationMs,
-		[=](QImage image) {
-			if (!image.isNull()) {
-				SetCover(documentId, std::move(image));
-			}
-		});
+	LoadLocalArtwork(track, [=](QImage image) {
+		if (!image.isNull()) {
+			SetCover(documentId, std::move(image));
+			return;
+		}
+		FetchArtwork(
+			id,
+			track.title,
+			track.artist,
+			track.durationMs,
+			[=](QImage fallback) {
+				if (!fallback.isNull()) {
+					SetCover(documentId, std::move(fallback));
+				}
+			});
+	});
 }
 
 } // namespace
