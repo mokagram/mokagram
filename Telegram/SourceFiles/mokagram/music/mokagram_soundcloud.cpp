@@ -1750,7 +1750,7 @@ void FinishPlaylistSyncData(const std::shared_ptr<PlaylistSyncState> &state) {
 	}
 	const auto complete = state->complete && state->likesComplete;
 	::Mokagram::Music::MergeRemotePlaylists(remote, complete);
-	::Mokagram::Music::MergeRemoteLikes(
+	(void)::Mokagram::Music::MergeRemoteLikes(
 		state->likedTracks,
 		state->likesComplete);
 	FinishPlaylistSync(
