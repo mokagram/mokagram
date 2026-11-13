@@ -359,6 +359,7 @@ void Start(not_null<UserData*> user) {
 		return;
 	}
 	Running = true;
+	session->lifetime().add([] { Running = false; });
 	auto &privacy = session->api().userPrivacy();
 	privacy.reload(kKey);
 	const auto userId = peerToUser(user->id);
@@ -391,6 +392,7 @@ void RestoreIfNeeded(not_null<Main::Session*> session) {
 		return;
 	}
 	Running = true;
+	session->lifetime().add([] { Running = false; });
 	Restore(session, RuleFromJson(session, rule), 0, [] {
 		Running = false;
 	});
