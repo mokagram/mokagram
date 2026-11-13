@@ -21,9 +21,11 @@
 #include <QtCore/QUuid>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 
 namespace Mokagram::Music {
@@ -135,6 +137,10 @@ struct Library {
 	return t;
 }
 
+std::mutex SaveMutex;
+std::uint64_t SaveWritten = 0;
+std::atomic<std::uint64_t> SaveGeneration = 0;
+
 void Save() {
 	auto &lib = Lib();
 	auto liked = QJsonArray();
@@ -223,7 +229,13 @@ void Save() {
 	}
 	root.insert("playlists", playlists);
 	const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Compact);
-	crl::async([bytes = std::move(bytes), path = FilePath()] {
+	const auto generation = ++SaveGeneration;
+	crl::async([bytes = std::move(bytes), path = FilePath(), generation] {
+		auto lock = std::lock_guard(SaveMutex);
+		if (generation < SaveWritten) {
+			return;
+		}
+		SaveWritten = generation;
 		QDir().mkpath(QFileInfo(path).absolutePath());
 		auto file = QSaveFile(path);
 		if (file.open(QIODevice::WriteOnly)) {
@@ -991,6 +1003,11 @@ void BuildSimilarImpl(SimilarContext context, Fn<void(std::vector<Track>, QStrin
 			++genres[track.genre];
 			result.push_back(track);
 		}
+		if (collector->candidates.empty()) {
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr(
+				"Не нашлось похожего по звучанию. Попробуйте позже.")));
+			return;
+		}
 		MarkShown(result);
 		done(std::move(result), QString());
 	};
@@ -1030,39 +1047,18 @@ void BuildSimilarImpl(SimilarContext context, Fn<void(std::vector<Track>, QStrin
 			"Нет жанра и тегов: поищу похожее позже.")));
 		return;
 	}
-	// Пустой ответ поиска не должен останавливать остальные запросы, поэтому
-	// считаем ответы вручную, а сбор кандидатов идёт там же, в collector.
-	// Счётчики выставляем до запуска: ответ может прийти синхронно (кеш client_id).
+	// Пустой ответ тоже закрывает свою долю в collector; счётчик до запуска (кеш синхронный).
 	const auto relatedJobs = int(seed.id.isEmpty() ? 0 : 1);
 	const auto searchJobs = std::min(int(queries.size()), 6);
-	const auto jobs = relatedJobs + searchJobs;
-	auto pending = std::make_shared<int>(jobs);
-	auto found = std::make_shared<bool>(false);
-	const auto settle = [=] {
-		if (--*pending == 0 && !*found) {
-			done({}, QString::fromUtf8(Mokagram::Lang::Tr(
-				"Не нашлось похожего по звучанию. Попробуйте позже.")));
-		}
-	};
-	collector->pending = jobs;
+	collector->pending = relatedJobs + searchJobs;
 	if (!seed.id.isEmpty()) {
 		Related(seed.id, 40, [=](std::vector<Track> list) {
-			if (!list.empty()) {
-				*found = true;
-				Gather(collector, std::move(list), 1.5, false);
-			} else {
-				settle();
-			}
+			Gather(collector, std::move(list), 1.5, false);
 		});
 	}
 	for (auto i = 0; i != searchJobs; ++i) {
 		SearchLimited(queries[i], 20, [=](std::vector<Track> list) {
-			if (!list.empty()) {
-				*found = true;
-				Gather(collector, std::move(list), 0.6, false);
-			} else {
-				settle();
-			}
+			Gather(collector, std::move(list), 0.6, false);
 		});
 	}
 }
