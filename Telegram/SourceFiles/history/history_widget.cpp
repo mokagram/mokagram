@@ -264,6 +264,11 @@ namespace {
 
 constexpr auto kMokaComposerButton = "moka-composer-button";
 
+// Mokagram: панель ввода парит баббло́м, отступ от краёв окна.
+[[nodiscard]] int MokaBubbleSkip() {
+	return style::ConvertScale(10);
+}
+
 // Mokagram: кнопки плагинов рядом с полем ввода (место "composer").
 void RefreshComposerPluginButtons(
 		not_null<Ui::RpWidget*> widget,
@@ -6631,9 +6636,9 @@ void HistoryWidget::mouseMoveEvent(QMouseEvent *e) {
 void HistoryWidget::updateOverStates(QPoint pos) {
 	const auto isReadyToForward = readyToForward();
 	const auto detailsRect = QRect(
-		0,
+		MokaBubbleSkip(),
 		_field->y() - st::historySendPadding - st::historyReplyHeight,
-		width() - _fieldBarCancel->width(),
+		width() - MokaBubbleSkip() - _fieldBarCancel->width(),
 		st::historyReplyHeight);
 	const auto hasWebPage = !!_previewDrawPreview;
 	const auto inDetails = detailsRect.contains(pos)
@@ -7668,7 +7673,7 @@ void HistoryWidget::updateSendAsFileGeometry() {
 
 void HistoryWidget::moveFieldControls() {
 	auto keyboardHeight = 0;
-	auto bottom = height();
+	auto bottom = height() - MokaBubbleSkip();
 	auto maxKeyboardHeight = computeMaxFieldHeight() - fieldHeight();
 	_keyboard->resizeToWidth(width(), maxKeyboardHeight);
 	if (_kbShown) {
@@ -7682,7 +7687,7 @@ void HistoryWidget::moveFieldControls() {
 // (_botStart|_unblock|_joinChannel|_muteUnmute|_reportMessages)
 
 	auto buttonsBottom = bottom - _attachToggle->height();
-	auto left = st::historySendRight;
+	auto left = st::historySendRight + MokaBubbleSkip();
 	if (_botMenu) {
 		const auto skip = st::historyBotMenuSkip;
 		_botMenu->moveToLeft(left + skip, buttonsBottom + skip);
@@ -7705,7 +7710,7 @@ void HistoryWidget::moveFieldControls() {
 			left,
 			bottom - fieldHeight() - st::historySendPadding);
 	}
-	auto right = st::historySendRight;
+	auto right = st::historySendRight + MokaBubbleSkip();
 	_send->moveToRight(right, buttonsBottom); right += _send->width();
 	_voiceRecordBar->moveToLeft(0, bottom - _voiceRecordBar->height());
 	_tabbedSelectorToggle->moveToRight(right, buttonsBottom);
@@ -7745,7 +7750,7 @@ void HistoryWidget::moveFieldControls() {
 	updateDiscardRichDraftGeometry();
 
 	_fieldBarCancel->moveToRight(
-		0,
+		MokaBubbleSkip(),
 		_field->y() - st::historySendPadding - _fieldBarCancel->height());
 	if (_inlineResults) {
 		_inlineResults->moveBottom(_field->y() - st::historySendPadding);
@@ -7779,6 +7784,7 @@ void HistoryWidget::updateFieldSize() {
 	auto fieldWidth = width()
 		- _attachToggle->width()
 		- st::historySendRight
+		- 2 * MokaBubbleSkip()
 		- _send->width()
 		- _tabbedSelectorToggle->width();
 	if (_botMenu) {
@@ -8740,7 +8746,9 @@ void HistoryWidget::updateHistoryGeometry(
 		newScrollHeight -= _unblock->height();
 	} else {
 		if (editingMessage() || _canSendMessages) {
-			newScrollHeight -= (fieldHeight() + 2 * st::historySendPadding);
+			newScrollHeight -= (fieldHeight()
+				+ 2 * st::historySendPadding
+				+ MokaBubbleSkip());
 		} else if (_sendRestriction) {
 			newScrollHeight -= _sendRestriction->height();
 		}
@@ -11428,11 +11436,18 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::historyReplyBg);
+		const auto skip = MokaBubbleSkip();
+		const auto radius = std::min(
+			style::ConvertScale(22),
+			backh / 2);
 		p.drawRoundedRect(
-			myrtlrect(0, backy, width(), backh + 56),
-			28,
-			28);
+			myrtlrect(skip, backy, width() - 2 * skip, backh),
+			radius,
+			radius);
 	}
+	// всё содержимое панели (ответ, правка, превью) сдвинуто внутрь баббла
+	p.save();
+	p.translate(MokaBubbleSkip(), 0);
 
 	const auto media = (!_previewDrawPreview && drawMsgText)
 		? drawMsgText->media()
@@ -11621,6 +11636,7 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 	} else if (_suggestOptions) {
 		_suggestOptions->paintBar(p, 0, backy, width());
 	}
+	p.restore();
 }
 
 void HistoryWidget::paintEditHeader(
