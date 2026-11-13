@@ -111,6 +111,7 @@ private:
 	struct Impl;
 
 	void reloadCounts();
+	void pruneIfDue(int added);
 
 	const std::unique_ptr<Impl> _impl;
 	base::flat_map<uint64, Counts> _counts;

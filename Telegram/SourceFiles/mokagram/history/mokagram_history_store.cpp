@@ -13,7 +13,9 @@
 
 #include <sqlite3.h>
 
+#include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 
 #include <atomic>
 #include <condition_variable>
@@ -287,10 +289,42 @@ void WriteSeen(sqlite3 *db, const Snapshot &snapshot, bool replace) {
 	return pages * size;
 }
 
-void Prune(sqlite3 *db, Limits limits) {
+// Сохранённые файлы лежат в <база>/files/<peer>/<id>_<документ>.<ext>.
+void RemoveSavedFiles(const QString &files, int64 peer, int64 id) {
+	auto dir = QDir(files + u"/%1"_q.arg(peer));
+	for (const auto &name : dir.entryList({ u"%1_*"_q.arg(id) }, QDir::Files)) {
+		dir.remove(name);
+	}
+}
+
+// Стирает файлы сообщений из SELECT peer, id: вызывать до DELETE.
+void EraseSavedFiles(
+		sqlite3 *db,
+		const QString &files,
+		const char *select,
+		std::initializer_list<int64> binds) {
+	auto stmt = Statement(db, select);
+	if (!stmt.ok()) {
+		return;
+	}
+	auto index = 1;
+	for (const auto value : binds) {
+		stmt.bind(index++, value);
+	}
+	while (stmt.step()) {
+		RemoveSavedFiles(files, stmt.int64At(0), stmt.int64At(1));
+	}
+}
+
+void Prune(sqlite3 *db, const QString &files, Limits limits) {
 	if (limits.days > 0) {
 		const auto cutoff = int64(base::unixtime::now())
 			- int64(limits.days) * 86400;
+		EraseSavedFiles(
+			db,
+			files,
+			"SELECT peer,id FROM msg WHERE event < ?1 AND kind=1",
+			{ cutoff });
 		auto stmt = Statement(db, "DELETE FROM msg WHERE event < ?1");
 		if (stmt.ok()) {
 			stmt.bind(1, cutoff);
@@ -317,6 +351,13 @@ void Prune(sqlite3 *db, Limits limits) {
 			}
 		}
 		for (const auto &[peer, count] : peers) {
+			EraseSavedFiles(
+				db,
+				files,
+				"SELECT peer,id FROM msg WHERE peer=?1 AND kind=1"
+				" AND (kind,id,rev) IN (SELECT kind,id,rev FROM msg"
+				" WHERE peer=?1 ORDER BY event ASC LIMIT ?2)",
+				{ peer, count - limits.perChat });
 			auto stmt = Statement(
 				db,
 				"DELETE FROM msg WHERE peer=?1 AND (kind,id,rev) IN"
@@ -336,6 +377,13 @@ void Prune(sqlite3 *db, Limits limits) {
 			if (DatabaseBytes(db) <= maxBytes) {
 				break;
 			}
+			EraseSavedFiles(
+				db,
+				files,
+				"SELECT peer,id FROM msg WHERE kind=1 AND (peer,kind,id,rev) IN"
+				" (SELECT peer,kind,id,rev FROM msg ORDER BY event ASC"
+				" LIMIT MAX(1, (SELECT count(*) FROM msg) / 10))",
+				{});
 			Exec(
 				db,
 				"DELETE FROM msg WHERE (peer,kind,id,rev) IN"
@@ -436,11 +484,13 @@ private:
 struct Store::Impl {
 	Impl(const QString &path)
 	: ready(std::make_shared<std::atomic<int>>(0))
+	, files(QFileInfo(path).absolutePath() + u"/files"_q)
 	, writer(path, true, ready)
 	, reader(path, false, ready) {
 	}
 
 	std::shared_ptr<std::atomic<int>> ready;
+	const QString files;
 	Worker writer;
 	Worker reader;
 };
@@ -482,8 +532,8 @@ void Store::push(Snapshot snapshot) {
 
 void Store::pruneNow(Limits limits) {
 	const auto weak = base::make_weak(this);
-	_impl->writer.post([=](sqlite3 *db) {
-		Prune(db, limits);
+	_impl->writer.post([=, files = _impl->files](sqlite3 *db) {
+		Prune(db, files, limits);
 		crl::on_main(weak, [=] {
 			if (const auto strong = weak.get()) {
 				strong->reloadCounts();
@@ -492,10 +542,21 @@ void Store::pruneNow(Limits limits) {
 	});
 }
 
+void Store::pruneIfDue(int added) {
+	_sincePrune += added;
+	if (_sincePrune >= kPruneEvery) {
+		_sincePrune = 0;
+		if (_limits) {
+			pruneNow(_limits());
+		}
+	}
+}
+
 void Store::journal(Snapshot snapshot, bool replace) {
 	_impl->writer.post([snapshot = std::move(snapshot), replace](sqlite3 *db) {
 		WriteSeen(db, snapshot, replace);
 	});
+	pruneIfDue(1);
 }
 
 void Store::claimDeleted(
@@ -556,6 +617,7 @@ void Store::claimDeleted(
 				++strong->_counts[snapshot.peer].deleted;
 			}
 			strong->_changes.fire({});
+			strong->pruneIfDue(int(result.size()));
 			done(std::move(result));
 		});
 	});
@@ -585,7 +647,8 @@ void Store::clearPeer(uint64 peer) {
 			++i;
 		}
 	}
-	_impl->writer.post([=](sqlite3 *db) {
+	_impl->writer.post([=, files = _impl->files](sqlite3 *db) {
+		QDir(files + u"/%1"_q.arg(peer)).removeRecursively();
 		auto stmt = Statement(db, "DELETE FROM msg WHERE peer=?1");
 		if (stmt.ok()) {
 			stmt.bind(1, int64(peer));
@@ -604,7 +667,8 @@ void Store::clearAll() {
 	_counts.clear();
 	_revisionsLoaded.clear();
 	_revisions.clear();
-	_impl->writer.post([](sqlite3 *db) {
+	_impl->writer.post([files = _impl->files](sqlite3 *db) {
+		QDir(files).removeRecursively();
 		Exec(db, "DELETE FROM msg");
 		Exec(db, "DELETE FROM seen");
 		Exec(db, "PRAGMA incremental_vacuum");

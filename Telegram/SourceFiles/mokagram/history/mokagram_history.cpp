@@ -675,8 +675,8 @@ namespace {
 // сообщений при открытии чата не нагружает главный поток.
 struct SeenQueue {
 	std::deque<std::pair<base::weak_ptr<Main::Session>, FullMsgId>> pending;
-	base::flat_set<FullMsgId> recent;
-	std::deque<FullMsgId> recentOrder;
+	base::flat_set<std::pair<uint64, FullMsgId>> recent; // Ключ: сессия + id.
+	std::deque<std::pair<uint64, FullMsgId>> recentOrder;
 	base::Timer timer;
 };
 
@@ -723,10 +723,13 @@ void OnSeen(not_null<HistoryItem*> item) {
 	}
 	auto &queue = Seen();
 	const auto id = item->fullId();
-	if (!queue.recent.emplace(id).second) {
+	const auto key = std::make_pair(
+		item->history()->session().uniqueId(),
+		id);
+	if (!queue.recent.emplace(key).second) {
 		return;
 	}
-	queue.recentOrder.push_back(id);
+	queue.recentOrder.push_back(key);
 	if (queue.recentOrder.size() > kSeenRecent) {
 		queue.recent.remove(queue.recentOrder.front());
 		queue.recentOrder.pop_front();
