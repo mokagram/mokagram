@@ -40,6 +40,9 @@ std::string ListJson();
 // JSON-массив фактически выданных прав плагина (не декларированных).
 std::string EffectiveGrantsJson(const std::string &pid);
 
+// pid плагина, от имени которого идёт запрос моста (пусто, если неизвестен). Не из аргументов.
+std::string NativeCallerPid();
+
 // Общий выключатель системы плагинов (выгружает все плагины / загружает обратно).
 bool EngineEnabled();
 bool SetEngineEnabled(bool enabled, LogFn log);

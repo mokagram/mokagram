@@ -214,7 +214,9 @@ rpl::lifetime BridgeLifetime;
 // import __main__. Свободно: папка данных плагина и временные файлы (как в
 // sdk_api._path_ok). Остальное (Загрузки, Картинки, Музыка, Документы) только
 // при выданном праве files. Конечный симлинк не допускается никогда.
-[[nodiscard]] bool PluginPathAllowed(const QString &pid, const QString &path) {
+[[nodiscard]] bool PluginPathAllowed(const QString &path) {
+	// pid берётся у моста (плагин, чей вызов), а не из JSON-аргументов: их можно подменить.
+	const auto pid = QString::fromStdString(NativeCallerPid());
 	if (path.isEmpty() || pid.isEmpty()) {
 		return false;
 	}
@@ -1239,7 +1241,7 @@ std::string SendFile(const QJsonObject &args) {
 		return Reply(false, U(Mokagram::Lang::Tr("файл не найден или слишком большой")));
 	}
 	// Мост сам валидирует путь: SDK-проверки в Python обходятся через import __main__.
-	if (!PluginPathAllowed(args.value("pid").toString(), path)) {
+	if (!PluginPathAllowed(path)) {
 		return Reply(false, U(Mokagram::Lang::Tr("файл вне разрешённых папок")));
 	}
 	return OnMain([=]() -> std::string {
@@ -1522,7 +1524,7 @@ std::string SendAlbum(const QJsonObject &args) {
 			return Reply(false, U(Mokagram::Lang::Tr("файл не найден или слишком большой")));
 		}
 		// Как в SendFile: валидация на стороне моста, Python-слой обходится.
-		if (!PluginPathAllowed(args.value("pid").toString(), info.absoluteFilePath())) {
+		if (!PluginPathAllowed(info.absoluteFilePath())) {
 			return Reply(false, U(Mokagram::Lang::Tr("файл вне разрешённых папок")));
 		}
 		paths.push_back(info.absoluteFilePath());
@@ -1565,7 +1567,8 @@ std::string SendAlbum(const QJsonObject &args) {
 
 // Сохраняет медиа сообщения в файл. Итог приходит плагину событием __cb: {ok, path} или {ok:false, error}.
 std::string DownloadMedia(const QJsonObject &args) {
-	const auto pid = args.value("pid").toString();
+	// Результат уходит тому плагину, чей вызов моста, а не pid из аргументов.
+	const auto pid = QString::fromStdString(NativeCallerPid());
 	const auto token = args.value("token").toString();
 	const auto path = args.value("path").toString();
 	if (path.isEmpty()) {
@@ -1573,7 +1576,7 @@ std::string DownloadMedia(const QJsonObject &args) {
 	}
 	// Мост сам валидирует путь: без этого плагин мог сохранить скачанное
 	// поверх любого файла пользователя (~/.ssh/authorized_keys и т.п.).
-	if (!PluginPathAllowed(pid, path)) {
+	if (!PluginPathAllowed(path)) {
 		return Reply(false, U(Mokagram::Lang::Tr("путь вне разрешённых папок")));
 	}
 	return OnMain([=]() -> std::string {

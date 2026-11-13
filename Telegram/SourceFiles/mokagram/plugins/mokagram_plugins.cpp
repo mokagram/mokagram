@@ -104,6 +104,8 @@ bool _helpersLoaded = false;
 LogFn _logFn;
 BridgeFn _bridge;
 std::mutex _bridgeMutex;
+// Плагин, от имени которого идёт запрос моста: задаёт C++ по своему вызову, не аргументы.
+thread_local std::string _nativeCaller;
 std::atomic<bool> _stopping = false;
 std::atomic<int> _fromPlugin = 0;
 
@@ -346,12 +348,14 @@ struct NativeRequest {
 	uint64_t id = 0;
 	std::string op;
 	std::string args;
+	std::string caller; // pid плагина вызова-родителя, пусто без него
 };
 
 struct Waiter {
 	std::condition_variable cv;
 	bool done = false;
 	bool failed = false;
+	std::string caller; // pid плагина из _moka_invoke
 	std::vector<std::string> value;
 	std::deque<NativeRequest> inbox;
 };
@@ -565,7 +569,10 @@ void PoolPost(std::function<void()> job) {
 }
 
 void RunNative(const NativeRequest &request) {
+	const auto previous = _nativeCaller;
+	_nativeCaller = request.caller;
 	SendFrame(kFrameNativeRet, request.id, 0, { HandleNative(request.op, request.args) });
+	_nativeCaller = previous;
 }
 
 void FailAllWaiters() {
@@ -609,6 +616,9 @@ std::optional<std::vector<std::string>> Roundtrip(
 		return std::nullopt;
 	}
 	auto waiter = Waiter();
+	if (kind == kFrameCall && strings.size() > 1 && strings[0] == "_moka_invoke") {
+		waiter.caller = strings[1];
+	}
 	const auto id = host.nextId.fetch_add(1);
 	{
 		const auto lock = std::lock_guard(host.mutex);
@@ -713,6 +723,7 @@ void ReaderLoop(int fd) {
 				const auto lock = std::lock_guard(host.mutex);
 				const auto i = host.waiters.find(frame.parent);
 				if (i != host.waiters.end() && !i->second->done) {
+					request.caller = i->second->caller;
 					i->second->inbox.push_back(request);
 					i->second->cv.notify_all();
 					handed = true;
@@ -1685,6 +1696,10 @@ void RestoreBackupFile(const std::string &path, LogFn log) {
 	Drain(log);
 }
 
+std::string NativeCallerPid() {
+	return _nativeCaller;
+}
+
 bool Invoke(
 		const std::string &pid,
 		const std::string &token,
@@ -1694,7 +1709,10 @@ bool Invoke(
 		return false;
 	}
 	const auto gil = Gil();
+	const auto previous = _nativeCaller;
+	_nativeCaller = pid;
 	const auto result = CallStr("_moka_invoke", { pid, token, payloadJson });
+	_nativeCaller = previous;
 	Drain(log);
 	return result == "true";
 }
