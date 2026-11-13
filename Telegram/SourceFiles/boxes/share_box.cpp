@@ -1886,9 +1886,23 @@ ShareBox::SubmitCallback ShareBox::DefaultForwardCallback(
 				return Mokagram::Forward::NeedsCopy(item);
 			})) {
 			for (const auto &thread : result) {
+				const auto threadHistory = thread->owningHistory();
+				const auto forum = threadHistory->asForum();
+				const auto needNewTopic = forum
+					&& forum->bot()
+					&& Data::IsBotUserCreatesTopics(thread->peer())
+					&& !thread->asTopic();
+				const auto effectiveThread = [&]() -> not_null<Data::Thread*> {
+					if (needNewTopic) {
+						const auto topic = forum->reserveNewBotTopic();
+						Assert(topic != nullptr);
+						return topic;
+					}
+					return thread;
+				}();
 				if (!comment.text.isEmpty()) {
 					auto message = Api::MessageToSend(
-						Api::SendAction(thread, options));
+						Api::SendAction(effectiveThread, options));
 					message.textWithTags = comment;
 					message.action.clearDraft = false;
 					history->session().api().sendMessage(std::move(message));
@@ -1896,7 +1910,7 @@ ShareBox::SubmitCallback ShareBox::DefaultForwardCallback(
 				Mokagram::Forward::CopyForward(
 					&history->session(),
 					items,
-					Api::SendAction(thread, options),
+					Api::SendAction(effectiveThread, options),
 					(forwardOptions
 						== Data::ForwardOptions::NoNamesAndCaptions));
 			}
