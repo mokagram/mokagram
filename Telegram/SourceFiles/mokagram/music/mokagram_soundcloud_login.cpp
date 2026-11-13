@@ -28,6 +28,8 @@
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 
+#include <QtCore/QDir>
+#include <QtCore/QFileInfo>
 #include <QtCore/QPointer>
 #include <QtCore/QProcess>
 #include <QtCore/QRegularExpression>
@@ -39,6 +41,8 @@
 #include <QtGui/QPainterPath>
 #include <QtSvg/QSvgRenderer>
 #include <QtGui/QGuiApplication>
+
+#include <signal.h>
 
 namespace Mokagram::Music {
 namespace {
@@ -280,6 +284,7 @@ if sys.platform == "darwin":
         cands.append((0, "safari", "Safari", path))
 
 tmp = tempfile.mkdtemp(prefix="moka-sc-")
+print("PROFILE_DIR " + tmp, flush=True)
 proc = None
 failed = False
 
@@ -371,7 +376,8 @@ def chromium_token(binary, prof, sub):
     proc = subprocess.Popen(
         args,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        preexec_fn=prep, pass_fds=(3, 4))
+        preexec_fn=prep, pass_fds=(3, 4), start_new_session=True)
+    print("CHROME_PID " + str(proc.pid), flush=True)
     os.close(r_in); os.close(w_out)
     rd = os.fdopen(r_out, "rb", buffering=0)
     wr = os.fdopen(w_in, "wb", buffering=0)
@@ -458,6 +464,23 @@ finally:
             proc.kill()
     shutil.rmtree(tmp, ignore_errors=True)
 )PY";
+#endif // Q_OS_LINUX || Q_OS_MAC
+
+#if defined Q_OS_LINUX || defined Q_OS_MAC
+// Убивает группу браузера по PID из вывода helper-а и чистит его временный профиль.
+void KillAutoLoginLeftovers(const QStringList &pids, const QString &profile) {
+	for (const auto &pid : pids) {
+		const auto group = pid.toLongLong();
+		if (group > 0) {
+			::kill(-static_cast<pid_t>(group), SIGKILL);
+		}
+	}
+	const auto info = QFileInfo(profile);
+	if (info.fileName().startsWith(u"moka-sc-"_q)
+		&& info.absolutePath() == QDir::cleanPath(QDir::tempPath())) {
+		QDir(profile).removeRecursively();
+	}
+}
 #endif // Q_OS_LINUX || Q_OS_MAC
 
 } // namespace
@@ -617,14 +640,35 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 			const auto process = new QProcess(guarded.data());
 			process->setProgram(python);
 			process->setArguments({ u"-I"_q, u"-c"_q, QString::fromLatin1(kGrabScript) });
+			const auto timedOut = std::make_shared<bool>(false);
 			const auto timeout = new QTimer(process);
 			timeout->setSingleShot(true);
-			timeout->callOnTimeout([=] { process->terminate(); });
+			timeout->callOnTimeout([=] {
+				*timedOut = true;
+				process->terminate();
+				QTimer::singleShot(1500, process, [=] {
+					if (process->state() != QProcess::NotRunning) {
+						process->kill();
+					}
+				});
+			});
 			timeout->start(40 * 1000);
 			QObject::connect(process, &QProcess::finished, process, [=](int code) {
 				const auto output = QString::fromUtf8(
 					process->readAllStandardOutput());
 				process->deleteLater();
+				if (*timedOut) {
+					auto pids = QStringList();
+					auto profile = QString();
+					for (const auto &line : output.split(u'\n')) {
+						if (line.startsWith(u"CHROME_PID "_q)) {
+							pids.push_back(line.mid(11).trimmed());
+						} else if (line.startsWith(u"PROFILE_DIR "_q)) {
+							profile = line.mid(12).trimmed();
+						}
+					}
+					KillAutoLoginLeftovers(pids, profile);
+				}
 				if (!guarded) {
 					return;
 				}
@@ -649,6 +693,20 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 						return;
 					}
 				}
+				setStatus(Tr("Не получилось запустить браузер. Токен можно ввести вручную."));
+				manual->toggle(true, anim::type::normal);
+			});
+			QObject::connect(process, &QProcess::errorOccurred, process, [=](QProcess::ProcessError error) {
+				if (error != QProcess::FailedToStart) {
+					return;
+				}
+				QObject::disconnect(process, &QProcess::finished, nullptr, nullptr);
+				timeout->stop();
+				process->deleteLater();
+				if (!guarded) {
+					return;
+				}
+				*busy = false;
 				setStatus(Tr("Не получилось запустить браузер. Токен можно ввести вручную."));
 				manual->toggle(true, anim::type::normal);
 			});
@@ -744,12 +802,29 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 void RefreshSoundCloudToken(Fn<void(bool)> done) {
 #if defined Q_OS_LINUX || defined Q_OS_MAC
 	static auto running = false;
+	static auto waiting = std::vector<Fn<void(bool)>>();
 	const auto python = Python3Executable();
-	if (running || python.isEmpty()) {
+	if (python.isEmpty()) {
 		done(false);
 		return;
 	}
+	waiting.push_back(std::move(done));
+	if (running) {
+		return;
+	}
 	running = true;
+	const auto settled = std::make_shared<bool>(false);
+	const auto finish = [=](bool success) {
+		if (*settled) {
+			return;
+		}
+		*settled = true;
+		running = false;
+		auto callbacks = std::exchange(waiting, {});
+		for (const auto &callback : callbacks) {
+			callback(success);
+		}
+	};
 	const auto process = new QProcess();
 	process->setProgram(python);
 	process->setArguments({ u"-I"_q, u"-c"_q, QString::fromLatin1(kGrabScript) });
@@ -767,14 +842,21 @@ void RefreshSoundCloudToken(Fn<void(bool)> done) {
 			}
 		}
 		if (token.isEmpty()) {
-			running = false;
-			done(false);
+			finish(false);
 			return;
 		}
 		Account::Login(token, [=](QString error) {
-			running = false;
-			done(error.isEmpty());
+			finish(error.isEmpty());
 		});
+	});
+	QObject::connect(process, &QProcess::errorOccurred, process, [=](QProcess::ProcessError error) {
+		if (error != QProcess::FailedToStart) {
+			return;
+		}
+		QObject::disconnect(process, &QProcess::finished, nullptr, nullptr);
+		timeout->stop();
+		process->deleteLater();
+		finish(false);
 	});
 	process->start();
 #else // Q_OS_LINUX || Q_OS_MAC
