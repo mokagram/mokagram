@@ -220,6 +220,11 @@ void Start() {
 		}
 	});
 
+	// Оверлей статический и переживает Sandbox: убираем его, пока qApp ещё жив.
+	QObject::connect(qApp, &QCoreApplication::aboutToQuit, [] {
+		FpsOverlay = nullptr;
+	});
+
 	// Переключатели в настройках действуют сразу.
 	static auto lifetime = rpl::lifetime();
 	S::Changed() | rpl::on_next([](QString key) {
