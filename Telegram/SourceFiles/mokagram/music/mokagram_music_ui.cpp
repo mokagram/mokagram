@@ -2268,13 +2268,11 @@ private:
 				PlayFromResults(index);
 			}
 		}, &st::menuIconSoundOn);
-		if (!IsTelegramTrack(track)) {
-			add(IsLiked(track.id)
-				? QString::fromUtf8(Mokagram::Lang::Tr("Убрать из избранного"))
-				: QString::fromUtf8(Mokagram::Lang::Tr("В избранное")), [=] {
-				SetLiked(track, !IsLiked(track.id));
-			}, &st::menuIconFave);
-		}
+		add(IsLiked(track.id)
+			? QString::fromUtf8(Mokagram::Lang::Tr("Убрать из избранного"))
+			: QString::fromUtf8(Mokagram::Lang::Tr("В избранное")), [=] {
+			SetLiked(track, !IsLiked(track.id));
+		}, &st::menuIconFave);
 		AddToPlaylistMenu(_menu.get(), controller, track);
 		if (!_playlistId.isEmpty()) {
 			add(PlaylistText("Убрать из плейлиста"), [=] {
@@ -10271,12 +10269,12 @@ void ShowCurrentTrackMenu(
 		add(QString::fromUtf8(Mokagram::Lang::Tr("Следующий")), [] { Step(1); }, &st::menuIconBelow);
 	}
 	menu->addSeparator();
+	add(IsLiked(track.id)
+		? QString::fromUtf8(Mokagram::Lang::Tr("Убрать из избранного"))
+		: QString::fromUtf8(Mokagram::Lang::Tr("В избранное")), [=] {
+		SetLiked(track, !IsLiked(track.id));
+	}, &st::menuIconFave);
 	if (!IsTelegramTrack(track)) {
-		add(IsLiked(track.id)
-			? QString::fromUtf8(Mokagram::Lang::Tr("Убрать из избранного"))
-			: QString::fromUtf8(Mokagram::Lang::Tr("В избранное")), [=] {
-			SetLiked(track, !IsLiked(track.id));
-		}, &st::menuIconFave);
 		add(QString::fromUtf8(Mokagram::Lang::Tr("Скачать")), [=] { SaveToDisk(track); }, &st::menuIconDownload);
 	}
 	if (CanForwardTrack(track)) {

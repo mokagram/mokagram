@@ -1405,9 +1405,39 @@ void SetLiked(const Track &track, bool liked) {
 	} else {
 		return;
 	}
-	if (Music::Account::IsLoggedIn() && !IsTelegramId(track.id)) {
+	if (Music::Account::IsLoggedIn()) {
 		// Постановка лайка в аккаунт идёт фоном: сердечко отвечает мгновенно.
-		Music::Account::SetTrackLiked(track.id, liked);
+		if (!IsTelegramId(track.id)) {
+			Music::Account::SetTrackLiked(track.id, liked);
+		} else if (!track.title.trimmed().isEmpty()) {
+			const auto userId = Music::Account::User().id;
+			Search(track.title, 0, [=](SearchResult result) {
+				if (!result.error.isEmpty()
+					|| !Music::Account::IsLoggedIn()
+					|| Music::Account::User().id != userId
+					|| IsLiked(track.id) != liked) {
+					return;
+				}
+				// Только точное название. Среди тёзок выбираем по исполнителю.
+				const auto title = track.title.trimmed();
+				auto matches = std::vector<Track>();
+				for (const auto &candidate : result.tracks) {
+					if (candidate.title.trimmed() == title
+						&& candidate.id.toULongLong()) {
+						matches.push_back(candidate);
+					}
+				}
+				if (matches.size() > 1) {
+					std::erase_if(matches, [&](const Track &candidate) {
+						return track.artist.trimmed().isEmpty()
+							|| candidate.artist.trimmed() != track.artist.trimmed();
+					});
+				}
+				if (matches.size() == 1) {
+					Music::Account::SetTrackLiked(matches.front().id, liked);
+				}
+			});
+		}
 	}
 	Save();
 	lib.likesChanged.fire({});
