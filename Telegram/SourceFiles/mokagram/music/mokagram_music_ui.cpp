@@ -19,6 +19,18 @@
 #include "media/clip/media_clip_reader.h"
 #include "styles/style_mokagram_motion.h"
 #include "mokagram/settings/mokagram_settings.h"
+#include <QtGui/QClipboard>
+#include <QtGui/QDesktopServices>
+#include <QtCore/QUrl>
+#include <QtNetwork/QLocalServer>
+#include <QtNetwork/QLocalSocket>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QTimer>
+
 #include "mokagram/settings/mokagram_settings_box.h"
 
 #include "base/timer.h"
@@ -29,6 +41,7 @@
 #include <set>
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "window/window_controller.h"
 #include "api/api_common.h"
 #include "apiwrap.h"
 #include "data/data_media_types.h"
@@ -11670,6 +11683,454 @@ void ShowAlbumsBox(
 		const QString &query,
 		const QString &trackId) {
 	ShowMusicBoxWith(controller, query, true, trackId);
+}
+
+
+// ---- Мост для панели плеера в баре Omarchy (Quickshell) ----
+// Клиент держит локальный сокет $XDG_RUNTIME_DIR/mokagram/ctl.sock. Панель
+// подключается, получает построчный JSON (состояние, тексты) и шлёт команды
+// строками «play», «seek 12345», «volume 0.5» и т.д. Обложка лежит файлом.
+namespace {
+
+struct ShellBridge {
+	QLocalServer *server = nullptr;
+	std::vector<QLocalSocket*> clients;
+	QTimer *timer = nullptr;
+	QByteArray lastState;
+	QString dir;
+	QString coverPath;
+	qint64 coverKey = 0;
+	int coverSerial = 0;
+	QString lyricsId;
+	QByteArray lyricsLine;
+	QByteArray lastLibrary;
+	QString commentsId;
+	QByteArray lastCommentsLine;
+	qint64 sleepAt = 0;
+	int libTick = 0;
+	rpl::lifetime lifetime;
+};
+
+ShellBridge &Bridge() {
+	static auto *bridge = new ShellBridge();
+	return *bridge;
+}
+
+void BridgeSend(const QByteArray &line) {
+	auto &b = Bridge();
+	for (const auto client : b.clients) {
+		client->write(line);
+		client->write("\n");
+	}
+}
+
+[[nodiscard]] QByteArray BridgeJson(const QJsonObject &object) {
+	return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
+void BridgeSendLyrics(const QString &id, const Lyrics &lyrics) {
+	auto lines = QJsonArray();
+	for (const auto &line : lyrics.lines) {
+		lines.push_back(QJsonArray{ double(line.timeMs), line.text });
+	}
+	auto object = QJsonObject();
+	object.insert(u"t"_q, u"lyrics"_q);
+	object.insert(u"id"_q, id);
+	object.insert(u"found"_q, lyrics.found);
+	object.insert(u"synced"_q, lyrics.synced);
+	object.insert(u"lines"_q, lines);
+	auto &b = Bridge();
+	b.lyricsLine = BridgeJson(object);
+	BridgeSend(b.lyricsLine);
+}
+
+void BridgeWriteCover(const AudioMsgId &current, QJsonObject &state) {
+	auto &b = Bridge();
+	const auto cover = CoverForPlayback(current);
+	if (cover.isNull()) {
+		state.insert(u"cover"_q, QString());
+		return;
+	}
+	if (cover.cacheKey() != b.coverKey || b.coverPath.isEmpty()) {
+		const auto old = b.coverPath;
+		b.coverKey = cover.cacheKey();
+		b.coverPath = u"%1/cover-%2.jpg"_q.arg(b.dir).arg(++b.coverSerial);
+		cover.save(b.coverPath, "JPG", 92);
+		if (!old.isEmpty()) {
+			QFile::remove(old);
+		}
+	}
+	state.insert(u"cover"_q, b.coverPath);
+}
+
+void BridgePush(bool force = false) {
+	auto &b = Bridge();
+	if (b.clients.empty()) {
+		return;
+	}
+	const auto instance = Media::Player::instance();
+	const auto type = AudioMsgId::Type::Song;
+	const auto current = instance->current(type);
+	const auto st = instance->getState(type);
+	auto state = QJsonObject();
+	state.insert(u"t"_q, u"state"_q);
+	const auto &settings = Core::App().settings();
+	state.insert(u"volume"_q, settings.songVolume());
+	state.insert(u"shuffle"_q, settings.playerOrderMode() == Media::OrderMode::Shuffle);
+	state.insert(u"repeat"_q, settings.playerRepeatMode() == Media::RepeatMode::One
+		? u"one"_q
+		: settings.playerRepeatMode() == Media::RepeatMode::All
+		? u"all"_q
+		: u"none"_q);
+	if (!current.audio()) {
+		state.insert(u"has"_q, false);
+	} else {
+		const auto track = PlayingTrack();
+		const auto frequency = std::max<int64>(st.frequency, 1);
+		const auto playing = (st.state == Media::Player::State::Playing)
+			|| (st.state == Media::Player::State::Starting)
+			|| (st.state == Media::Player::State::Resuming);
+		const auto &queue = QueueState();
+		const auto owns = OwnsTrack(current);
+		state.insert(u"has"_q, true);
+		state.insert(u"id"_q, track.id);
+		state.insert(u"title"_q, track.title);
+		state.insert(u"artist"_q, track.artist);
+		state.insert(u"source"_q, IsTelegramTrack(track)
+			? u"telegram"_q
+			: u"soundcloud"_q);
+		state.insert(u"playing"_q, playing);
+		state.insert(u"posMs"_q, double(st.position * 1000 / frequency));
+		state.insert(u"lenMs"_q, double(st.length > 0
+			? st.length * 1000 / frequency
+			: track.durationMs));
+		state.insert(u"liked"_q, owns && IsLiked(track.id));
+		state.insert(u"canLike"_q, owns);
+		state.insert(u"canNext"_q, owns ? NextAvailable() : true);
+		state.insert(u"canPrev"_q, owns ? PreviousAvailable() : true);
+		state.insert(u"speed"_q, settings.audioPlaybackSpeed(true));
+		state.insert(u"speedOk"_q, current.changeablePlaybackSpeed());
+		state.insert(u"link"_q, !track.permalink.isEmpty());
+		state.insert(u"sleepLeft"_q, b.sleepAt > 0
+			? double(std::max<qint64>(0, (b.sleepAt - crl::now()) / 1000))
+			: 0.);
+		const auto &together = TogetherState();
+		state.insert(u"together"_q, !together.code.isEmpty());
+		state.insert(u"togetherHost"_q, together.host);
+		state.insert(u"listeners"_q, together.listeners);
+		const auto accent = CurrentCoverAccent();
+		state.insert(u"accent"_q, accent.isValid() ? accent.name() : QString());
+		BridgeWriteCover(current, state);
+		auto list = QJsonArray();
+		if (owns) {
+			const auto count = int(queue.tracks.size());
+			const auto from = std::max(0, queue.index - 2);
+			for (auto i = from; i < std::min(count, from + 40); ++i) {
+				auto row = QJsonObject();
+				row.insert(u"i"_q, i);
+				row.insert(u"title"_q, queue.tracks[i].title);
+				row.insert(u"artist"_q, queue.tracks[i].artist);
+				row.insert(u"current"_q, i == queue.index);
+				list.push_back(row);
+			}
+		}
+		state.insert(u"queue"_q, list);
+		if (b.lyricsId != track.id) {
+			b.lyricsId = track.id;
+			b.lyricsLine.clear();
+			b.lastCommentsLine.clear();
+			const auto id = track.id;
+			if (!IsTelegramTrack(track)) {
+				LoadTrackComments(id, QString(), [=](TrackCommentsPage page) {
+					if (Bridge().lyricsId != id) {
+						return;
+					}
+					auto list = QJsonArray();
+					for (const auto &c : page.comments) {
+						if (c.timestampMs < 0 || c.body.trimmed().isEmpty()) {
+							continue;
+						}
+						list.push_back(QJsonArray{ double(c.timestampMs), c.author, c.body });
+					}
+					auto object = QJsonObject();
+					object.insert(u"t"_q, u"comments"_q);
+					object.insert(u"id"_q, id);
+					object.insert(u"list"_q, list);
+					Bridge().lastCommentsLine = BridgeJson(object);
+					BridgeSend(Bridge().lastCommentsLine);
+				});
+			}
+			FetchLyrics(
+				id,
+				track.title,
+				track.artist,
+				track.durationMs,
+				[=](Lyrics lyrics) {
+					if (Bridge().lyricsId == id) {
+						BridgeSendLyrics(id, lyrics);
+					}
+				});
+		}
+	}
+	const auto line = BridgeJson(state);
+	if (force || line != b.lastState) {
+		b.lastState = line;
+		BridgeSend(line);
+	}
+}
+
+[[nodiscard]] QJsonObject BridgeTrackJson(const Track &track) {
+	auto row = QJsonObject();
+	row.insert(u"title"_q, track.title);
+	row.insert(u"artist"_q, track.artist);
+	return row;
+}
+
+void BridgePushLibrary(bool force = false) {
+	auto &b = Bridge();
+	if (b.clients.empty()) {
+		return;
+	}
+	auto liked = QJsonArray();
+	auto count = 0;
+	for (const auto &track : LikedTracks()) {
+		if (++count > 150) {
+			break;
+		}
+		liked.push_back(BridgeTrackJson(track));
+	}
+	auto lists = QJsonArray();
+	for (const auto &playlist : Playlists()) {
+		auto tracks = QJsonArray();
+		auto n = 0;
+		for (const auto &track : playlist.tracks) {
+			if (++n > 150) {
+				break;
+			}
+			tracks.push_back(BridgeTrackJson(track));
+		}
+		auto row = QJsonObject();
+		row.insert(u"id"_q, playlist.id);
+		row.insert(u"name"_q, playlist.name);
+		row.insert(u"tracks"_q, tracks);
+		lists.push_back(row);
+	}
+	auto object = QJsonObject();
+	object.insert(u"t"_q, u"library"_q);
+	object.insert(u"liked"_q, liked);
+	object.insert(u"playlists"_q, lists);
+	const auto line = BridgeJson(object);
+	if (force || line != b.lastLibrary) {
+		b.lastLibrary = line;
+		BridgeSend(line);
+	}
+}
+
+void BridgeCommand(const QString &line) {
+	const auto parts = line.trimmed().split(QChar(' '), Qt::SkipEmptyParts);
+	if (parts.isEmpty()) {
+		return;
+	}
+	const auto cmd = parts[0];
+	const auto arg = (parts.size() > 1) ? parts[1] : QString();
+	const auto instance = Media::Player::instance();
+	const auto type = AudioMsgId::Type::Song;
+	const auto current = instance->current(type);
+	auto &settings = Core::App().settings();
+	if (cmd == u"toggle"_q) {
+		instance->playPause(type);
+	} else if (cmd == u"play"_q || cmd == u"pause"_q) {
+		const auto st = instance->getState(type);
+		const auto playing = (st.state == Media::Player::State::Playing)
+			|| (st.state == Media::Player::State::Starting)
+			|| (st.state == Media::Player::State::Resuming);
+		if (playing == (cmd == u"pause"_q)) {
+			instance->playPause(type);
+		}
+	} else if (cmd == u"next"_q || cmd == u"prev"_q) {
+		const auto delta = (cmd == u"next"_q) ? 1 : -1;
+		if (OwnsTrack(current)) {
+			Step(delta);
+		} else if (delta > 0) {
+			instance->next(type);
+		} else {
+			instance->previous(type);
+		}
+	} else if (cmd == u"seek"_q) {
+		const auto st = instance->getState(type);
+		const auto lengthMs = st.length * 1000 / std::max<int64>(st.frequency, 1);
+		if (lengthMs > 0) {
+			instance->startSeeking(type);
+			instance->finishSeeking(type, std::clamp(arg.toDouble() / double(lengthMs), 0., 1.));
+		}
+	} else if (cmd == u"volume"_q) {
+		const auto value = std::clamp(arg.toDouble(), 0., 1.);
+		settings.setSongVolume(value);
+		Core::App().saveSettingsDelayed();
+		Media::Player::mixer()->setSongVolume(value);
+	} else if (cmd == u"shuffle"_q) {
+		settings.setPlayerOrderMode(
+			settings.playerOrderMode() == Media::OrderMode::Shuffle
+				? Media::OrderMode::Default
+				: Media::OrderMode::Shuffle);
+		Core::App().saveSettingsDelayed();
+	} else if (cmd == u"repeat"_q) {
+		const auto mode = settings.playerRepeatMode();
+		settings.setPlayerRepeatMode(mode == Media::RepeatMode::None
+			? Media::RepeatMode::All
+			: mode == Media::RepeatMode::All
+			? Media::RepeatMode::One
+			: Media::RepeatMode::None);
+		Core::App().saveSettingsDelayed();
+	} else if (cmd == u"like"_q) {
+		const auto &queue = QueueState();
+		if (OwnsTrack(current) && !queue.current.id.isEmpty()) {
+			SetLiked(queue.current, !IsLiked(queue.current.id));
+		}
+	} else if (cmd == u"playindex"_q) {
+		const auto index = arg.toInt();
+		if (OwnsTrack(current) && index >= 0 && index < int(QueueState().tracks.size())) {
+			PlayIndex(index);
+		}
+	} else if (cmd == u"speed"_q) {
+		settings.setAudioPlaybackSpeed(std::clamp(arg.toDouble(), 0.5, 2.0));
+		Core::App().saveSettingsDelayed();
+		instance->updatePlaybackSpeed();
+	} else if (cmd == u"sleep"_q) {
+		const auto minutes = arg.toInt();
+		Bridge().sleepAt = (minutes > 0) ? (crl::now() + minutes * 60 * 1000) : 0;
+	} else if (cmd == u"playliked"_q) {
+		auto &queue = QueueState();
+		queue.custom = false;
+		queue.results = LikedTracks();
+		PlayFromResults(arg.toInt());
+	} else if (cmd == u"playlist"_q && parts.size() > 2) {
+		for (const auto &playlist : Playlists()) {
+			if (playlist.id == arg) {
+				auto &queue = QueueState();
+				queue.custom = false;
+				queue.results = playlist.tracks;
+				PlayFromResults(parts[2].toInt());
+				break;
+			}
+		}
+	} else if (cmd == u"copylink"_q || cmd == u"openlink"_q) {
+		const auto link = PlayingTrack().permalink;
+		if (!link.isEmpty()) {
+			if (cmd == u"copylink"_q) {
+				QGuiApplication::clipboard()->setText(link);
+			} else {
+				QDesktopServices::openUrl(QUrl(link));
+			}
+		}
+	} else if (cmd == u"forward"_q) {
+		if (const auto window = Core::App().activePrimaryWindow()) {
+			window->activate();
+			if (const auto controller = window->sessionController()) {
+				const auto track = PlayingTrack();
+				if (!track.id.isEmpty()) {
+					ForwardTrack(controller, track);
+				}
+			}
+		}
+	} else if (cmd == u"open"_q || cmd == u"fullscreen"_q) {
+		if (const auto window = Core::App().activePrimaryWindow()) {
+			window->activate();
+			if (const auto controller = window->sessionController()) {
+				if (cmd == u"fullscreen"_q) {
+					ShowFullscreenPlayer(controller);
+				} else {
+					ShowPlayerBox(controller);
+				}
+			}
+		}
+	}
+	BridgePush();
+}
+
+} // namespace
+
+void StartShellBridge() {
+	auto &b = Bridge();
+	if (b.server) {
+		return;
+	}
+	const auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+	if (runtime.isEmpty()) {
+		return;
+	}
+	b.dir = runtime + u"/mokagram"_q;
+	QDir().mkpath(b.dir);
+	QFile::setPermissions(b.dir, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+	const auto path = b.dir + u"/ctl.sock"_q;
+	QLocalServer::removeServer(path);
+	b.server = new QLocalServer(qApp);
+	b.server->setSocketOptions(QLocalServer::UserAccessOption);
+	if (!b.server->listen(path)) {
+		return;
+	}
+	QObject::connect(b.server, &QLocalServer::newConnection, [] {
+		auto &b = Bridge();
+		while (const auto client = b.server->nextPendingConnection()) {
+			b.clients.push_back(client);
+			const auto buffer = new QByteArray();
+			QObject::connect(client, &QLocalSocket::readyRead, client, [=] {
+				buffer->append(client->readAll());
+				while (true) {
+					const auto end = buffer->indexOf('\n');
+					if (end < 0) {
+						break;
+					}
+					const auto text = QString::fromUtf8(buffer->left(end));
+					buffer->remove(0, end + 1);
+					BridgeCommand(text);
+				}
+			});
+			QObject::connect(client, &QLocalSocket::disconnected, client, [=] {
+				auto &b = Bridge();
+				b.clients.erase(std::remove(b.clients.begin(), b.clients.end(), client), b.clients.end());
+				delete buffer;
+				client->deleteLater();
+			});
+			b.lastState.clear();
+			crl::on_main([] {
+				BridgePush(true);
+				BridgePushLibrary(true);
+				const auto &b = Bridge();
+				if (!b.lastCommentsLine.isEmpty()) {
+					BridgeSend(b.lastCommentsLine);
+				}
+			});
+			if (!b.lyricsLine.isEmpty()) {
+				client->write(b.lyricsLine + "\n");
+			}
+		}
+	});
+	b.timer = new QTimer(qApp);
+	b.timer->setInterval(250);
+	// Плеер создаётся позже запуска моста: до этого его не трогаем.
+	QObject::connect(b.timer, &QTimer::timeout, [] {
+		static const auto started = crl::now();
+		if (crl::now() - started > 8000) {
+			auto &b = Bridge();
+			if (b.sleepAt > 0 && crl::now() >= b.sleepAt) {
+				b.sleepAt = 0;
+				const auto instance = Media::Player::instance();
+				const auto st = instance->getState(AudioMsgId::Type::Song);
+				if (st.state == Media::Player::State::Playing
+					|| st.state == Media::Player::State::Starting
+					|| st.state == Media::Player::State::Resuming) {
+					instance->playPause(AudioMsgId::Type::Song);
+				}
+			}
+			if (++b.libTick % 8 == 0) {
+				BridgePushLibrary();
+			}
+			BridgePush();
+		}
+	});
+	b.timer->start();
+
 }
 
 } // namespace Mokagram::Music

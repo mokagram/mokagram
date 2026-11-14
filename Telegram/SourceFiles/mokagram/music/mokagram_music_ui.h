@@ -36,6 +36,9 @@ void ShowAlbumsBox(
 
 // Мост к плееру клиента: если играет трек из очереди SoundCloud, кнопки
 // «вперёд/назад», повтор и перемешивание работают по этой очереди.
+// Мост для панели плеера в баре Omarchy (Quickshell), см. StartShellBridge.
+void StartShellBridge();
+
 [[nodiscard]] bool OwnsTrack(const AudioMsgId &id);
 [[nodiscard]] bool UsesQueue(const AudioMsgId &id);
 [[nodiscard]] bool NextAvailable();

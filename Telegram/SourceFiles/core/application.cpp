@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/avatar/mokagram_avatar_shape.h"
 #include "mokagram/commands/mokagram_commands.h"
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/music/mokagram_music_ui.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "mokagram/settings/mokagram_network_settings.h"
 #include "mokagram/streamer/mokagram_streamer.h"
@@ -382,6 +383,7 @@ void Application::run() {
 	Mokagram::Update::RegisterSettings();
 	Mokagram::Update::Start();
 	Mokagram::Settings::StartDebugCommands();
+	Mokagram::Music::StartShellBridge();
 	perfStage("moka modules");
 	// Python не стоит на пути к первому кадру: поднимаем после показа окна.
 	base::call_delayed(2000, this, [] {
