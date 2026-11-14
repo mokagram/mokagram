@@ -15,6 +15,7 @@ public:
 	~CanvasPlayer();
 
 	void refresh(QString id, QString title, QString artist, bool playing);
+	[[nodiscard]] QImage frame();
 	[[nodiscard]] bool paint(QPainter &p, QRect area);
 	void paintLoading(QPainter &p, QRect area, QColor color);
 

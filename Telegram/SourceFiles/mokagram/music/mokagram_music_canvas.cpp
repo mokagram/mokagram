@@ -363,9 +363,9 @@ void CanvasPlayer::updatePlayback() {
 	}
 }
 
-bool CanvasPlayer::paint(QPainter &p, QRect area) {
+QImage CanvasPlayer::frame() {
 	if (!_player || !_player->ready() || _player->failed()) {
-		return false;
+		return {};
 	}
 	updatePlayback();
 	_frameSize = _player->videoSize().scaled(480, 720, Qt::KeepAspectRatio);
@@ -374,6 +374,11 @@ bool CanvasPlayer::paint(QPainter &p, QRect area) {
 		.outer = _frameSize,
 	});
 	_player->markFrameShown();
+	return frame;
+}
+
+bool CanvasPlayer::paint(QPainter &p, QRect area) {
+	const auto frame = this->frame();
 	if (frame.isNull()) {
 		return false;
 	}

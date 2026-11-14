@@ -8856,8 +8856,30 @@ private:
 	}
 
 	void paintBackgroundPart(QPainter &p, QRect area, QPoint origin = {}) {
+		if (_tab == Tab::Now && crl::now() >= _canvasPaletteNext) {
+			_canvasPaletteNext = crl::now() + 1000;
+			auto frame = motionFrame(_spotifyCanvas, computeLayout().cover.size());
+			if (frame.isNull()) frame = _canvas.frame();
+			if (!frame.isNull()) {
+				_canvasBackground = Images::BlurLargeImage(
+					frame.scaled(32, 32, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+						.convertToFormat(QImage::Format_ARGB32_Premultiplied), 10);
+				auto shade = QPainter(&_canvasBackground);
+				shade.fillRect(_canvasBackground.rect(), QColor(0x14, 0x14, 0x15, 180));
+				_accent = ComputeAccent(frame);
+				_barFrom = anim::color(_barFrom, _barTo, _barAnim.value(1.));
+				_barTo = _accent.isValid() ? _accent.darker(180) : QColor(0x28, 0x28, 0x28);
+				_barAnim.start([=] { update(); _view->update(); }, 0., 1., 600, anim::easeOutCubic);
+				_shuffle->setAccent(_accent);
+				_repeat->setAccent(_accent);
+			}
+		}
 		if (Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
-			_backdrop.paint(p, area, QRect(-origin, size()));
+			if (_canvasBackground.isNull()) {
+				_backdrop.paint(p, area, QRect(-origin, size()));
+			} else {
+				p.drawImage(QRect(-origin, size()), _canvasBackground);
+			}
 			p.fillRect(area, QColor(0x10, 0x10, 0x12, 100));
 			if (Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
 				const auto phase = crl::now() / 14000.;
@@ -8900,6 +8922,11 @@ private:
 			_view->update();
 		}, isVisible());
 		const auto track = PlayingTrack();
+		if (_canvasPaletteFor != track.id) {
+			_canvasPaletteFor = track.id;
+			_canvasBackground = QImage();
+			_canvasPaletteNext = 0;
+		}
 		if (_closing) {
 			return;
 		}
@@ -9172,6 +9199,9 @@ private:
 
 	CoverBackground _backdrop;
 	CanvasPlayer _canvas;
+	QImage _canvasBackground;
+	QString _canvasPaletteFor;
+	crl::time _canvasPaletteNext = 0;
 	QTimer _ambientTimer;
 	Media::Clip::ReaderPointer _motionCover;
 	Media::Clip::ReaderPointer _playlistsSticker;
