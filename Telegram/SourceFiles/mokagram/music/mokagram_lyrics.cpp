@@ -116,6 +116,17 @@ constexpr auto kRetryDelay = 1500;
 
 // Версии speed up и slowed идут быстрее или медленнее оригинала: метки времени
 // растягиваем во столько же раз, во сколько отличается длина трека.
+// Растягиваем метки, только если версия реально другой скорости.
+// Разница до 12 секунд это тишина или интро в начале/конце, а не скорость:
+// растяжка тогда копит отставание к концу песни.
+[[nodiscard]] double SpeedRatio(double durationMs, double sourceMs) {
+	if (durationMs <= 0. || sourceMs <= 0.
+		|| std::abs(sourceMs - durationMs) <= 12000.) {
+		return 1.;
+	}
+	return durationMs / sourceMs;
+}
+
 void ScaleTimes(Lyrics &lyrics, double ratio) {
 	if (std::abs(ratio - 1.) < 0.01) {
 		return;
@@ -159,9 +170,7 @@ void ScaleTimes(Lyrics &lyrics, double ratio) {
 			continue;
 		}
 		const auto source = item.value("duration").toDouble() * 1000.;
-		const auto ratio = (durationMs > 0 && source > 0.)
-			? durationMs / source
-			: 1.;
+		const auto ratio = SpeedRatio(durationMs, source);
 		const auto diff = std::abs(source - durationMs);
 		if (!matchingTitle.isEmpty()) {
 			const auto title = WithoutBrackets(CleanTitle(
@@ -358,7 +367,7 @@ void RequestKugou(
 			}
 			const auto source = item.value("duration").toDouble();
 			const auto diff = durationMs > 0 ? std::abs(source - durationMs) : 0.;
-			const auto ratio = (durationMs > 0 && source > 0.) ? durationMs / source : 1.;
+			const auto ratio = SpeedRatio(durationMs, source);
 			const auto id = item.value("id").toString();
 			const auto accesskey = item.value("accesskey").toString();
 			if (id.isEmpty()
@@ -469,9 +478,7 @@ void RequestNetease(
 			const auto diff = durationMs > 0
 				? std::abs(source - durationMs)
 				: 0.;
-			const auto ratio = (durationMs > 0 && source > 0.)
-				? durationMs / source
-				: 1.;
+			const auto ratio = SpeedRatio(durationMs, source);
 			const auto id = qint64(song.value("id").toDouble());
 			if (!id
 				|| (!artistOk && (!exact || durationMs <= 0 || diff > 1000.))

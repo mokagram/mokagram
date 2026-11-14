@@ -5769,7 +5769,7 @@ private:
 				_weights[i] += (goal - _weights[i]) * fade;
 			}
 			const auto fill = (_current >= 0)
-				? lineProgress(_current, livePosition())
+				? lineProgress(_current, at)
 				: 0.;
 			changed |= (std::abs(fill - _fill) > 0.0005);
 			_fill = fill;
@@ -5779,11 +5779,13 @@ private:
 		}
 	}
 
-	// Доля спетого в строке (0..1); не медленнее ~6 знаков/с, чтобы проигрыш не растягивал заливку.
+	// Доля спетого в строке (0..1). Пословных меток у lrc нет, поэтому темп
+	// угадываем: ~12 знаков/с, как поют обычно. Пауза в конце строки
+	// заливку не растягивает: строка заливается раньше, чем начнётся следующая.
 	[[nodiscard]] double lineProgress(int index, qint64 at) const {
 		const auto &lines = _lyrics.lines;
 		const auto start = lines[index].timeMs;
-		auto span = qint64(std::max(int(lines[index].text.size()), 1)) * 170;
+		auto span = qint64(std::max(int(lines[index].text.size()), 1)) * 85;
 		if (index + 1 < int(lines.size())) {
 			span = std::min(span, lines[index + 1].timeMs - start - 150);
 		}
