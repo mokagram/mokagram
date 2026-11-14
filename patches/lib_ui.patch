@@ -908,3 +908,84 @@ index 8b8df7d..e5687e6 100644
  }
  
  universalRippleAnimation: RippleAnimation(defaultRippleAnimation) {
+diff --git i/ui/widgets/elastic_scroll.cpp w/ui/widgets/elastic_scroll.cpp
+index 667a233..61ab661 100644
+--- i/ui/widgets/elastic_scroll.cpp
++++ w/ui/widgets/elastic_scroll.cpp
+@@ -612,6 +612,37 @@ void ElasticScroll::overscrollSpringStart(int side) {
+ 		kRubberBandMaxReturnDuration);
+ }
+ 
++// A plain mouse wheel has no gesture phases, so it never stretches the
++// edge. When a wheel step hits a bounce edge, start the release spring
++// from the edge with a velocity that peaks at a few pixels, the same
++// out-and-back motion a touchpad fling gets.
++void ElasticScroll::wheelBounce(int left) {
++	if (!left
++		|| _overscrollReturnAnimation.animating()
++		|| !overscrollSpringSide(left)
++		|| overscrollPullSide(left)) {
++		return;
++	}
++	const auto &allowed = (left < 0)
++		? _overscrollAllowFrom
++		: _overscrollAllowTill;
++	if (allowed && !allowed()) {
++		return;
++	}
++	const auto peak = std::clamp(
++		std::abs(left) / 4,
++		style::ConvertScale(8),
++		style::ConvertScale(28));
++	const auto decay = kRubberBandStiffness / kRubberBandPeriod;
++	const auto velocity = peak * decay * M_E / kRubberBandAmplitude;
++	_wheelVelocity = (left < 0) ? -velocity : velocity;
++	_wheelVelocityTime = crl::now();
++	_overscrollReturning = true;
++	_ignoreMomentumFromOverscroll = 0;
++	_movement = Movement::Returning;
++	overscrollSpringStart((left < 0) ? -1 : 1);
++}
++
+ void ElasticScroll::overscrollSpringUpdate() {
+ 	const auto progress = _overscrollReturnAnimation.value(1.);
+ 	const auto time = progress * kRubberBandMaxReturnDuration / 1000.;
+@@ -946,14 +977,25 @@ bool ElasticScroll::handleWheelEvent(not_null<QWheelEvent*> e, bool touch) {
+ 		delta = 0;
+ 	}
+ 	if (phase == Qt::NoScrollPhase) {
++		if (delta
++			&& _springSide
++			&& _overscrollReturnAnimation.animating()
++			&& base::OppositeSigns(_springSide, delta)) {
++			// Wheel away from a wheel bounce drops the bounce at once.
++			overscrollSpringFinish();
++			applyOverscroll(currentOverscrollDefault());
++			overscrollFinish();
++		}
+ 		if (_overscroll == currentOverscrollDefault()) {
+ 			const auto weak = base::make_weak(this);
+ 			requestBottomContent(delta);
+ 			if (!weak) {
+ 				return true;
+ 			}
+-			tryScrollTo(_state.visibleFrom + delta);
++			const auto target = _state.visibleFrom + delta;
++			tryScrollTo(target);
+ 			_movement = Movement::None;
++			wheelBounce(target - _state.visibleFrom);
+ 		} else if (!_overscrollReturnAnimation.animating()) {
+ 			overscrollReturn();
+ 		}
+diff --git i/ui/widgets/elastic_scroll.h w/ui/widgets/elastic_scroll.h
+index 7909e16..dc59618 100644
+--- i/ui/widgets/elastic_scroll.h
++++ w/ui/widgets/elastic_scroll.h
+@@ -314,6 +314,7 @@ private:
+ 		int delta,
+ 		crl::time timestamp);
+ 	void overscrollSpringStart(int side);
++	void wheelBounce(int left);
+ 	void overscrollSpringUpdate();
+ 	void updateBarState();
+ 	void overscrollSpringFinish();

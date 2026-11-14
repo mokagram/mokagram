@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_prepare.h"
 #include "ui/chat/chat_style.h"
 #include "ui/chat/torn_edge.h"
+#include "ui/painter.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_style.h"
 
@@ -205,6 +206,169 @@ void PaintBubbleGeneric(
 	}
 }
 
+// iOS-like continuous corners: a circular arc in the middle and two
+// cubic transitions on each side, so curvature grows from zero instead
+// of jumping at the seam between a straight side and the arc.
+constexpr auto kBubbleCornerSmoothing = 0.6;
+
+struct SquircleCorner {
+	float64 a = 0.;
+	float64 b = 0.;
+	float64 c = 0.;
+	float64 d = 0.;
+	float64 p = 0.;
+	float64 arc = 0.;
+	float64 radius = 0.;
+	float64 arcMeasure = 0.;
+};
+
+[[nodiscard]] float64 DegToRad(float64 degrees) {
+	return degrees * M_PI / 180.;
+}
+
+[[nodiscard]] SquircleCorner ComputeSquircleCorner(
+		float64 radius,
+		float64 smoothing,
+		float64 budget) {
+	auto result = SquircleCorner();
+	radius = std::min(radius, budget);
+	if (radius <= 0.) {
+		return result;
+	}
+	auto p = std::min((1. + smoothing) * radius, budget);
+	const auto arcMeasure = 90. * (1. - smoothing);
+	const auto arc = std::sin(DegToRad(arcMeasure / 2.))
+		* radius
+		* std::sqrt(2.);
+	const auto alpha = (90. - arcMeasure) / 2.;
+	const auto p3ToP4 = radius * std::tan(DegToRad(alpha / 2.));
+	const auto beta = 45. * smoothing;
+	const auto c = p3ToP4 * std::cos(DegToRad(beta));
+	const auto d = c * std::tan(DegToRad(beta));
+	auto b = (p - arc - c - d) / 3.;
+	auto a = 2. * b;
+	if ((1. + smoothing) * radius > budget) {
+		const auto maxDistance = budget - d - arc - c;
+		if (maxDistance <= 0.) {
+			// No room for smoothing at all, plain circular corner.
+			return ComputeSquircleCorner(radius, 0., budget);
+		}
+		b = std::min(b, maxDistance - maxDistance / 6.);
+		a = maxDistance - b;
+	}
+	result.a = a;
+	result.b = b;
+	result.c = c;
+	result.d = d;
+	result.p = p;
+	result.arc = arc;
+	result.radius = radius;
+	result.arcMeasure = arcMeasure;
+	return result;
+}
+
+// Corner described in a local frame: x goes along the incoming side
+// (e1) towards the tip, y goes along the outgoing side (e2).
+void AddSquircleCorner(
+		QPainterPath &path,
+		QPointF tip,
+		QPointF e1,
+		QPointF e2,
+		const SquircleCorner &k,
+		bool first) {
+	if (k.p <= 0.) {
+		if (first) {
+			path.moveTo(tip);
+		} else {
+			path.lineTo(tip);
+		}
+		return;
+	}
+	const auto map = [&](QPointF local) {
+		return tip + e1 * (local.x() - k.p) + e2 * local.y();
+	};
+	const auto start = map({ 0., 0. });
+	if (first) {
+		path.moveTo(start);
+	} else {
+		path.lineTo(start);
+	}
+	const auto from = QPointF(k.a + k.b + k.c, k.d);
+	path.cubicTo(map({ k.a, 0. }), map({ k.a + k.b, 0. }), map(from));
+
+	const auto till = from + QPointF(k.arc, k.arc);
+	const auto center = QPointF(k.p - k.radius, k.radius);
+	const auto handle = 4. / 3. * std::tan(DegToRad(k.arcMeasure) / 4.);
+	const auto rFrom = from - center;
+	const auto rTill = till - center;
+	const auto tFrom = QPointF(-rFrom.y(), rFrom.x()) * handle;
+	const auto tTill = QPointF(-rTill.y(), rTill.x()) * handle;
+	path.cubicTo(map(from + tFrom), map(till - tTill), map(till));
+
+	path.cubicTo(
+		map(till + QPointF(k.d, k.c)),
+		map(till + QPointF(k.d, k.b + k.c)),
+		map(till + QPointF(k.d, k.a + k.b + k.c)));
+}
+
+[[nodiscard]] QPainterPath BubblePath(
+		const QRect &geometry,
+		const BubbleRounding &rounding) {
+	const auto rect = QRectF(geometry);
+	const auto budget = std::min(rect.width(), rect.height()) / 2.;
+	const auto corner = [&](Corner value) {
+		return ComputeSquircleCorner(
+			BubbleCornerRadius(value),
+			kBubbleCornerSmoothing,
+			budget);
+	};
+	auto result = QPainterPath();
+	AddSquircleCorner(
+		result,
+		rect.topRight(),
+		{ 1., 0. },
+		{ 0., 1. },
+		corner(rounding.topRight),
+		true);
+	AddSquircleCorner(
+		result,
+		rect.bottomRight(),
+		{ 0., 1. },
+		{ -1., 0. },
+		corner(rounding.bottomRight),
+		false);
+	AddSquircleCorner(
+		result,
+		rect.bottomLeft(),
+		{ -1., 0. },
+		{ 0., -1. },
+		corner(rounding.bottomLeft),
+		false);
+	AddSquircleCorner(
+		result,
+		rect.topLeft(),
+		{ 0., -1. },
+		{ 1., 0. },
+		corner(rounding.topLeft),
+		false);
+	result.closeSubpath();
+	return result;
+}
+
+// Under-tail part of the 1px bottom shadow, the path shadow ends at
+// the square tail corner.
+[[nodiscard]] QRect TailShadowRect(
+		const SimpleBubble &args,
+		int tailWidth) {
+	const auto &rect = args.geometry;
+	if (args.rounding.bottomLeft == Corner::Tail) {
+		return { rect.x() - tailWidth, rect.y() + rect.height(), tailWidth, st::msgShadow };
+	} else if (args.rounding.bottomRight == Corner::Tail) {
+		return { rect.x() + rect.width(), rect.y() + rect.height(), tailWidth, st::msgShadow };
+	}
+	return {};
+}
+
 void PaintPatternBubble(QPainter &p, const SimpleBubble &args) {
 	const auto wasOpacity = p.opacity();
 	const auto opacity = PatternBubbleOpacity(args, wasOpacity);
@@ -244,27 +408,51 @@ void PaintPatternBubble(QPainter &p, const SimpleBubble &args) {
 			mask,
 			cache);
 	};
-	const auto fillCorner = [&](int x, int y, int index, Corner size) {
-		auto &corner = (size == Corner::Large)
-			? pattern->cornersLarge[index]
-			: pattern->cornersSmall[index];
-		auto &cache = (size == Corner::Large)
-			? (index < 2
-				? pattern->cornerTopLargeCache
-				: pattern->cornerBottomLargeCache)
-			: (index < 2
-				? pattern->cornerTopSmallCache
-				: pattern->cornerBottomSmallCache);
-		fillPattern(x, y, corner, cache);
-	};
 	const auto paintTail = [&](QPoint bottomPosition) {
 		const auto position = bottomPosition - tailShift;
 		fillPattern(position.x(), position.y(), tail, pattern->tailCache);
 		return tail.width() / int(tail.devicePixelRatio());
 	};
 
+	const auto &rect = args.geometry;
+	const auto shadow = args.shadowed ? st::msgShadow : 0;
+	const auto ratio = style::DevicePixelRatio();
+	auto mask = QImage(
+		QSize(rect.width(), rect.height() + shadow) * ratio,
+		QImage::Format_ARGB32_Premultiplied);
+	mask.setDevicePixelRatio(ratio);
+	mask.fill(Qt::transparent);
+	{
+		const auto path = BubblePath(rect.translated(-rect.topLeft()), args.rounding);
+		auto q = QPainter(&mask);
+		PainterHighQualityEnabler hq(q);
+		q.setPen(Qt::NoPen);
+		q.setCompositionMode(QPainter::CompositionMode_Source);
+		if (shadow) {
+			auto color = QColor(255, 255, 255);
+			color.setAlphaF(args.st->msgOutShadow()->c.alphaF());
+			q.fillPath(path.translated(0, shadow), color);
+		}
+		q.fillPath(path, QColor(255, 255, 255));
+	}
+	auto cache = QImage();
 	p.setOpacity(opacity);
-	PaintBubbleGeneric(args, fillBg, fillSh, fillCorner, paintTail);
+	PaintPatternBubblePart(
+		p,
+		args.patternViewport,
+		pattern->pixmap,
+		QRect(rect.topLeft(), QSize(rect.width(), rect.height() + shadow)),
+		mask,
+		cache);
+	if (args.rounding.bottomLeft == Corner::Tail
+		|| args.rounding.bottomRight == Corner::Tail) {
+		const auto width = paintTail(rect.topLeft() + QPoint(
+			(args.rounding.bottomLeft == Corner::Tail) ? 0 : rect.width(),
+			rect.height()));
+		if (shadow) {
+			fillSh(TailShadowRect(args, width));
+		}
+	}
 	p.setOpacity(wasOpacity);
 }
 
@@ -281,19 +469,28 @@ void PaintSolidBubble(QPainter &p, const SimpleBubble &args) {
 		? QPoint(0, tail.height())
 		: QPoint(tail.width(), tail.height());
 
-	PaintBubbleGeneric(args, [&](const QRect &rect) {
-		p.fillRect(rect, bg);
-	}, [&](const QRect &rect) {
-		p.fillRect(rect, *sh);
-	}, [&](int x, int y, int index, Corner size) {
-		auto &corners = (size == Corner::Large)
-			? st.msgBgCornersLarge
-			: st.msgBgCornersSmall;
-		p.drawPixmap(x, y, corners.p[index]);
-	}, [&](const QPoint &bottomPosition) {
-		tail.paint(p, bottomPosition - tailShift, args.outerWidth);
-		return tail.width();
-	});
+	const auto path = BubblePath(args.geometry, args.rounding);
+	{
+		PainterHighQualityEnabler hq(p);
+		if (args.shadowed && sh) {
+			const auto shadow = path.translated(0, st::msgShadow);
+			p.fillPath(
+				(bg->c.alpha() < 255) ? shadow.subtracted(path) : shadow,
+				(*sh)->b);
+		}
+		p.fillPath(path, bg->b);
+	}
+	const auto &rect = args.geometry;
+	if (args.rounding.bottomLeft == Corner::Tail
+		|| args.rounding.bottomRight == Corner::Tail) {
+		const auto bottom = rect.topLeft() + QPoint(
+			(args.rounding.bottomLeft == Corner::Tail) ? 0 : rect.width(),
+			rect.height());
+		tail.paint(p, bottom - tailShift, args.outerWidth);
+		if (args.shadowed && sh) {
+			p.fillRect(TailShadowRect(args, tail.width()), *sh);
+		}
+	}
 }
 
 } // namespace

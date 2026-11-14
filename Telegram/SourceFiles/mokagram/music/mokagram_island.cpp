@@ -860,6 +860,21 @@ void Island::animatePress(Part part, bool down) {
 	}
 }
 
+// Progress and volume fill: the cover accent lifted to a readable
+// lightness, white when cover colors are off.
+[[nodiscard]] QColor TrackColor() {
+	constexpr auto kMinLightness = 0.62;
+	const auto accent = CurrentCoverAccent();
+	if (!accent.isValid()) {
+		return QColor(255, 255, 255);
+	}
+	auto hsl = accent.toHsl();
+	return QColor::fromHslF(
+		hsl.hslHueF(),
+		hsl.hslSaturationF(),
+		std::max(double(hsl.lightnessF()), kMinLightness));
+}
+
 void Island::paintEvent(QPaintEvent *e) {
 	const auto alpha = std::clamp(_alpha.value(), 0., 1.);
 	if (alpha <= 0.) {
@@ -995,9 +1010,12 @@ void Island::paintCompactTitle(QPainter &p) {
 void Island::paintTrack(QPainter &p, const QRectF &rect, double ratio) {
 	const auto line = rect.height() / 2.;
 	p.setPen(Qt::NoPen);
-	p.setBrush(QColor(255, 255, 255, 64));
+	const auto color = TrackColor();
+	auto track = color;
+	track.setAlpha(64);
+	p.setBrush(track);
 	p.drawRoundedRect(rect, line, line);
-	p.setBrush(Qt::white);
+	p.setBrush(color);
 	p.drawRoundedRect(
 		QRectF(rect.x(), rect.y(), rect.width() * ratio, rect.height()),
 		line,
