@@ -954,6 +954,11 @@ void MainWidget::handleAudioUpdate(const Media::Player::TrackState &state) {
 			&& item->media()->ttlSeconds();
 		if (!ttlSeconds && state.id.type() == AudioMsgId::Type::Song) {
 			// Mokagram: музыка играет в островке, полоску плеера не показываем.
+			// Полоса могла остаться от голосового или кружка: прячем её.
+			if (_player && _player->toggled()) {
+				_player->hide(anim::type::normal);
+				_playerPlaylist->hideIgnoringEnterEvents();
+			}
 			Mokagram::Music::UpdateIsland(this, _controller, _history.get(), true);
 		} else if (!ttlSeconds) {
 			createPlayer();

@@ -122,6 +122,9 @@
 #include <QtGui/QLinearGradient>
 #include <QtGui/QTextLayout>
 #include <QtGui/QGuiApplication>
+#include "ui/chat/message_bubble.h"
+#include "mokagram/music/mokagram_island_glyphs.h"
+#include <QtSvg/QSvgRenderer>
 #include <QtCore/QPointer>
 #include <array>
 #include <cmath>
@@ -4653,6 +4656,35 @@ private:
 
 };
 
+// Значки островка (SVG из mokagram_island_glyphs.h) в квадрат size по центру c.
+void PaintIslandGlyph(
+		QPainter &p,
+		const char *svg,
+		QPointF c,
+		int size,
+		QColor color = QColor(Qt::white)) {
+	using Key = std::tuple<const void*, int, QRgb>;
+	static auto cache = base::flat_map<Key, QImage>();
+	const auto ratio = style::DevicePixelRatio();
+	const auto key = Key(svg, size, color.rgba());
+	auto i = cache.find(key);
+	if (i == end(cache)) {
+		auto image = QImage(
+			QSize(size, size) * ratio,
+			QImage::Format_ARGB32_Premultiplied);
+		image.setDevicePixelRatio(ratio);
+		image.fill(Qt::transparent);
+		auto q = QPainter(&image);
+		auto renderer = QSvgRenderer(QByteArray(svg));
+		renderer.render(&q, QRectF(0, 0, size, size));
+		q.setCompositionMode(QPainter::CompositionMode_SourceIn);
+		q.fillRect(QRectF(0, 0, size, size), color);
+		q.end();
+		i = cache.emplace(key, std::move(image)).first;
+	}
+	p.drawImage(QPointF(c.x() - size / 2., c.y() - size / 2.), i->second);
+}
+
 enum class Glyph { Previous, Next, Play, Add, Shuffle, Repeat, More, Block, Collapse, Queue, Filter };
 
 class RoundGlyph final : public Ui::AbstractButton {
@@ -4695,6 +4727,11 @@ public:
 			_likeAnimation.start([=] { update(); }, 0., 1., kLikeDuration);
 		}
 	}
+	// Кнопки капсулы плеера: значки островка, без кругов-подложек.
+	void setIsland(bool island) {
+		_island = island;
+		update();
+	}
 	// Кнопки полноэкранного плеера: белые значки, тёмный полупрозрачный круг.
 	void setOverlay(bool overlay) {
 		_overlay = overlay;
@@ -4704,11 +4741,11 @@ public:
 protected:
 	void onStateChanged(State was, StateChangeSource source) override {
 		AbstractButton::onStateChanged(was, source);
-		if (_overlay && ((was & StateFlag::Over) != (state() & StateFlag::Over))) {
+		if ((_overlay || _island) && ((was & StateFlag::Over) != (state() & StateFlag::Over))) {
 			const auto over = isOver();
 			_hover.start([=] { update(); }, over ? 0. : 1., over ? 1. : 0., 180, anim::easeOutCubic);
 		}
-		if (_overlay && ((was & StateFlag::Down) != (state() & StateFlag::Down))) {
+		if ((_overlay || _island) && ((was & StateFlag::Down) != (state() & StateFlag::Down))) {
 			const auto down = isDown();
 			_press.start([=] { update(); }, down ? 0. : 1., down ? 1. : 0., 120, anim::easeOutCubic);
 		}
@@ -4842,8 +4879,75 @@ private:
 		p.drawRoundedRect(QRectF(c.x() + dir * 9 * u - 2 * u, c.y() - 11 * u, 4 * u, 22 * u), 1.5 * u, 1.5 * u);
 	}
 
+	void paintIsland(QPainter &p) {
+		using namespace Mokagram::Music::IslandGlyphs;
+		auto hq = PainterHighQualityEnabler(p);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto c = QRectF(rect()).center();
+		const auto over = _hover.value(isOver() ? 1. : 0.);
+		const auto down = _press.value(isDown() ? 1. : 0.);
+		auto scale = 1. - 0.12 * down;
+		auto color = QColor(Qt::white);
+		auto svg = (const char*)nullptr;
+		auto size = s(22);
+		auto opacity = 0.85 + 0.15 * over;
+		switch (_glyph) {
+		case Glyph::Previous: svg = kGlyphBack; size = s(34); break;
+		case Glyph::Next: svg = kGlyphForward; size = s(34); break;
+		case Glyph::Play:
+			svg = _playing ? kGlyphPause : kGlyphPlay;
+			size = s(30);
+			break;
+		case Glyph::Queue:
+			svg = kGlyphQueue;
+			opacity = 0.6 + 0.25 * over;
+			break;
+		case Glyph::Add: {
+			svg = _liked ? kGlyphHeartFill : kGlyphHeart;
+			color = _liked ? QColor(0xFF, 0x3B, 0x5C) : QColor(Qt::white);
+			opacity = _liked ? 1. : (0.6 + 0.25 * over);
+			const auto pop = _pop.value(1.);
+			scale *= 1. + 0.3 * std::sin(pop * M_PI);
+		} break;
+		case Glyph::Shuffle:
+		case Glyph::Repeat: {
+			const auto &settings = Core::App().settings();
+			const auto shuffle = (_glyph == Glyph::Shuffle);
+			const auto mode = settings.playerRepeatMode();
+			const auto active = shuffle
+				? (settings.playerOrderMode() == Media::OrderMode::Shuffle)
+				: (mode != Media::RepeatMode::None);
+			svg = shuffle
+				? kGlyphShuffle
+				: (mode == Media::RepeatMode::One)
+				? kGlyphRepeatOne
+				: kGlyphRepeat;
+			if (active) {
+				// Включённый режим: светлый круг, как в островке.
+				const auto r = s(15);
+				p.setPen(Qt::NoPen);
+				p.setBrush(QColor(255, 255, 255, 46));
+				p.drawEllipse(c, r, r);
+			}
+			opacity = active ? 1. : (0.6 + 0.25 * over);
+		} break;
+		default: break;
+		}
+		if (!svg) {
+			return;
+		}
+		p.setOpacity(opacity);
+		p.translate(c);
+		p.scale(scale, scale);
+		PaintIslandGlyph(p, svg, QPointF(), size, color);
+	}
+
 	void paint() {
 		auto p = QPainter(this);
+		if (_island) {
+			paintIsland(p);
+			return;
+		}
 		if (_overlay) {
 			paintOverlay(p);
 			return;
@@ -4971,6 +5075,7 @@ private:
 
 	Glyph _glyph;
 	QColor _accent = Qt::white;
+	bool _island = false;
 	bool _playing = false;
 	bool _liked = false;
 	Ui::Animations::Simple _likeAnimation;
@@ -6462,6 +6567,24 @@ private:
 	bool _loading = false;
 };
 
+constexpr auto kBarHeight = 108;
+constexpr auto kBarMaxWidth = 1040;
+constexpr auto kBarCover = 72;
+constexpr auto kBarRadius = 40;
+
+// Акцент обложки, поднятый до читаемой светлоты; белый без него.
+[[nodiscard]] QColor LiftedAccent(QColor accent) {
+	constexpr auto kMinLightness = 0.62;
+	if (!accent.isValid()) {
+		return QColor(255, 255, 255);
+	}
+	const auto hsl = accent.toHsl();
+	return QColor::fromHslF(
+		hsl.hslHueF(),
+		hsl.hslSaturationF(),
+		std::max(double(hsl.lightnessF()), kMinLightness));
+}
+
 class FullscreenPlayer final : public Ui::RpWidget {
 public:
 	FullscreenPlayer(
@@ -6480,7 +6603,7 @@ public:
 	, _tabTransition(Ui::CreateChild<Ui::RpWidget>(this))
 	, _shuffle(Ui::CreateChild<RoundGlyph>(this, Glyph::Shuffle, 44))
 	, _previous(Ui::CreateChild<RoundGlyph>(this, Glyph::Previous, 52))
-	, _play(Ui::CreateChild<RoundGlyph>(this, Glyph::Play, 68))
+	, _play(Ui::CreateChild<RoundGlyph>(this, Glyph::Play, 52))
 	, _next(Ui::CreateChild<RoundGlyph>(this, Glyph::Next, 52))
 	, _repeat(Ui::CreateChild<RoundGlyph>(this, Glyph::Repeat, 44))
 	, _canvas(this, [=] {
@@ -6706,6 +6829,9 @@ public:
 		}, lifetime());
 		for (const auto button : { _heart, _collapse, _filter, _queueToggle, _shuffle, _previous, _play, _next, _repeat }) {
 			button->setOverlay(true);
+		}
+		for (const auto button : { _heart, _queueToggle, _shuffle, _previous, _play, _next, _repeat }) {
+			button->setIsland(true);
 		}
 		_heart->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Нравится")));
 		_collapse->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Свернуть")));
@@ -7063,11 +7189,15 @@ protected:
 		const auto pad = s(16);
 		const auto now = (_tab == Tab::Now);
 		result.barShown = true;
-		const auto barHeight = s(88);
+		// Толстая капсула как у островка: по центру, не на всю ширину.
+		const auto barHeight = s(kBarHeight);
+		const auto barWidth = std::max(
+			std::min(width() - 2 * margin, s(kBarMaxWidth)),
+			0);
 		result.bar = QRect(
-			margin,
+			(width() - barWidth) / 2,
 			height() - margin - barHeight,
-			std::max(width() - 2 * margin, 0),
+			barWidth,
 			barHeight);
 
 		// Сверху ряд вкладок по центру экрана, справа кнопка «свернуть».
@@ -7123,6 +7253,8 @@ protected:
 
 		// Внизу: постоянная полоса управления.
 		const auto &bar = result.bar;
+		// Обложка концентрична капсуле: одинаковый отступ сверху, снизу и слева.
+		const auto barInset = (bar.height() - s(kBarCover)) / 2;
 		result.ultra = bar.width() < s(560);
 		result.compact = bar.width() < s(900);
 		const auto iconWidth = s(28);
@@ -7130,8 +7262,8 @@ protected:
 		const auto leftWidth = result.ultra
 			? 0
 			: result.compact
-			? pad + s(56) + pad / 2
-			: std::clamp(int(bar.width() * 0.27), s(220), s(360));
+			? barInset + s(kBarCover) + pad / 2
+			: std::clamp(int(bar.width() * 0.3), s(280), s(380));
 		const auto rightWidth = pad + _queueToggle->width() + s(2) + _heart->width() + pad
 			+ (result.compact ? 0 : iconWidth + volumeWidth + s(12));
 		const auto sideWidth = std::max(leftWidth, rightWidth);
@@ -7141,7 +7273,8 @@ protected:
 			: bar.x() + (bar.width() - centerWidth) / 2;
 		result.controlsLeft = centerLeft;
 		result.controlsWidth = centerWidth;
-		result.controlsTop = bar.y() + s(5);
+		result.controlsTop = bar.y()
+			+ (bar.height() - _play->height() - _seek->height()) / 2;
 		const auto seekTop = result.controlsTop + _play->height();
 		const auto rowWidth = std::max(std::min(
 			result.ultra ? bar.width() - 2 * pad : centerWidth - s(16), s(568)), 0);
@@ -7161,7 +7294,7 @@ protected:
 			timeWidth - s(6),
 			_seek->height());
 		result.queue = QPoint(
-			bar.x() + bar.width() - pad - _queueToggle->width(),
+			bar.x() + bar.width() - barInset - _queueToggle->width(),
 			result.ultra ? result.controlsTop + (_play->height() - _queueToggle->height()) / 2
 				: bar.y() + (bar.height() - _queueToggle->height()) / 2);
 		result.heart = QPoint(
@@ -7182,15 +7315,15 @@ protected:
 		}
 		if (!result.ultra) {
 			result.barCover = QRect(
-				bar.x() + pad,
-				bar.y() + (bar.height() - s(48)) / 2,
-				s(48),
-				s(48));
+				bar.x() + barInset,
+				bar.y() + barInset,
+				s(kBarCover),
+				s(kBarCover));
 			result.barInfo = QRect(
-				result.barCover.x() + s(48) + s(12),
+				result.barCover.x() + s(kBarCover) + s(14),
 				result.barCover.y(),
-				std::max(leftWidth - pad - s(48) - s(12) - pad / 2, 0),
-				s(48));
+				std::max(leftWidth - barInset - s(kBarCover) - s(14) - pad / 2, 0),
+				s(kBarCover));
 		}
 		return result;
 	}
@@ -7202,7 +7335,7 @@ protected:
 		const auto shown = _coverClosing.animating()
 			? 1.
 			: _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
-		const auto shift = int((s(48) + s(12)) * (1. - shown));
+		const auto shift = int((s(kBarCover) + s(14)) * (1. - shown));
 		return layout.barInfo.adjusted(-shift, 0, 0, 0);
 	}
 	// Где под курсором название или исполнитель (по ширине самого текста, не всей строки).
@@ -7232,12 +7365,12 @@ protected:
 		if (!layout.ultra && !layout.compact && layout.barInfo.width() > 0) {
 			const auto info = barInfoRect(layout);
 			auto font = st::normalFont->f;
-			font.setPixelSize(s(13));
+			font.setPixelSize(s(14));
 			const auto artistWidth = std::min(
 				QFontMetrics(font).horizontalAdvance(_artist),
 				info.width());
 			const auto artistRect = QRect(
-				info.x(), info.y() + s(28), artistWidth, s(20));
+				info.x(), info.y() + s(38), artistWidth, s(20));
 			if (artistRect.contains(point) && !_artist.trimmed().isEmpty()) {
 				return InfoHover::BarArtist;
 			} else if (info.contains(point) && !_title.trimmed().isEmpty()) {
@@ -8790,21 +8923,24 @@ protected:
 			return;
 		}
 
-		// Полоса управления внизу.
-		p.setPen(QPen(QColor(255, 255, 255, 16), s(1)));
-		// «Сейчас играет»: панель под цвет обложки, на остальных вкладках серая.
-		auto tinted = anim::color(_barFrom, _barTo, _barAnim.value(1.));
-		tinted.setAlpha(230);
-		p.setBrush(anim::color(
-			tinted,
-			QColor(0x28, 0x28, 0x28),
-			_plainAnim.value(_tab == Tab::Now ? 0. : 1.)));
-		p.drawRoundedRect(layout.bar, s(22), s(22));
+		// Полоса управления внизу: чёрная капсула как у островка,
+		// углы iOS-сквиркл.
+		p.setPen(Qt::NoPen);
+		// Цвет обложки только на «Сейчас играет», на остальных серо-синий.
+		p.fillPath(
+			Ui::SquirclePath(QRectF(layout.bar), s(kBarRadius)),
+			anim::color(
+				anim::color(_barFrom, _barTo, _barAnim.value(1.)),
+				QColor(0x2C, 0x34, 0x40),
+				_plainAnim.value(_tab == Tab::Now ? 0. : 1.)));
 		if (closing > 0. && !layout.cover.isEmpty()) {
 			const auto source = QRectF(layout.cover);
 			const auto target = QRectF(layout.barCover);
 			p.save();
-			p.setClipRect(layout.barCover);
+			// Обложка летит в бар уже со скруглением бара, а не квадратом.
+			p.setClipPath(Ui::SquirclePath(
+				QRectF(layout.barCover),
+				s(kBarRadius) - (layout.barCover.y() - layout.bar.y())));
 			p.translate(source.x() + (target.x() - source.x()) * closing,
 				source.y() + (target.y() - source.y()) * closing);
 			p.scale((source.width() + (target.width() - source.width()) * closing) / source.width(),
@@ -8814,13 +8950,15 @@ protected:
 			drawCover(_cover, fade, true);
 			p.restore();
 		}
-		// На «Сейчас играет» маленькая обложка уходит: её заменяет большая.
+		// На «Сейчас играет» обложки в капсуле нет: там большая.
 		const auto barCoverShown = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
 		if (!layout.ultra && barCoverShown > 0.) {
 			p.save();
 			p.setOpacity(barCoverShown);
 			auto path = QPainterPath();
-			path.addRoundedRect(QRectF(layout.barCover), s(10), s(10));
+			path = Ui::SquirclePath(
+				QRectF(layout.barCover),
+				s(kBarRadius) - (layout.barCover.y() - layout.bar.y()));
 			p.setClipPath(path);
 			if (_cover.isNull()) {
 				p.fillRect(layout.barCover, QColor(0x32, 0x32, 0x32));
@@ -8834,21 +8972,21 @@ protected:
 			const auto info = barInfoRect(layout);
 			const auto infoLeft = info.x();
 			const auto infoWidth = info.width();
-			auto font = labelFont(15, true);
+			auto font = labelFont(16, true);
 			font.setUnderline(_hover == InfoHover::BarTitle);
 			p.setFont(font);
 			p.setPen(Qt::white);
 			p.drawText(
-				QRect(infoLeft, layout.barInfo.y() + s(6), infoWidth, s(22)),
+				QRect(infoLeft, layout.barInfo.y() + s(13), infoWidth, s(24)),
 				Qt::AlignLeft | Qt::AlignVCenter,
 				QFontMetrics(font).elidedText(_title, Qt::ElideRight, infoWidth));
-			font = labelFont(13, false);
+			font = labelFont(14, false);
 			font.setUnderline(_hover == InfoHover::BarArtist);
 			p.setFont(font);
 			p.setPen(QColor(255, 255, 255,
 				_hover == InfoHover::BarArtist ? 255 : 170));
 			p.drawText(
-				QRect(infoLeft, layout.barInfo.y() + s(28), infoWidth, s(20)),
+				QRect(infoLeft, layout.barInfo.y() + s(38), infoWidth, s(20)),
 				Qt::AlignLeft | Qt::AlignVCenter,
 				QFontMetrics(font).elidedText(_artist, Qt::ElideRight, infoWidth));
 		}
@@ -8861,13 +8999,13 @@ protected:
 
 		// Громкость: значок слева от полосы.
 		if (!layout.compact) {
-			const auto volume = Core::App().settings().songVolume();
-			const auto &icon = (volume == 0.)
-				? st::mediaPlayerVolumeIcon0
-				: (volume < 0.66)
-				? st::mediaPlayerVolumeIcon1
-				: st::mediaPlayerVolumeToggle.icon;
-			icon.paintInCenter(p, layout.volumeIcon, QColor(255, 255, 255, 170));
+			p.setOpacity(0.6);
+			PaintIslandGlyph(
+				p,
+				Mokagram::Music::IslandGlyphs::kGlyphSpeaker,
+				QRectF(layout.volumeIcon).center(),
+				s(20));
+			p.setOpacity(1.);
 		}
 	}
 
@@ -9070,7 +9208,9 @@ private:
 					: QColor(0x28, 0x28, 0x28);
 				_barAnim.start([=] { update(); }, 0., 1., 600, anim::easeOutCubic);
 			}
-			_seek->setFillColor(QColor(0xb7, 0xce, 0xd8));
+			// Перемотка и громкость в оттенке обложки, как у островка.
+			_seek->setFillColor(LiftedAccent(_accent));
+			_volume->setFillColor(LiftedAccent(_accent));
 			_shuffle->setAccent(_accent);
 			_repeat->setAccent(_accent);
 			_view->update();

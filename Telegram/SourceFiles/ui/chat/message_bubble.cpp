@@ -542,6 +542,21 @@ void FinishBubblePatternOnMain(not_null<BubblePattern*> pattern) {
 		QImage::Format_ARGB32_Premultiplied);
 }
 
+QPainterPath SquirclePath(
+		QRectF rect,
+		float64 radius,
+		float64 smoothing) {
+	const auto budget = std::min(rect.width(), rect.height()) / 2.;
+	const auto corner = ComputeSquircleCorner(radius, smoothing, budget);
+	auto result = QPainterPath();
+	AddSquircleCorner(result, rect.topRight(), { 1., 0. }, { 0., 1. }, corner, true);
+	AddSquircleCorner(result, rect.bottomRight(), { 0., 1. }, { -1., 0. }, corner, false);
+	AddSquircleCorner(result, rect.bottomLeft(), { -1., 0. }, { 0., -1. }, corner, false);
+	AddSquircleCorner(result, rect.topLeft(), { 0., -1. }, { 1., 0. }, corner, false);
+	result.closeSubpath();
+	return result;
+}
+
 void PaintBubble(QPainter &p, const SimpleBubble &args) {
 	if (UsePatternBubble(args)) {
 		PaintPatternBubble(p, args);

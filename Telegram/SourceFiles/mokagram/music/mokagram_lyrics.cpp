@@ -22,6 +22,8 @@
 #include <QtGui/QTextDocumentFragment>
 
 #include <map>
+#include <vector>
+#include <QtCore/QTimer>
 
 namespace Mokagram::Music {
 namespace {
@@ -65,6 +67,16 @@ std::map<QString, Lyrics> &Cache() {
 	static auto result = std::map<QString, Lyrics>();
 	return result;
 }
+
+// Кто ждёт текст трека, который уже ищется: один поиск на трек.
+std::map<QString, std::vector<Fn<void(Lyrics)>>> &Pending() {
+	static auto result = std::map<QString, std::vector<Fn<void(Lyrics)>>>();
+	return result;
+}
+
+constexpr auto kTooManyRequests = 429;
+constexpr auto kRetries = 2;
+constexpr auto kRetryDelay = 1500;
 
 [[nodiscard]] Lyrics ParseLrc(const QString &text) {
 	auto result = Lyrics();
@@ -204,7 +216,8 @@ void Request(
 		QUrlQuery query,
 		qint64 durationMs,
 		Fn<void(Lyrics)> done,
-		QString matchingTitle = {}) {
+		QString matchingTitle = {},
+		int attempt = 0) {
 	// '+' и скобки кодируем сами: QUrlQuery оставляет '+' как есть, и сервис читает его пробелом.
 	auto parts = QStringList();
 	for (const auto &[key, value] : query.queryItems()) {
@@ -225,6 +238,15 @@ void Request(
 		auto result = Lyrics();
 		// В лог идёт только хост: полный URL содержит название трека.
 		LOG(("[lyrics] %1: error %2").arg(url.host()).arg(reply->errorString()));
+		// lrclib режет частые запросы: ждём и пробуем ещё, а не «недоступен».
+		const auto status = reply->attribute(
+			QNetworkRequest::HttpStatusCodeAttribute).toInt();
+		if (status == kTooManyRequests && attempt < kRetries) {
+			QTimer::singleShot(kRetryDelay * (attempt + 1), [=] {
+				Request(query, durationMs, done, matchingTitle, attempt + 1);
+			});
+			return;
+		}
 		if (reply->error() == QNetworkReply::NoError) {
 			const auto doc = QJsonDocument::fromJson(reply->readAll());
 			if (doc.isArray()) {
@@ -879,6 +901,12 @@ void FetchLyrics(
 		done(i->second);
 		return;
 	}
+	auto &pending = Pending();
+	if (const auto i = pending.find(cacheKey); i != pending.end()) {
+		i->second.push_back(std::move(done));
+		return;
+	}
+	pending[cacheKey].push_back(std::move(done));
 	const auto split = SplitName(title, artist);
 	const auto clean = split.clean;
 	const auto trackName = split.trackName;
@@ -891,7 +919,16 @@ void FetchLyrics(
 			}
 			cache[cacheKey] = result;
 		}
-		done(std::move(result));
+		auto &pending = Pending();
+		const auto i = pending.find(cacheKey);
+		if (i == pending.end()) {
+			return;
+		}
+		const auto waiting = std::move(i->second);
+		pending.erase(i);
+		for (const auto &callback : waiting) {
+			callback(result);
+		}
 	};
 	auto first = QUrlQuery();
 	first.addQueryItem(u"track_name"_q, trackName);

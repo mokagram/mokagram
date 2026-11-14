@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+class QPainterPath;
+
 namespace Ui {
 
 class ChatTheme;
@@ -128,6 +130,12 @@ struct BubbleWithGaps {
 	const std::vector<BubbleSelectionInterval> &gaps;
 	not_null<TornEdgeCache*> torn;
 };
+
+// iOS continuous corners (squircle) for any rect, same curve as bubbles.
+[[nodiscard]] QPainterPath SquirclePath(
+	QRectF rect,
+	float64 radius,
+	float64 smoothing = 0.6);
 
 void PaintBubble(QPainter &p, const SimpleBubble &args);
 void PaintBubble(QPainter &p, const ComplexBubble &args);
