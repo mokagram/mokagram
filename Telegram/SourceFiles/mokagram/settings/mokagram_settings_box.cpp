@@ -5,6 +5,7 @@
 // Mokagram: окно «Кастомизация», строится из реестра настроек.
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
+#include "mokagram/pet/mokagram_pet.h"
 #include "mokagram/plugins/mokagram_plugin_store.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings_box.h"
@@ -2811,6 +2812,9 @@ void StartDebugCommands() {
 		}
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller) {
+			return;
+		}
+		if (Mokagram::Pet::DebugCommand(cmd, &controller->session())) {
 			return;
 		}
 		if (cmd == u"customize"_q) {

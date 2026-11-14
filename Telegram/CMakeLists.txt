@@ -85,6 +85,8 @@ PRIVATE
     mokagram/stars/mokagram_stars_stats.h
     mokagram/effects/mokagram_effects.cpp
     mokagram/effects/mokagram_effects.h
+    mokagram/pet/mokagram_pet.cpp
+    mokagram/pet/mokagram_pet.h
     mokagram/quote/mokagram_quote.cpp
     mokagram/avatar/mokagram_avatar_shape.cpp
     mokagram/commands/mokagram_commands.cpp

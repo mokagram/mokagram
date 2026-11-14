@@ -719,6 +719,7 @@ private:
 		FieldHistoryAction fieldHistoryAction = FieldHistoryAction::Clear);
 	[[nodiscard]] int fieldHeight() const;
 	[[nodiscard]] bool fieldOrDisabledShown() const;
+	[[nodiscard]] QRect mokaPetBubble() const;
 	[[nodiscard]] bool fieldHasSendText() const;
 	[[nodiscard]] bool hasSendableContent() const;
 	[[nodiscard]] bool hideExtraButtons() const;

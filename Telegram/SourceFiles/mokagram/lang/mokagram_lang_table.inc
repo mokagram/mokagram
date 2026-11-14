@@ -1573,3 +1573,6 @@
 	{ "Нет доступной музыки в этой подборке.", "No playable music in this collection." },
 	{ "Загружаю подборки SoundCloud…", "Loading SoundCloud selections…" },
 	{ "Подборки SoundCloud недоступны.", "SoundCloud selections are unavailable." },
+	{ "Питомец", "Pet" },
+	{ "Clawd над полем ввода", "Clawd above the message field" },
+	{ "Гуляет по краю поля ввода, следит за набором и радуется отправке. Его можно взять мышкой и бросить.", "Walks along the message field, watches you type and cheers when you send. Grab it with the mouse and throw it." },

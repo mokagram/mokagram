@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_widget.h"
 #include "mokagram/inline/mokagram_inline_ui.h"
 #include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/pet/mokagram_pet.h"
 #include <QtWidgets/QGraphicsEffect>
 
 #include "api/api_compose_with_ai.h"
@@ -578,6 +579,26 @@ HistoryWidget::HistoryWidget(
 			drawField(p, clip.translated(overlay->pos()));
 		}, overlay->lifetime());
 	}
+
+	// Mokagram: питомец Clawd на верхнем крае баббла ввода (тумблер pet.clawd).
+	Mokagram::Pet::Attach({
+		.parent = this,
+		.session = &controller->session(),
+		.bubble = [=] { return mokaPetBubble(); },
+		.history = [=] { return _history; },
+		.caret = [=]() -> std::optional<QPoint> {
+			if (!_field->hasFocus()) {
+				return std::nullopt;
+			}
+			const auto edit = _field->rawTextEdit();
+			return edit->viewport()->mapTo(
+				this,
+				edit->cursorRect().center());
+		},
+		.area = [=] { return _scroll->geometry(); },
+		.under = [=]() -> QWidget* { return _send.get(); },
+		.typing = _field->changes(),
+	});
 
 	// The controls inside these are created in an order of their own - the
 	// top bar's selection buttons start with the one placed last, the bars
@@ -11600,6 +11621,31 @@ void HistoryWidget::updateField() {
 	_repaintFieldScheduled = true;
 	const auto fieldAreaTop = MokaVisibleScrollGeometry(_scroll.data()).bottom() + 1;
 	rtlupdate(0, fieldAreaTop, width(), height() - fieldAreaTop);
+}
+
+// Mokagram: баббл поля ввода для питомца Clawd, как его рисует drawField.
+QRect HistoryWidget::mokaPetBubble() const {
+	if (!_history
+		|| !_list
+		|| isSearching()
+		|| isRecording()
+		|| !fieldOrDisabledShown()
+		|| _field->isHidden()) {
+		return QRect();
+	}
+	auto backy = _field->y() - st::historySendPadding;
+	auto backh = fieldHeight() + 2 * st::historySendPadding;
+	if (_editMsgId
+		|| _replyTo
+		|| readyToForward()
+		|| _kbReplyTo
+		|| _previewDrawPreview
+		|| _suggestOptions) {
+		backy -= st::historyReplyHeight;
+		backh += st::historyReplyHeight;
+	}
+	const auto skip = MokaBubbleSkip();
+	return QRect(skip, backy, width() - 2 * skip, backh);
 }
 
 void HistoryWidget::drawField(Painter &p, const QRect &rect) {

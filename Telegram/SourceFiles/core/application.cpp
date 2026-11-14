@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
+#include "mokagram/pet/mokagram_pet.h"
 #include "mokagram/perf/mokagram_perf.h"
 #include "mokagram/plugins/mokagram_plugin_api.h"
 #include "mokagram/plugins/mokagram_plugins.h"
@@ -366,6 +367,7 @@ void Application::run() {
 	Mokagram::Streamer::RegisterSettings();
 	Mokagram::History::RegisterSettings();
 	Mokagram::Ghost::RegisterSettings();
+	Mokagram::Pet::RegisterSettings();
 	Mokagram::FakePasscode::RegisterSettings();
 	Mokagram::PasscodeGuard::RegisterSettings();
 	Mokagram::Forward::RegisterSettings();
