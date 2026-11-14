@@ -8856,38 +8856,69 @@ private:
 		});
 	}
 
+	QImage canvasBackgroundFrame() const {
+		if (_canvasBackground.isNull()) return {};
+		auto result = _canvasBackgroundFrom.copy();
+		auto painter = QPainter(&result);
+		painter.setOpacity(_canvasFade.value(1.));
+		painter.drawImage(result.rect(), _canvasBackground);
+		return result;
+	}
+
+	void setCanvasPalette(QImage background, QColor accent) {
+		_canvasBackgroundFrom = _canvasBackground.isNull()
+			? CoverBackgroundForPlayback() : canvasBackgroundFrame();
+		if (_canvasBackgroundFrom.isNull()) {
+			_canvasBackgroundFrom = QImage(QSize(32, 32), QImage::Format_ARGB32_Premultiplied);
+			_canvasBackgroundFrom.fill(QColor(0x14, 0x14, 0x15));
+		}
+		_canvasBackground = std::move(background);
+		_canvasAccentFrom = _accent;
+		_canvasAccentTo = accent;
+		const auto animate = !anim::Disabled()
+			&& !PowerSaving::On(PowerSaving::kAnimations);
+		_canvasFade.stop();
+		// Ambient colour follows the video slowly, without flashing at scene cuts.
+		if (animate) {
+			_canvasFade.start([=] { update(); _view->update(); },
+				0., 1., 2400, anim::easeOutCubic);
+		}
+		_barFrom = anim::color(_barFrom, _barTo, _barAnim.value(1.));
+		_barTo = accent.isValid() ? accent.darker(180) : QColor(0x28, 0x28, 0x28);
+		_barAnim.stop();
+		if (animate) {
+			_barAnim.start([=] { update(); }, 0., 1., 2400, anim::easeOutCubic);
+		}
+	}
+
 	void paintBackgroundPart(QPainter &p, QRect area, QPoint origin = {}) {
 		if (_tab == Tab::Now && crl::now() >= _canvasPaletteNext) {
-			_canvasPaletteNext = crl::now() + 1000;
+			_canvasPaletteNext = crl::now() + 3000;
 			auto frame = _spotifyPaletteFrame;
 			if (frame.isNull()) frame = _canvas.frame();
 			if (!frame.isNull()) {
-				_canvasBackground = Images::BlurLargeImage(
+				auto background = Images::BlurLargeImage(
 					frame.scaled(32, 32, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
 						.convertToFormat(QImage::Format_ARGB32_Premultiplied), 10);
-				auto shade = QPainter(&_canvasBackground);
-				shade.fillRect(_canvasBackground.rect(), QColor(0x14, 0x14, 0x15, 180));
-				_accent = ComputeAccent(frame);
-				_barFrom = anim::color(_barFrom, _barTo, _barAnim.value(1.));
-				_barTo = _accent.isValid() ? _accent.darker(180) : QColor(0x28, 0x28, 0x28);
-				_barAnim.start([=] { update(); _view->update(); }, 0., 1., 600, anim::easeOutCubic);
-				_shuffle->setAccent(_accent);
-				_repeat->setAccent(_accent);
+				{
+					auto shade = QPainter(&background);
+					shade.fillRect(background.rect(), QColor(0x14, 0x14, 0x15, 180));
+				}
+				setCanvasPalette(std::move(background), ComputeAccent(frame));
 			} else if (!_canvasBackground.isNull()) {
-				_canvasBackground = QImage();
-				_accent = CurrentCoverAccent();
-				_barFrom = anim::color(_barFrom, _barTo, _barAnim.value(1.));
-				_barTo = _accent.isValid() ? _accent.darker(180) : QColor(0x28, 0x28, 0x28);
-				_barAnim.start([=] { update(); _view->update(); }, 0., 1., 600, anim::easeOutCubic);
-				_shuffle->setAccent(_accent);
-				_repeat->setAccent(_accent);
+				setCanvasPalette(CoverBackgroundForPlayback(), CurrentCoverAccent());
 			}
+		}
+		if (!_canvasBackground.isNull()) {
+			_accent = anim::color(_canvasAccentFrom, _canvasAccentTo, _canvasFade.value(1.));
+			_shuffle->setAccent(_accent);
+			_repeat->setAccent(_accent);
 		}
 		if (Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
 			if (_canvasBackground.isNull()) {
 				_backdrop.paint(p, area, QRect(-origin, size()));
 			} else {
-				p.drawImage(QRect(-origin, size()), _canvasBackground);
+				p.drawImage(QRect(-origin, size()), canvasBackgroundFrame());
 			}
 			p.fillRect(area, QColor(0x10, 0x10, 0x12, 100));
 			if (Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
@@ -8933,7 +8964,9 @@ private:
 		const auto track = PlayingTrack();
 		if (_canvasPaletteFor != track.id) {
 			_canvasPaletteFor = track.id;
+			_canvasFade.stop();
 			_canvasBackground = QImage();
+			_canvasBackgroundFrom = QImage();
 			_spotifyPaletteFrame = QImage();
 			_canvasPaletteNext = 0;
 		}
@@ -9210,6 +9243,10 @@ private:
 	CoverBackground _backdrop;
 	CanvasPlayer _canvas;
 	QImage _canvasBackground;
+	QImage _canvasBackgroundFrom;
+	QColor _canvasAccentFrom;
+	QColor _canvasAccentTo;
+	Ui::Animations::Simple _canvasFade;
 	QImage _spotifyPaletteFrame;
 	QString _canvasPaletteFor;
 	crl::time _canvasPaletteNext = 0;
