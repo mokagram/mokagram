@@ -10451,6 +10451,10 @@ void ShowCurrentTrackMenu(
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Очередь")), [=] { ShowPlayerBox(controller); }, &st::menuIconChats);
 	menu->addSeparator();
 	AddTogetherActions(menu.get(), controller);
+	menu->addSeparator();
+	add(QString::fromUtf8(Mokagram::Lang::Tr("Закрыть")), [] {
+		Media::Player::instance()->stopAndClose();
+	}, &st::menuIconCancel);
 	menu->popup(globalPosition);
 }
 

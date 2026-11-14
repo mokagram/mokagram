@@ -1365,12 +1365,8 @@ void Island::contextMenuEvent(QContextMenuEvent *e) {
 	if (partAt(e->pos()) == Part::None) {
 		return;
 	}
-	_menu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
-	_menu->addAction(
-		QString::fromUtf8(Mokagram::Lang::Tr("Закрыть")),
-		[] { Media::Player::instance()->stopAndClose(); },
-		&st::menuIconCancel);
-	_menu->popup(e->globalPos());
+	ShowCurrentTrackMenu(_controller, e->globalPos(), this);
+	e->accept();
 }
 
 [[nodiscard]] base::flat_map<QWidget*, QPointer<Island>> &Islands() {
