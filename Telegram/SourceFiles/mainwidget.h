@@ -139,6 +139,8 @@ public:
 	[[nodiscard]] Ui::ChatTheme *customChatTheme() const;
 
 	int backgroundFromY() const;
+	// Mokagram: окно чата для эффекта очистки истории.
+	[[nodiscard]] HistoryWidget *mokaHistoryWidget() const;
 	void showSection(
 		std::shared_ptr<Window::SectionMemento> memento,
 		const SectionShow &params);

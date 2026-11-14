@@ -281,6 +281,7 @@ void ApiGet(
 	const auto officialApi = QUrl(base).host().toLower()
 		== u"api.soundcloud.com"_q;
 	const auto send = [=](bool ok) {
+		LOG(("[moka-dbg] ApiGet send ok %1 %2").arg(ok ? 1 : 0).arg(base.left(80)));
 		if (!ok) {
 			done({}, QString::fromUtf8(Mokagram::Lang::Tr("не удалось получить client_id SoundCloud")));
 			return;
@@ -1288,7 +1289,9 @@ void LoadTrackComments(
 			query.addQueryItem(u"linked_partitioning"_q, u"true"_q);
 		}
 	}
+	LOG(("[moka-dbg] comments ApiGet %1").arg(url.toString()));
 	ApiGet(url.toString(), query, [=](QByteArray data, QString error) {
+		LOG(("[moka-dbg] comments reply %1 bytes, error '%2'").arg(data.size()).arg(error.left(200)));
 		auto result = TrackCommentsPage();
 		if (!error.isEmpty()) {
 			// QNetworkReply включает URL в errorString, он не нужен в интерфейсе.

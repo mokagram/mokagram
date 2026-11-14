@@ -3276,6 +3276,10 @@ void MainWidget::updateWindowAdaptiveLayout() {
 	_controller->adaptive().setWindowLayout(layout.windowLayout);
 }
 
+HistoryWidget *MainWidget::mokaHistoryWidget() const {
+	return _history.get();
+}
+
 int MainWidget::backgroundFromY() const {
 	return -getMainSectionTop();
 }

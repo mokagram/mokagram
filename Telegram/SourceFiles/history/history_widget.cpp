@@ -8,6 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_widget.h"
 #include "mokagram/inline/mokagram_inline_ui.h"
 #include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/effects/mokagram_black_hole.h"
+#include "mokagram/music/mokagram_island.h"
 #include "mokagram/pet/mokagram_pet.h"
 #include <QtWidgets/QGraphicsEffect>
 
@@ -524,6 +526,59 @@ HistoryWidget::HistoryWidget(
 		overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
 		overlay->stackUnder(_send.get());
 		_fieldBarCancel->stackUnder(_send.get());
+
+		// Лента лежит и под плашкой ответа/пересылки, поэтому клики по
+		// плашке забирал скролл. Прозрачный слой над плашкой отдаёт мышь
+		// окну чата: открываются настройки пересылки и ответа.
+		const auto hit = Ui::CreateChild<Ui::RpWidget>(this);
+		hit->setMouseTracking(true);
+		hit->hide();
+		rpl::combine(
+			_fieldBarCancel->shownValue(),
+			_fieldBarCancel->geometryValue()
+		) | rpl::on_next([=](bool shown, QRect cancel) {
+			if (!shown) {
+				hit->hide();
+				clearOverStates();
+				return;
+			}
+			const auto left = MokaBubbleSkip();
+			hit->setGeometry(
+				left,
+				cancel.y() + cancel.height() - st::historyReplyHeight,
+				std::max(cancel.x() - left, 0),
+				st::historyReplyHeight);
+			hit->show();
+			hit->stackUnder(_fieldBarCancel.data());
+		}, hit->lifetime());
+		hit->events() | rpl::on_next([=](not_null<QEvent*> e) {
+			const auto type = e->type();
+			if (type == QEvent::Leave) {
+				clearOverStates();
+				return;
+			} else if (type != QEvent::MouseMove
+				&& type != QEvent::MouseButtonPress
+				&& type != QEvent::MouseButtonRelease) {
+				return;
+			}
+			const auto mouse = static_cast<QMouseEvent*>(e.get());
+			const auto pos = hit->mapToParent(mouse->pos());
+			auto mapped = QMouseEvent(
+				type,
+				QPointF(pos),
+				mouse->globalPosition(),
+				mouse->button(),
+				mouse->buttons(),
+				mouse->modifiers());
+			if (type == QEvent::MouseMove) {
+				mouseMoveEvent(&mapped);
+			} else if (type == QEvent::MouseButtonPress) {
+				updateOverStates(pos);
+				mousePressEvent(&mapped);
+			} else {
+				mouseReleaseEvent(&mapped);
+			}
+		}, hit->lifetime());
 		overlay->paintRequest() | rpl::on_next([=](QRect clip) {
 			if (_list && MokaScrollBottomSkip(_scroll.data()) > 0) {
 				// лента под бабблом растворяется в обои
@@ -11646,6 +11701,99 @@ QRect HistoryWidget::mokaPetBubble() const {
 	}
 	const auto skip = MokaBubbleSkip();
 	return QRect(skip, backy, width() - 2 * skip, backh);
+}
+
+// Mokagram: снимает ленту, обои, шапку и островок, запускает чёрную дыру
+// и сразу чистит историю: дальше сообщения рисует только эффект.
+bool HistoryWidget::mokaClearWithBlackHole(
+		not_null<PeerData*> peer,
+		Fn<void()> clear) {
+	const auto parent = parentWidget();
+	if (_peer != peer
+		|| !_list
+		|| !_history
+		|| _history->isDisplayedEmpty()
+		|| !parent
+		|| isHidden()
+		|| !window()->isVisible()
+		|| window()->isMinimized()
+		|| width() <= 0) {
+		return false;
+	}
+	const auto bubble = mokaPetBubble();
+	const auto scrollBottom = _scroll->y()
+		+ _scroll->height()
+		- MokaScrollBottomSkip(_scroll.data());
+	const auto bottom = bubble.isEmpty()
+		? scrollBottom
+		: std::min(scrollBottom, bubble.y());
+	const auto area = QRect(0, 0, width(), bottom);
+	if (area.height() <= _scroll->y()) {
+		return false;
+	}
+	const auto ratio = style::DevicePixelRatio();
+
+	auto wallpaper = QImage(
+		area.size() * ratio,
+		QImage::Format_ARGB32_Premultiplied);
+	wallpaper.setDevicePixelRatio(ratio);
+	wallpaper.fill(st::windowBg->c);
+	{
+		auto p = QPainter(&wallpaper);
+		const auto fromy = controller()->content()->backgroundFromY();
+		p.translate(0, fromy);
+		Window::SectionWidget::PaintBackground(
+			p,
+			controller()->currentChatTheme(),
+			QSize(width(), controller()->content()->height()),
+			area.translated(0, -fromy),
+			true);
+	}
+
+	auto args = Mokagram::BlackHole::Args{ .parent = parent };
+	args.area = area.translated(pos());
+	args.wallpaper = std::move(wallpaper);
+	if (_scroll->y() > 0) {
+		args.chromeRect = QRect(0, 0, width(), _scroll->y());
+		args.chrome = Ui::GrabWidgetToImage(this, args.chromeRect);
+	}
+
+	const auto visible = std::min(
+		_scroll->height() - MokaScrollBottomSkip(_scroll.data()),
+		bottom - _scroll->y());
+	const auto scrollTop = _scroll->scrollTop();
+	if (visible > 0) {
+		const auto shot = Ui::GrabWidgetToImage(
+			_list,
+			QRect(0, scrollTop, _list->width(), visible),
+			Qt::transparent);
+		const auto origin = _scroll->pos()
+			+ QPoint(_list->x(), 0);
+		args.items = Mokagram::BlackHole::Split(shot, QPointF(origin));
+	}
+
+	const auto island = Mokagram::Music::GrabIsland(parent);
+	if (island) {
+		args.island = island->shape.translated(-QPointF(pos()));
+		args.islandImage = island->image;
+		args.islandImageRect = island->geometry.translated(-pos());
+		args.islandStays = true;
+	} else {
+		// Без музыки островок пустой пилюлей выпрыгивает там же, где
+		// живёт музыкальный, раскрывается в дыру и в конце тает.
+		const auto size = QSizeF(
+			style::ConvertScale(95),
+			style::ConvertScale(37));
+		const auto bar = _topBar->geometry();
+		args.island = QRectF(
+			QPointF(
+				width() / 2. - size.width() / 2.,
+				bar.y() + (bar.height() - size.height()) / 2.),
+			size);
+	}
+	Mokagram::BlackHole::Start(std::move(args));
+	clear();
+	return true;
 }
 
 void HistoryWidget::drawField(Painter &p, const QRect &rect) {

@@ -5,6 +5,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mokagram/music/mokagram_island.h"
+#include "mokagram/effects/mokagram_black_hole.h"
 
 #include "mokagram/music/mokagram_island_glyphs.h"
 #include "mokagram/music/mokagram_music_library.h"
@@ -28,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/power_saving.h"
 #include "ui/rp_widget.h"
+#include "ui/ui_utility.h"
 #include "ui/effects/animations.h"
 #include "ui/text/format_values.h"
 #include "ui/text/format_song_document_name.h"
@@ -245,6 +247,7 @@ public:
 
 	void relayout();
 	void appear();
+	[[nodiscard]] std::optional<IslandShot> shot();
 
 protected:
 	void paintEvent(QPaintEvent *e) override;
@@ -654,7 +657,10 @@ void Island::relayout() {
 	applyGeometry();
 	if (_shown || _alpha.value() > 0.) {
 		show();
-		raise();
+		// Чёрная дыра растёт из островка и лежит над ним, пока идёт.
+		if (!Mokagram::BlackHole::Running()) {
+			raise();
+		}
 	}
 }
 
@@ -677,6 +683,17 @@ void Island::applyGeometry() {
 	if (geometry() != rect) {
 		setGeometry(rect);
 	}
+}
+
+std::optional<IslandShot> Island::shot() {
+	if (isHidden() || _alpha.value() < 0.5) {
+		return std::nullopt;
+	}
+	return IslandShot{
+		.shape = shapeRect().translated(pos()),
+		.image = Ui::GrabWidgetToImage(this),
+		.geometry = geometry(),
+	};
 }
 
 QRectF Island::shapeRect() const {
@@ -1393,6 +1410,13 @@ void Island::contextMenuEvent(QContextMenuEvent *e) {
 }
 
 } // namespace
+
+std::optional<IslandShot> GrabIsland(not_null<QWidget*> parent) {
+	auto &islands = Islands();
+	const auto i = islands.find(parent.get());
+	const auto island = (i != end(islands)) ? i->second.data() : nullptr;
+	return island ? island->shot() : std::nullopt;
+}
 
 void UpdateIsland(
 		not_null<Ui::RpWidget*> parent,

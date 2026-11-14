@@ -720,6 +720,14 @@ private:
 	[[nodiscard]] int fieldHeight() const;
 	[[nodiscard]] bool fieldOrDisabledShown() const;
 	[[nodiscard]] QRect mokaPetBubble() const;
+
+public:
+	// Mokagram: очистка истории чёрной дырой, сама вызывает clear().
+	bool mokaClearWithBlackHole(
+		not_null<PeerData*> peer,
+		Fn<void()> clear);
+
+private:
 	[[nodiscard]] bool fieldHasSendText() const;
 	[[nodiscard]] bool hasSendableContent() const;
 	[[nodiscard]] bool hideExtraButtons() const;

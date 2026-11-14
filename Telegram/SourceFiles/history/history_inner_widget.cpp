@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_inner_widget.h"
 #include "mokagram/msginfo/mokagram_message_info.h"
 #include "mokagram/effects/mokagram_effects.h"
+#include "mokagram/effects/mokagram_black_hole.h"
 #include "mokagram/quote/mokagram_quote.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/history/mokagram_history.h"
@@ -5031,7 +5032,9 @@ void HistoryInner::setupThanosEffect() {
 
 	session().data().viewAboutToBeRemoved(
 	) | rpl::on_next([=](Data::ViewRemoval removal) {
-		if (removal.reason == Data::ViewRemovalReason::Removed) {
+		// Mokagram: при чёрной дыре сообщения рисует она, пыль не нужна.
+		if (removal.reason == Data::ViewRemovalReason::Removed
+			&& !Mokagram::BlackHole::Running()) {
 			_thanosController->captureOnRemoval(removal.view->data());
 		}
 	}, lifetime());

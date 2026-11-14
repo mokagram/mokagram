@@ -425,18 +425,18 @@ void ChatMusicSearch::searchMore() {
 	return result;
 }
 
-// Mokagram: один поиск обложки для одинаковых локальных песен в списке и плеере.
-void LoadLocalArtwork(const Track &track, Fn<void(QImage)> done) {
+// Mokagram: один поиск SoundCloud-двойника локальной песни, без точного совпадения пустой Track.
+void ResolveLocalSoundCloud(const Track &track, Fn<void(Track)> done) {
 	using Key = std::pair<QString, QString>;
-	static auto urls = std::map<Key, QString>();
-	static auto pending = std::map<Key, std::vector<Fn<void(QImage)>>>();
+	static auto found = std::map<Key, Track>();
+	static auto pending = std::map<Key, std::vector<Fn<void(Track)>>>();
 	const auto key = Key(track.title.trimmed(), track.artist.trimmed());
 	if (key.first.isEmpty()) {
-		done(QImage());
+		done(Track());
 		return;
 	}
-	if (const auto i = urls.find(key); i != urls.end()) {
-		LoadImage(i->second, std::move(done));
+	if (const auto i = found.find(key); i != found.end()) {
+		done(i->second);
 		return;
 	}
 	const auto active = pending.contains(key);
@@ -445,6 +445,8 @@ void LoadLocalArtwork(const Track &track, Fn<void(QImage)> done) {
 		return;
 	}
 	Search(key.first, 0, [=](SearchResult result) {
+		LOG(("[moka-dbg] sc search '%1' error '%2' n %3").arg(key.first).arg(result.error).arg(result.tracks.size()));
+		for (auto i = 0; i < std::min(8, int(result.tracks.size())); ++i) LOG(("[moka-dbg]   cand '%1' / '%2' id %3").arg(result.tracks[i].title).arg(result.tracks[i].artist).arg(result.tracks[i].id));
 		auto matches = std::vector<Track>();
 		for (const auto &candidate : result.tracks) {
 			if (candidate.title.trimmed() == key.first
@@ -458,19 +460,45 @@ void LoadLocalArtwork(const Track &track, Fn<void(QImage)> done) {
 					|| candidate.artist.trimmed() != key.second;
 			});
 		}
-		const auto url = result.error.isEmpty() && matches.size() == 1
-			? ArtUrl(matches.front().artworkUrl, u"t500x500"_q)
-			: QString();
+		const auto match = result.error.isEmpty() && matches.size() == 1
+			? matches.front()
+			: Track();
 		if (result.error.isEmpty()) {
-			if (urls.size() >= 256) urls.erase(urls.begin());
-			urls[key] = url;
+			if (found.size() >= 256) found.erase(found.begin());
+			found[key] = match;
 		}
 		auto callbacks = std::move(pending[key]);
 		pending.erase(key);
 		for (auto &callback : callbacks) {
-			LoadImage(url, std::move(callback));
+			callback(match);
 		}
 	});
+}
+
+void LoadLocalArtwork(const Track &track, Fn<void(QImage)> done) {
+	ResolveLocalSoundCloud(track, [done = std::move(done)](Track match) mutable {
+		LoadImage(
+			match.id.isEmpty()
+				? QString()
+				: ArtUrl(match.artworkUrl, u"t500x500"_q),
+			std::move(done));
+	});
+}
+
+// Комментарии: у SoundCloud-трека свой id, у локальной песни id двойника.
+void ResolveCommentsTrack(const Track &track, Fn<void(QString)> done) {
+	LOG(("[moka-dbg] comments track id '%1' tg %2 title '%3' artist '%4'").arg(track.id).arg(IsTelegramTrack(track) ? 1 : 0).arg(track.title).arg(track.artist));
+	if (track.id.toULongLong()
+		&& QString::number(track.id.toULongLong()) == track.id) {
+		done(track.id);
+	} else if (!IsTelegramTrack(track)) {
+		done(QString());
+	} else {
+		ResolveLocalSoundCloud(track, [=](Track match) {
+			LOG(("[moka-dbg] comments match '%1' artist '%2'").arg(match.id).arg(match.artist));
+			done(match.id);
+		});
+	}
 }
 
 [[nodiscard]] not_null<DocumentData*> MakeDocument(
@@ -5371,6 +5399,7 @@ private:
 		}
 	}
 	void load(const QString &cursor) {
+		LOG(("[moka-dbg] comments load() track '%1' setting %2 valid %3").arg(_trackId).arg(Settings::Bool(u"lyrics.comments"_q) ? 1 : 0).arg(validTrack() ? 1 : 0));
 		if (!Settings::Bool(u"lyrics.comments"_q) || !validTrack()) return;
 		_loading = true;
 		_note.clear();
@@ -5378,6 +5407,7 @@ private:
 		const auto generation = _generation;
 		LoadTrackComments(_trackId, cursor, crl::guard(this, [=](TrackCommentsPage page) {
 			if (generation != _generation) return;
+			LOG(("[moka-dbg] comments load %1: %2 items, error '%3'").arg(_trackId).arg(page.comments.size()).arg(page.error));
 			_loading = false;
 			_note = std::move(page.error);
 			if (_note.isEmpty()) {
@@ -6126,7 +6156,10 @@ private:
 			return;
 		}
 		_lyricsFor = track.id;
-		_view->setCommentsTrack(track.id);
+		_view->setCommentsTrack(QString());
+		ResolveCommentsTrack(track, crl::guard(this, [=, id = track.id](QString sc) {
+			if (_lyricsFor == id) _view->setCommentsTrack(sc);
+		}));
 		_view->setLoading();
 		const auto id = track.id;
 		FetchLyrics(
@@ -9101,7 +9134,10 @@ private:
 		}
 		if (_lyricsFor != track.id) {
 			_lyricsFor = track.id;
-			_view->setCommentsTrack(track.id);
+			_view->setCommentsTrack(QString());
+			ResolveCommentsTrack(track, crl::guard(this, [=, id = track.id](QString sc) {
+				if (_lyricsFor == id) _view->setCommentsTrack(sc);
+			}));
 			_view->setLoading();
 			const auto id = track.id;
 			FetchLyrics(

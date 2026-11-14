@@ -83,6 +83,8 @@ PRIVATE
     mokagram/misc/mokagram_ping.h
     mokagram/stars/mokagram_stars_stats.cpp
     mokagram/stars/mokagram_stars_stats.h
+    mokagram/effects/mokagram_black_hole.cpp
+    mokagram/effects/mokagram_black_hole.h
     mokagram/effects/mokagram_effects.cpp
     mokagram/effects/mokagram_effects.h
     mokagram/pet/mokagram_pet.cpp

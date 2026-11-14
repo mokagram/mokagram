@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "menu/menu_ttl_validator.h"
 #include "mokagram/ui/mokagram_box_parts.h"
+#include "mokagram/effects/mokagram_black_hole.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
@@ -600,7 +601,13 @@ void DeleteMessagesBox::deleteAndClear() {
 		invokeCallbackAndClose();
 
 		if (justClear) {
-			session->api().clearHistory(peer, revoke);
+			// Mokagram: чат открыт в окне, история уходит в чёрную дыру.
+			const auto clear = [=] {
+				session->api().clearHistory(peer, revoke);
+			};
+			if (!Mokagram::BlackHole::ClearHistory(peer, clear)) {
+				clear();
+			}
 		} else {
 			Core::App().closeChatFromWindows(peer);
 			// Don't delete old history by default,

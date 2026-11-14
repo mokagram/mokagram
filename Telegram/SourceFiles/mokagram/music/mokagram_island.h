@@ -16,6 +16,14 @@ class RpWidget;
 
 namespace Mokagram::Music {
 
+// Снимок островка для эффектов, координаты родителя.
+struct IslandShot {
+	QRectF shape;
+	QImage image;
+	QRect geometry;
+};
+[[nodiscard]] std::optional<IslandShot> GrabIsland(not_null<QWidget*> parent);
+
 // Островок вместо полоски плеера, create = false только двигает созданный.
 void UpdateIsland(
 	not_null<Ui::RpWidget*> parent,
