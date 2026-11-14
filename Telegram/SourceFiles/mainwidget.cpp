@@ -74,6 +74,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/player/media_player_widget.h"
 #include "media/player/media_player_dropdown.h"
 #include "media/player/media_player_instance.h"
+#include "mokagram/music/mokagram_island.h"
 #include "base/qthelp_regex.h"
 #include "base/options.h"
 #include "mtproto/mtproto_dc_options.h"
@@ -951,7 +952,10 @@ void MainWidget::handleAudioUpdate(const Media::Player::TrackState &state) {
 		const auto ttlSeconds = item
 			&& item->media()
 			&& item->media()->ttlSeconds();
-		if (!ttlSeconds) {
+		if (!ttlSeconds && state.id.type() == AudioMsgId::Type::Song) {
+			// Mokagram: музыка играет в островке, полоску плеера не показываем.
+			Mokagram::Music::UpdateIsland(this, _controller, _history.get(), true);
+		} else if (!ttlSeconds) {
 			createPlayer();
 		}
 	} else if (state.state == State::StoppedAtStart) {
@@ -2879,6 +2883,8 @@ void MainWidget::updateControlsGeometry() {
 	updateMediaPlaylistPosition(_playerPlaylist->x());
 	_contentScrollAddToY = 0;
 
+	// Mokagram: островок музыки держится по центру чата.
+	Mokagram::Music::UpdateIsland(this, _controller, _history.get(), false);
 	floatPlayerUpdatePositions();
 }
 

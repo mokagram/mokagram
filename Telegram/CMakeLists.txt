@@ -141,6 +141,9 @@ PRIVATE
     lang/translate_external_provider.h
     mokagram/music/mokagram_music_library.cpp
     mokagram/music/mokagram_music_library.h
+    mokagram/music/mokagram_island.cpp
+    mokagram/music/mokagram_island.h
+    mokagram/music/mokagram_island_glyphs.h
     mokagram/music/mokagram_music_ui.cpp
     mokagram/music/mokagram_music_ui.h
     mokagram/music/mokagram_soundcloud.cpp
