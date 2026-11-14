@@ -8647,6 +8647,7 @@ protected:
 			path.addRoundedRect(coverRect, coverRadius, coverRadius);
 			p.setClipPath(path);
 			auto frame = current ? motionFrame(_spotifyCanvas, layout.cover.size()) : QImage();
+			if (current) _spotifyPaletteFrame = frame;
 			if (!frame.isNull()) {
 				p.drawImage(layout.cover, frame);
 				p.restore();
@@ -8858,7 +8859,7 @@ private:
 	void paintBackgroundPart(QPainter &p, QRect area, QPoint origin = {}) {
 		if (_tab == Tab::Now && crl::now() >= _canvasPaletteNext) {
 			_canvasPaletteNext = crl::now() + 1000;
-			auto frame = motionFrame(_spotifyCanvas, computeLayout().cover.size());
+			auto frame = _spotifyPaletteFrame;
 			if (frame.isNull()) frame = _canvas.frame();
 			if (!frame.isNull()) {
 				_canvasBackground = Images::BlurLargeImage(
@@ -8933,6 +8934,7 @@ private:
 		if (_canvasPaletteFor != track.id) {
 			_canvasPaletteFor = track.id;
 			_canvasBackground = QImage();
+			_spotifyPaletteFrame = QImage();
 			_canvasPaletteNext = 0;
 		}
 		if (_closing) {
@@ -9208,6 +9210,7 @@ private:
 	CoverBackground _backdrop;
 	CanvasPlayer _canvas;
 	QImage _canvasBackground;
+	QImage _spotifyPaletteFrame;
 	QString _canvasPaletteFor;
 	crl::time _canvasPaletteNext = 0;
 	QTimer _ambientTimer;

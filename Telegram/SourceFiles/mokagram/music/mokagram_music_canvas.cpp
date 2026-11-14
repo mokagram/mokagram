@@ -364,8 +364,15 @@ void CanvasPlayer::updatePlayback() {
 }
 
 QImage CanvasPlayer::frame() {
+	// Palette sampling must not advance the decoder or acknowledge a frame.
+	return (_player && _player->ready() && !_player->failed())
+		? _player->currentFrameImage()
+		: QImage();
+}
+
+bool CanvasPlayer::paint(QPainter &p, QRect area) {
 	if (!_player || !_player->ready() || _player->failed()) {
-		return {};
+		return false;
 	}
 	updatePlayback();
 	_frameSize = _player->videoSize().scaled(480, 720, Qt::KeepAspectRatio);
@@ -374,11 +381,6 @@ QImage CanvasPlayer::frame() {
 		.outer = _frameSize,
 	});
 	_player->markFrameShown();
-	return frame;
-}
-
-bool CanvasPlayer::paint(QPainter &p, QRect area) {
-	const auto frame = this->frame();
 	if (frame.isNull()) {
 		return false;
 	}
