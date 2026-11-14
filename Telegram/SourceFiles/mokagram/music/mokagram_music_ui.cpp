@@ -12174,4 +12174,10 @@ void StartShellBridge() {
 
 }
 
+Track CurrentQueueTrack() {
+	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
+	const auto &queue = QueueState();
+	return OwnsTrack(current) ? queue.current : Track();
+}
+
 } // namespace Mokagram::Music

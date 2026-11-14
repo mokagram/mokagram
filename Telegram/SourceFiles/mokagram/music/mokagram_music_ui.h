@@ -24,6 +24,8 @@ class RpWidget;
 
 namespace Mokagram::Music {
 
+struct Track;
+
 void ShowMusicBox(
 	not_null<Window::SessionController*> controller,
 	const QString &initialQuery = QString());
@@ -45,6 +47,8 @@ void StartShellBridge();
 [[nodiscard]] bool PreviousAvailable();
 void Step(int delta);
 [[nodiscard]] rpl::producer<> QueueChanges();
+// Текущий трек очереди SoundCloud, пустой для обычных аудио Telegram.
+[[nodiscard]] Track CurrentQueueTrack();
 
 // Название и исполнитель текущего трека из очереди (false, если играет чужой трек).
 [[nodiscard]] bool CurrentTrackInfo(QString &title, QString &artist);
