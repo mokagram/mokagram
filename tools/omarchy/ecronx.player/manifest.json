@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "ecronx.player",
+  "name": "Player",
+  "version": "0.1.0",
+  "author": "ecronx",
+  "description": "Плеер mokaGram (и любой MPRIS) в баре: обложка, перемотка, громкость",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "Player",
+    "description": "Управление плеером mokaGram",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
