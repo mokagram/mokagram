@@ -8872,6 +8872,14 @@ private:
 				_barAnim.start([=] { update(); _view->update(); }, 0., 1., 600, anim::easeOutCubic);
 				_shuffle->setAccent(_accent);
 				_repeat->setAccent(_accent);
+			} else if (!_canvasBackground.isNull()) {
+				_canvasBackground = QImage();
+				_accent = CurrentCoverAccent();
+				_barFrom = anim::color(_barFrom, _barTo, _barAnim.value(1.));
+				_barTo = _accent.isValid() ? _accent.darker(180) : QColor(0x28, 0x28, 0x28);
+				_barAnim.start([=] { update(); _view->update(); }, 0., 1., 600, anim::easeOutCubic);
+				_shuffle->setAccent(_accent);
+				_repeat->setAccent(_accent);
 			}
 		}
 		if (Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
@@ -8970,7 +8978,7 @@ private:
 					size,
 					Qt::KeepAspectRatioByExpanding,
 					Qt::SmoothTransformation));
-			_accent = CurrentCoverAccent();
+			if (_canvasBackground.isNull()) _accent = CurrentCoverAccent();
 			_nav[0]->setActiveColor(Qt::white);
 			// Полоса управления плавно перекрашивается под обложку трека.
 			{
