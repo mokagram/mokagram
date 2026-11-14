@@ -56,7 +56,10 @@ struct Motion {
 
 // Пружины 1 в 1 из islandcn, lib/island/motion.ts.
 constexpr auto kAppear = Motion{ 0.483, 0.62 };
-constexpr auto kExpand = Motion{ 0.517, 0.824 };
+// Mokagram: manual opening uses islandcn pressExpand, not alert expand.
+constexpr auto kExpand = Motion{ 0.387, 0.792 };
+constexpr auto kExpandBody = Motion{ 0.388, 0.791 };
+constexpr auto kExpandCorner = Motion{ 0.32, 0.831 };
 constexpr auto kCollapse = Motion{ 0.479, 0.894 };
 constexpr auto kDismiss = Motion{ 0.432, 1.019 };
 constexpr auto kResize = Motion{ 0.5, 0.82 };
@@ -409,11 +412,13 @@ void Island::expand(bool expanded) {
 	_wantExpanded = expanded;
 	const auto motion = expanded ? kExpand : kCollapse;
 	_width.to(expanded ? expandedWidth() : compactWidth(), motion);
-	_height.to(S(expanded ? kExpandedHeight : kCompactHeight), motion);
+	_height.to(
+		S(expanded ? kExpandedHeight : kCompactHeight),
+		expanded ? kExpandBody : motion);
 	_radius.to(
 		expanded ? S(kExpandedRadius) : (S(kCompactHeight) / 2.),
-		motion);
-	_expanded.to(expanded ? 1. : 0., motion);
+		expanded ? kExpandCorner : motion);
+	_expanded.to(expanded ? 1. : 0., expanded ? kExpandBody : motion);
 	startFrames();
 }
 
