@@ -7025,7 +7025,7 @@ protected:
 	[[nodiscard]] Layout computeLayout() const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		auto result = Layout();
-		const auto margin = s(16);
+		const auto margin = s(width() < s(560) ? 8 : 16);
 		const auto gap = s(12);
 		const auto pad = s(16);
 		const auto now = (_tab == Tab::Now);
@@ -7042,17 +7042,18 @@ protected:
 			? s(168)
 			: margin + _collapse->width() + s(8);
 		const auto navWidth = std::clamp(width() - 2 * reserve, 0, s(900));
-		result.nav = QRect((width() - navWidth) / 2, margin, navWidth, s(40));
+		result.verticalNav = width() < s(560);
+		result.nav = QRect((width() - navWidth) / 2, margin, navWidth, s(result.verticalNav ? 80 : 40));
 		result.collapse = QPoint(
 			width() - margin - _collapse->width(),
 			margin + (s(40) - _collapse->height()) / 2);
-		const auto top = margin + s(48) + gap;
+		const auto top = result.nav.y() + result.nav.height() + gap;
 		const auto areaBottom = result.bar.y() - gap;
 		const auto areaHeight = std::max(areaBottom - top, 0);
 
 		if (now) {
 			// Обложка слева, текст песни по центру остального экрана.
-			result.showRight = width() >= s(680);
+			result.showRight = width() >= s(800);
 			auto lyricsLeft = margin;
 			if (result.showRight) {
 				const auto colWidth = std::clamp(int(width() * 0.29), s(190), s(460));
@@ -7101,14 +7102,19 @@ protected:
 		const auto rightWidth = pad + _queueToggle->width() + s(2) + _heart->width() + pad
 			+ (result.compact ? 0 : iconWidth + volumeWidth + s(12));
 		const auto sideWidth = std::max(leftWidth, rightWidth);
-		const auto centerWidth = std::max(bar.width() - 2 * sideWidth, 0);
-		const auto centerLeft = bar.x() + (bar.width() - centerWidth) / 2;
+		const auto centerWidth = std::max(bar.width() - (result.ultra ? rightWidth + pad : 2 * sideWidth), 0);
+		const auto centerLeft = result.ultra
+			? bar.x() + pad
+			: bar.x() + (bar.width() - centerWidth) / 2;
 		result.controlsLeft = centerLeft;
 		result.controlsWidth = centerWidth;
 		result.controlsTop = bar.y() + s(5);
 		const auto seekTop = result.controlsTop + _play->height();
-		const auto rowWidth = std::max(std::min(centerWidth - s(16), s(568)), 0);
-		const auto rowLeft = centerLeft + (centerWidth - rowWidth) / 2;
+		const auto rowWidth = std::max(std::min(
+			result.ultra ? bar.width() - 2 * pad : centerWidth - s(16), s(568)), 0);
+		const auto rowLeft = result.ultra
+			? bar.x() + (bar.width() - rowWidth) / 2
+			: centerLeft + (centerWidth - rowWidth) / 2;
 		const auto timeWidth = s(44);
 		result.timeNow = QRect(rowLeft, seekTop, timeWidth - s(6), _seek->height());
 		result.seek = QRect(
@@ -7123,10 +7129,12 @@ protected:
 			_seek->height());
 		result.queue = QPoint(
 			bar.x() + bar.width() - pad - _queueToggle->width(),
-			bar.y() + (bar.height() - _queueToggle->height()) / 2);
+			result.ultra ? result.controlsTop + (_play->height() - _queueToggle->height()) / 2
+				: bar.y() + (bar.height() - _queueToggle->height()) / 2);
 		result.heart = QPoint(
 			result.queue.x() - s(2) - _heart->width(),
-			bar.y() + (bar.height() - _heart->height()) / 2);
+			result.ultra ? result.controlsTop + (_play->height() - _heart->height()) / 2
+				: bar.y() + (bar.height() - _heart->height()) / 2);
 		if (!result.compact) {
 			result.volume = QRect(
 				result.heart.x() - s(12) - volumeWidth,
@@ -7264,11 +7272,12 @@ protected:
 			const auto inset = s(4);
 			const auto count = int(_nav.size());
 			const auto inner = std::max(layout.nav.width() - 2 * inset, 0);
+			const auto columns = layout.verticalNav ? 3 : count;
 			for (auto i = 0; i != count; ++i) {
-				const auto left = layout.nav.x() + inset + inner * i / count;
-				const auto right = layout.nav.x() + inset + inner * (i + 1) / count;
+				const auto left = layout.nav.x() + inset + inner * (i % columns) / columns;
+				const auto right = layout.nav.x() + inset + inner * (i % columns + 1) / columns;
 				_nav[i]->setCentered(true);
-				_nav[i]->setGeometry(left, layout.nav.y(), right - left, layout.nav.height());
+				_nav[i]->setGeometry(left, layout.nav.y() + s(40) * (i / columns), right - left, s(40));
 			}
 		}
 		{
@@ -8539,20 +8548,24 @@ protected:
 				st::windowBgOver->c,
 				homeColor.isValid() ? 0. : trackPlain)
 			: st::windowBgOver->c);
-		p.drawRoundedRect(layout.nav, layout.nav.height() / 2., layout.nav.height() / 2.);
+		p.drawRoundedRect(layout.nav, s(20), s(20));
 		const auto inset = s(4);
-		const auto segment = std::max(layout.nav.width() - 2 * inset, 0) / float64(_nav.size());
-		const auto at = _navSlide.value(float64(int(_tab)));
+		const auto segment = std::max(layout.nav.width() - 2 * inset, 0) / float64(layout.verticalNav ? 3 : _nav.size());
+		const auto at = layout.verticalNav
+			? float64(int(_tab) % 3)
+			: _navSlide.value(float64(int(_tab)));
 		const auto distance = std::abs(float64(int(_tab)) - _navSlideFrom);
 		const auto progress = distance > 0.
 			? std::clamp(std::abs(at - _navSlideFrom) / distance, 0., 1.)
 			: 1.;
-		const auto stretch = segment * 0.18 * (1. - std::abs(2. * progress - 1.));
+		const auto stretch = layout.verticalNav
+			? 0.
+			: segment * 0.18 * (1. - std::abs(2. * progress - 1.));
 		const auto active = QRectF(
 			layout.nav.x() + inset + segment * at - stretch / 2.,
-			layout.nav.y() + inset,
+			layout.nav.y() + inset + (layout.verticalNav ? s(40) * (int(_tab) / 3) : 0),
 			segment + stretch,
-			std::max(layout.nav.height() - 2 * inset, 0));
+			s(40) - 2 * inset);
 		const auto coverColor = _accent.isValid()
 			? _accent
 			: st::windowActiveTextFg->c;
