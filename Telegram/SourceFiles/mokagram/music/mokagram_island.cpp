@@ -356,7 +356,10 @@ int Island::expandedWidth() const {
 }
 
 int Island::compactWidth() const {
-	return std::min(S(kCompactWidth), expandedWidth());
+	// Mokagram: keep the chat header clear in narrow windows.
+	return (_anchor->width() < S(600))
+		? S(kCompactHeight)
+		: std::min(S(kCompactWidth), expandedWidth());
 }
 
 double Island::expanded() const {
@@ -690,8 +693,15 @@ void Island::paintEvent(QPaintEvent *e) {
 	p.fillPath(path, QColor(0, 0, 0));
 	p.setClipPath(path);
 	paintCover(p);
+	// Mokagram: fade header details as the island shrinks to its cover.
+	const auto details = std::clamp(
+		(shape.width() - S(kCompactHeight))
+			/ double(S(kCompactWidth - kCompactHeight)),
+		0., 1.);
+	p.setOpacity(alpha * details);
 	paintBars(p);
 	paintTitle(p);
+	p.setOpacity(alpha);
 	const auto progress = expanded();
 	const auto content = std::clamp((progress - 0.45) / 0.55, 0., 1.);
 	if (content > 0.) {
