@@ -10388,7 +10388,8 @@ void AddTogetherActions(
 void ShowCurrentTrackMenu(
 		not_null<Window::SessionController*> controller,
 		QPoint globalPosition,
-		QWidget *parent) {
+		QWidget *parent,
+		bool islandMenu) {
 	BindController(controller);
 	const auto track = PlayingTrack();
 	QueueState().controller = base::make_weak(controller);
@@ -10396,6 +10397,18 @@ void ShowCurrentTrackMenu(
 	menu = base::make_unique_q<Ui::PopupMenu>(
 		parent ? parent : controller->widget().get(),
 		st::popupMenuWithIcons);
+	if (islandMenu) {
+		if (!track.id.isEmpty() && CanForwardTrack(track)) {
+			menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Переслать")), [=] {
+				ForwardTrack(controller, track);
+			}, &st::menuIconForward);
+		}
+		menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Закрыть")), [] {
+			Media::Player::instance()->stopAndClose();
+		}, &st::menuIconCancel);
+		menu->popup(globalPosition);
+		return;
+	}
 	if (track.id.isEmpty()) {
 		// Ничего не играет: в меню только вход в комнату.
 		AddTogetherActions(menu.get(), controller);
@@ -10451,10 +10464,6 @@ void ShowCurrentTrackMenu(
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Очередь")), [=] { ShowPlayerBox(controller); }, &st::menuIconChats);
 	menu->addSeparator();
 	AddTogetherActions(menu.get(), controller);
-	menu->addSeparator();
-	add(QString::fromUtf8(Mokagram::Lang::Tr("Закрыть")), [] {
-		Media::Player::instance()->stopAndClose();
-	}, &st::menuIconCancel);
 	menu->popup(globalPosition);
 }
 

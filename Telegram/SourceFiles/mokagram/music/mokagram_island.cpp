@@ -1365,7 +1365,7 @@ void Island::contextMenuEvent(QContextMenuEvent *e) {
 	if (partAt(e->pos()) == Part::None) {
 		return;
 	}
-	ShowCurrentTrackMenu(_controller, e->globalPos(), this);
+	ShowCurrentTrackMenu(_controller, e->globalPos(), this, true);
 	e->accept();
 }
 

@@ -62,7 +62,8 @@ void Step(int delta);
 void ShowCurrentTrackMenu(
 	not_null<Window::SessionController*> controller,
 	QPoint globalPosition,
-	QWidget *parent = nullptr);
+	QWidget *parent = nullptr,
+	bool islandMenu = false);
 
 // Полноценный плеер: обложка, перемотка, кнопки, очередь.
 void ShowPlayerBox(not_null<Window::SessionController*> controller);
