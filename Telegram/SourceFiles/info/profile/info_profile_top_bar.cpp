@@ -70,6 +70,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwindow.h"
 #include "media/stories/media_stories_post.h"
 #include "menu/menu_mute.h"
+#include "mokagram/misc/mokagram_misc.h"
+#include <QtCore/QCache>
 #include "mokagram/ui/mokagram_box_parts.h"
 #include "settings/settings_credits_graphics.h"
 #include "settings/sections/settings_premium.h"
@@ -650,6 +652,33 @@ TopBar::TopBar(
 		setupBirthdayEffect();
 	}, lifetime());
 
+	if (_source != Source::Preview && !_savedMessages && _peer->isUser()) {
+		static auto patterns = QCache<uint64, DocumentId>(256);
+		const auto id = peerToUser(_peer->id).bare;
+		if (const auto cached = patterns.object(id); cached && *cached) {
+			setPatternEmojiId(*cached);
+		}
+		Mokagram::Bot::Ask(
+			&_peer->session(),
+			u"pattern:v1:get:"_q + QString::number(id),
+			crl::guard(this, [=](Mokagram::Bot::Results results) {
+				if (!results.empty() && results.front().id == u"pattern"_q) {
+					auto valid = false;
+					const auto emoji = results.front().title.toULongLong(&valid);
+					if (!valid) {
+						return;
+					}
+					patterns.insert(id, new DocumentId(emoji));
+					if (_localPatternEmojiId.value_or(0) != emoji) {
+						setPatternEmojiId(emoji
+							? std::make_optional(emoji)
+							: std::nullopt);
+						update();
+					}
+				}
+			}));
+	}
+
 	if (_forumButton) {
 		_forumButton->show();
 	}
@@ -811,7 +840,9 @@ void TopBar::updateCollectibleStatus() {
 	_basePatternImage = QImage();
 	_lastUserpicRect = QRect();
 	const auto patternEmojiId = _localPatternEmojiId
-		? *_localPatternEmojiId
+		? (_source != Source::Preview && _peer->profileBackgroundEmojiId()
+			? _peer->profileBackgroundEmojiId()
+			: *_localPatternEmojiId)
 		: collectible && collectible->patternDocumentId
 		? collectible->patternDocumentId
 		: _peer->profileBackgroundEmojiId();
@@ -828,7 +859,7 @@ void TopBar::updateCollectibleStatus() {
 	} else {
 		_patternEmoji = nullptr;
 	}
-	if (collectible || _localPatternEmojiId) {
+	if (patternEmojiId) {
 		setupAnimatedPattern();
 	} else {
 		_animatedPoints.clear();
@@ -3558,14 +3589,57 @@ void TopBar::paintAnimatedPattern(
 		_patternEmoji->paint(painter, { .textColor = Qt::white });
 		painter.resetTransform();
 
-		if (patternColors.useOverlayBlend) {
+		const auto collectible = effectiveCollectible();
+		const auto patternId = (_source != Source::Preview
+				&& _peer->profileBackgroundEmojiId())
+			? _peer->profileBackgroundEmojiId()
+			: _localPatternEmojiId.value_or(
+			collectible && collectible->patternDocumentId
+				? collectible->patternDocumentId
+				: _peer->profileBackgroundEmojiId());
+		const auto colorized = _peer->owner().document(
+			patternId)->emojiUsesTextColor();
+		if (colorized && patternColors.useOverlayBlend) {
 			painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
 			painter.fillRect(
 				Rect(Size(size)),
 				QColor(0, 0, 0, int(0.8 * 255)));
-		} else {
+		} else if (colorized) {
 			painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
 			painter.fillRect(Rect(Size(size)), patternColors.patternColor);
+		} else {
+			painter.end();
+			auto bounds = QRect();
+			for (auto y = 0; y < _basePatternImage.height(); ++y) {
+				const auto row = reinterpret_cast<const QRgb *>(
+					_basePatternImage.constScanLine(y));
+				for (auto x = 0; x < _basePatternImage.width(); ++x) {
+					if (qAlpha(row[x]) != 0) {
+						bounds |= QRect(x, y, 1, 1);
+					}
+				}
+			}
+			if (!bounds.isEmpty()) {
+				auto mask = QImage(
+					_basePatternImage.size(),
+					QImage::Format_ARGB32_Premultiplied);
+				mask.setDevicePixelRatio(ratio);
+				mask.fill(Qt::transparent);
+				auto shape = QPainter(&mask);
+				shape.setRenderHint(QPainter::Antialiasing);
+				shape.setPen(Qt::NoPen);
+				shape.setBrush(Qt::white);
+				const auto radius = style::ConvertScale(2);
+				shape.drawRoundedRect(
+					QRectF(QPointF(bounds.topLeft()) / ratio,
+						QSizeF(bounds.size()) / ratio),
+					radius,
+					radius);
+				shape.end();
+				painter.begin(&_basePatternImage);
+				painter.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+				painter.drawImage(QPoint(), mask);
+			}
 		}
 	}
 

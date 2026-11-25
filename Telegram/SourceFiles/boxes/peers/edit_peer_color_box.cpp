@@ -47,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lottie/lottie_icon.h"
 #include "lottie/lottie_single_player.h"
 #include "main/main_session.h"
+#include "mokagram/misc/mokagram_misc.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/ui/mokagram_box_parts.h"
 #include "settings/settings_common.h"
@@ -607,7 +608,8 @@ void Set(
 		send(MTPaccount_UpdateColor(
 			MTP_flags((values.forProfile ? Flag::f_for_profile : Flag(0))
 				| (((!values.forProfile && values.colorCollectible)
-					|| (values.colorIndex != kUnsetColorIndex))
+					|| (values.colorIndex != kUnsetColorIndex)
+					|| values.backgroundEmojiId)
 					? Flag::f_color
 					: Flag(0))),
 			((!values.forProfile && values.colorCollectible)
@@ -615,7 +617,9 @@ void Set(
 					MTP_long(values.colorCollectible->collectibleId))
 				: MTP_peerColor(
 					MTP_flags(ColorFlag()
-						| ColorFlag::f_color
+						| (values.colorIndex != kUnsetColorIndex
+							? ColorFlag::f_color
+							: ColorFlag(0))
 						| (values.backgroundEmojiId
 							? ColorFlag::f_background_emoji_id
 							: ColorFlag(0))),
@@ -2211,6 +2215,7 @@ void EditPeerProfileColorSection(
 	struct State {
 		rpl::variable<uint8> index = kUnsetColorIndex;
 		rpl::variable<DocumentId> patternEmojiId;
+		bool patternChanged = false;
 		rpl::variable<EmojiStatusId> wearable;
 		rpl::variable<uint64> showingGiftId;
 		rpl::variable<uint64> selectedGiftId;
@@ -2257,6 +2262,20 @@ void EditPeerProfileColorSection(
 			}),
 		{ margin, skip, margin, skip });
 
+	Mokagram::Bot::Ask(
+		&peer->session(),
+		u"pattern:v1:get:"_q + QString::number(peerToUser(peer->id).bare),
+		crl::guard(button.get(), [=](Mokagram::Bot::Results results) {
+			if (!state->patternChanged
+				&& !results.empty()
+				&& results.front().id == u"pattern"_q) {
+				if (const auto id = results.front().title.toULongLong()) {
+					state->patternEmojiId = id;
+					preview->setPatternEmojiId(id);
+				}
+			}
+		}));
+
 	const auto emojiButton = options->add(CreateEmojiIconButton(
 		options,
 		show,
@@ -2265,6 +2284,7 @@ void EditPeerProfileColorSection(
 		state->index.value(),
 		state->patternEmojiId.value(),
 		[=](DocumentId id) {
+			state->patternChanged = true;
 			state->patternEmojiId = id;
 			preview->setPatternEmojiId(id);
 			resetUnique();
@@ -2291,6 +2311,7 @@ void EditPeerProfileColorSection(
 	}
 	resetButton->setClickedCallback([=] {
 		state->index = kUnsetColorIndex;
+		state->patternChanged = true;
 		state->patternEmojiId = 0;
 		preview->setColorProfileIndex(std::nullopt);
 		preview->setPatternEmojiId(0);
@@ -2387,9 +2408,11 @@ void EditPeerProfileColorSection(
 			? (!statusId.collectible
 				|| statusId.collectible->id != wearable.collectible->id)
 			: (statusId.collectible != nullptr);
-		const auto values = SetValues{
+		auto values = SetValues{
 			.colorIndex = state->index.current(),
-			.backgroundEmojiId = state->patternEmojiId.current(),
+			.backgroundEmojiId = state->patternChanged
+				? state->patternEmojiId.current()
+				: peer->profileBackgroundEmojiId(),
 			.colorCollectible = std::nullopt,
 			.statusId = state->wearable.current(),
 			.statusUntil = 0,
@@ -2410,11 +2433,46 @@ void EditPeerProfileColorSection(
 			return;
 		}
 		profileState->applying = true;
-		Apply(show, peer, values, crl::guard(box, [=] {
-			box->closeBox();
-		}), crl::guard(box, [=] {
+		const auto apply = crl::guard(box, [=](SetValues result) {
+			Apply(show, peer, result, crl::guard(box, [=] {
+				box->closeBox();
+			}), crl::guard(box, [=] {
+				profileState->applying = false;
+			}));
+		});
+		if (!state->patternChanged) {
+			apply(values);
+			return;
+		}
+		const auto id = values.backgroundEmojiId;
+		const auto custom = id
+			&& !peer->owner().document(id)->emojiUsesTextColor();
+		if (id && !custom) {
+			Mokagram::Bot::Ask(&peer->session(), u"pattern:v1:put:0"_q, {});
+			apply(values);
+			return;
+		}
+		const auto stored = QString::number(custom ? id : DocumentId(0));
+		if (custom) {
+			values.backgroundEmojiId = 0;
+		}
+		const auto fail = crl::guard(box, [=] {
 			profileState->applying = false;
-		}));
+			show->showToast(u"Could not save the profile pattern."_q);
+		});
+		Mokagram::Bot::Ask(
+			&peer->session(),
+			u"pattern:v1:put:"_q + stored,
+			crl::guard(box, [=](Mokagram::Bot::Results results) {
+				if (!results.empty()
+					&& results.front().id == u"pattern"_q
+					&& results.front().title == stored) {
+					apply(values);
+				} else {
+					fail();
+				}
+			}),
+			fail);
 	});
 	state->wearable.value(
 	) | rpl::on_next([=](EmojiStatusId id) {

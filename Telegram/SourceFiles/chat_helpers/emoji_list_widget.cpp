@@ -525,7 +525,6 @@ EmojiListWidget::EmojiListWidget(
 	}
 
 	if (_mode != Mode::RecentReactions
-		&& _mode != Mode::BackgroundEmoji
 		&& _mode != Mode::ChannelStatus
 		&& _mode != Mode::CustomOnly
 		&& !_onlyUnicodeEmoji) {
@@ -3591,7 +3590,6 @@ void EmojiListWidget::refreshCustom() {
 		auto it = sets.find(lookupId);
 		if (it == sets.cend()
 			|| it->second->stickers.isEmpty()
-			|| (_mode == Mode::BackgroundEmoji && !it->second->textColor())
 			|| (_mode == Mode::ChannelStatus
 				&& !it->second->channelStatus())) {
 			return;
