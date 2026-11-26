@@ -56,6 +56,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/chat_theme.h"
 #include "ui/controls/button_labels.h"
 #include "ui/controls/sub_tabs.h"
+#include "ui/effects/animations.h"
 #include "ui/effects/path_shift_gradient.h"
 #include "ui/effects/premium_graphics.h"
 #include "ui/layers/generic_box.h"
@@ -67,6 +68,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/color_contrast.h"
 #include "ui/painter.h"
 #include "ui/rect.h"
+#include "ui/ui_utility.h"
 #include "ui/vertical_list.h"
 #include "window/themes/window_theme.h"
 #include "window/section_widget.h"
@@ -1534,7 +1536,8 @@ void AddGiftSelector(
 Fn<void(int)> CreateTabsWidget(
 		not_null<Ui::VerticalLayout*> container,
 		const std::vector<QString> &labels,
-		const std::vector<Fn<void()>> &callbacks) {
+		int initialIndex,
+		Fn<void(int)> activate) {
 	// Mokagram: a tonal pill with the theme accent, without the profile strip's
 	// shadow and outline (which are clipped in this compact header).
 	static const auto tabsStyle = [] {
@@ -1544,7 +1547,7 @@ Fn<void(int)> CreateTabsWidget(
 		result.bg = result.bgBorder = st::windowBg;
 		result.fgActive = st::windowFgActive;
 		result.bgActive = st::windowBgActive;
-		result.duration = st::universalDuration;
+		result.duration = st::slideDuration;
 		return result;
 	}();
 	auto width = style::ConvertScale(80);
@@ -1554,17 +1557,20 @@ Fn<void(int)> CreateTabsWidget(
 			width,
 			tabsStyle.textStyle.font->width(label) + tabsStyle.height);
 	}
-	auto widget = object_ptr<Ui::PillTabs>(container, labels, 0, tabsStyle);
+	auto widget = object_ptr<Ui::PillTabs>(
+		container,
+		labels,
+		initialIndex,
+		tabsStyle);
 	widget->setNaturalWidth(width * int(labels.size()));
 	const auto inset = style::ConvertScale(kAppearanceInset);
 	const auto tabs = container->add(
 		std::move(widget),
 		{ inset, style::ConvertScale(kAppearanceGap), inset, 0 },
 		style::al_top);
-	tabs->activeIndexChanges(
-	) | rpl::on_next([=](int index) {
-		callbacks[index]();
-	}, tabs->lifetime());
+	tabs->activeIndexChanges() | rpl::on_next(
+		std::move(activate),
+		tabs->lifetime());
 
 	return [=](int index) { tabs->setActiveIndex(index); };
 }
@@ -2567,17 +2573,67 @@ void EditPeerColorBox(
 	const auto name = nameWrap->entity();
 	const auto profile = profileWrap->entity();
 
-	const auto showName = [=] {
-		if (nameWrap->toggled()) {
+	// Mokagram: fade the visible old pane over the live new one. On a
+	// rapid switch, the next snapshot includes the still-fading frame.
+	const auto overlay = Ui::CreateChild<Ui::RpWidget>(box);
+	overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+	overlay->hide();
+	const auto bodyRect = [=] {
+		const auto top = pinned->height();
+		return QRect(
+			0,
+			top,
+			box->width(),
+			std::max(box->height() - top - footer->height(), 0));
+	};
+	rpl::combine(box->sizeValue(), pinned->heightValue(), footer->heightValue()
+	) | rpl::on_next([=] {
+		overlay->setGeometry(bodyRect());
+	}, overlay->lifetime());
+	struct TabFade {
+		QPixmap previous;
+		Ui::Animations::Simple opacity;
+	};
+	const auto fade = overlay->lifetime().make_state<TabFade>();
+	overlay->paintOn([=](QPainter &p) {
+		p.setOpacity(fade->opacity.value(0.));
+		p.drawPixmap(0, 0, fade->previous);
+	});
+
+	const auto showTab = [=](int index) {
+		const auto nameShown = (index == 1);
+		if (nameWrap->toggled() == nameShown) {
 			return;
 		}
-		nameWrap->toggle(true, anim::type::instant);
-		profileWrap->toggle(false, anim::type::instant);
-		profileButton->hide();
-		nameButton->show();
-		// Mokagram: show the preview when switching from a scrolled tab.
+		const auto body = bodyRect();
+		fade->previous = !anim::Disabled() && box->isVisible() && !body.isEmpty()
+			? Ui::GrabWidget(box, body, st::boxBg->c)
+			: QPixmap();
+		fade->opacity.stop();
+		if (fade->previous.isNull()) {
+			overlay->hide();
+		} else {
+			box->animateHeightFrom(box->height());
+			overlay->raise();
+			overlay->show();
+			fade->opacity.start([=](float64 opacity) {
+				if (opacity > 0.) {
+					overlay->update();
+				} else {
+					overlay->hide();
+					fade->previous = QPixmap();
+				}
+			}, 1., 0., st::slideDuration, anim::easeOutCubic);
+		}
+
+		nameWrap->toggle(nameShown, anim::type::instant);
+		profileWrap->toggle(!nameShown, anim::type::instant);
+		nameButton->setVisible(nameShown);
+		profileButton->setVisible(!nameShown);
 		box->scrollToY(0);
 	};
+
+	const auto nameInitially = (initialTab == PeerColorTab::Name);
 
 	const auto switchTab = CreateTabsWidget(
 		pinned,
@@ -2585,24 +2641,14 @@ void EditPeerColorBox(
 			tr::lng_settings_color_tab_profile(tr::now),
 			tr::lng_settings_color_tab_name(tr::now),
 		},
-		{
-			[=] {
-				if (profileWrap->toggled()) {
-					return;
-				}
-				nameWrap->toggle(false, anim::type::instant);
-				profileWrap->toggle(true, anim::type::instant);
-				nameButton->hide();
-				profileButton->show();
-				box->scrollToY(0);
-			},
-			showName,
-		});
+		nameInitially ? 1 : 0,
+		showTab);
 
 	Ui::AddSkip(pinned, gap);
-	nameWrap->toggle(false, anim::type::instant);
-	profileWrap->toggle(true, anim::type::instant);
-	nameButton->hide();
+	nameWrap->toggle(nameInitially, anim::type::instant);
+	profileWrap->toggle(!nameInitially, anim::type::instant);
+	nameButton->setVisible(nameInitially);
+	profileButton->setVisible(!nameInitially);
 	content->add(std::move(profileOwned));
 	content->add(std::move(nameOwned));
 
@@ -2632,10 +2678,6 @@ void EditPeerColorBox(
 		style,
 		theme,
 		&highlightState->name);
-
-	if (initialTab == PeerColorTab::Name) {
-		switchTab(1);
-	}
 
 	box->setShowFinishedCallback([=] {
 		const auto isProfileTab = (initialTab == PeerColorTab::Profile);
