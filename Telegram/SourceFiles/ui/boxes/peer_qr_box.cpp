@@ -33,6 +33,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_common.h"
 #include "ui/empty_userpic.h"
 #include "ui/image/image.h"
+#include "ui/image/image_opaque_bounds.h"
 #include "ui/effects/peer_qr_colors_panel.h"
 #include "ui/effects/peer_qr_gifts_panel.h"
 #include "ui/effects/peer_qr_panel.h"
@@ -212,14 +213,38 @@ void PaintProfileMark(
 [[nodiscard]] QImage ProfileMarkFrame(not_null<Text::CustomEmoji*> emoji) {
 	const auto scale = ProfileEmojiResolution();
 	const auto side = emoji->width();
-	auto frame = QImage(QSize(side, side) * kProfileImageRatio,
+	const auto padding = 2 * side;
+	auto frame = QImage(QSize(side + 2 * padding, side + 2 * padding)
+		* kProfileImageRatio,
 		QImage::Format_ARGB32_Premultiplied);
 	frame.setDevicePixelRatio(kProfileImageRatio);
 	frame.fill(Qt::transparent);
 	auto p = QPainter(&frame);
-	PaintProfileMark(p, emoji, QPoint(), Qt::white);
+	PaintProfileMark(p, emoji, QPoint(padding, padding), Qt::white);
 	p.end();
 	return frame;
+}
+
+[[nodiscard]] QRectF ProfileMarkBounds(
+		const QImage &frame,
+		int side,
+		bool coreOnly = false) {
+	if (frame.isNull() || side <= 0) {
+		return QRectF(0, 0, side, side);
+	}
+	const auto ratio = kProfileImageRatio;
+	const auto padding = 2 * side;
+	const auto sample = coreOnly
+		? QRect(padding * ratio, (padding + side / 3) * ratio,
+			side * ratio, (side / 3) * ratio)
+		: frame.rect();
+	const auto bounds = OpaqueBounds(coreOnly ? frame.copy(sample) : frame);
+	return bounds.isEmpty()
+		? QRectF(0, 0, side, side)
+		: QRectF(
+			QPointF(bounds.topLeft() + sample.topLeft()) / ratio
+				- QPointF(padding, padding),
+			QSizeF(bounds.size()) / ratio);
 }
 
 [[nodiscard]] QString ProfileExportText(const char *text) {
@@ -372,10 +397,18 @@ void SaveProfileLook(
 			side,
 			side);
 		p.drawImage(cover, *photo, source);
+		const auto accent = backdrop.isValid() ? backdrop : st::windowBg->c;
+		auto veil = QColor::fromHslF(
+			accent.hslHueF(),
+			std::min<float64>(accent.hslSaturationF(), 0.64),
+			0.13);
 		auto shade = QLinearGradient(cover.topLeft(), cover.bottomLeft());
-		shade.setColorAt(0.5, QColor(0, 0, 0, 0));
-		shade.setColorAt(0.70, QColor(0, 0, 0, 164));
-		shade.setColorAt(1., QColor(0, 0, 0, 238));
+		veil.setAlpha(0);
+		shade.setColorAt(0.5, veil);
+		veil.setAlpha(188);
+		shade.setColorAt(0.70, veil);
+		veil.setAlpha(240);
+		shade.setColorAt(1., veil);
 		p.fillRect(cover, shade);
 	} else {
 		p.fillRect(cover, st::windowBgOver);
@@ -393,9 +426,19 @@ void SaveProfileLook(
 	name.setText(nameStyle, peer->name());
 	const auto supportWidth = marks.support ? marks.support->width() : 0;
 	const auto statusWidth = marks.status ? marks.status->width() : 0;
-	const auto available = textWidth
-		- (supportWidth ? supportWidth + smallGap : 0)
-		- (statusWidth ? statusWidth + smallGap : 0);
+	const auto supportInk = ProfileMarkBounds(marks.supportFrame, supportWidth);
+	const auto statusInk = ProfileMarkBounds(marks.statusFrame, statusWidth);
+	const auto statusCore = ProfileMarkBounds(marks.statusFrame, statusWidth, true);
+	const auto supportGap = style::ConvertScale(6);
+	const auto statusGap = style::ConvertScale(2);
+	const auto supportLeft = inset - style::ConvertScale(3);
+	const auto nameX = supportWidth
+		? supportLeft + int(std::ceil(supportInk.width())) + supportGap
+		: inset;
+	const auto available = std::max(1, width - inset - nameX
+		- (statusWidth
+			? statusGap + int(std::ceil(statusInk.right() - statusCore.left()))
+			: 0));
 	const auto titleColor = photo ? QColor(Qt::white) : st::windowFg->c;
 	const auto middle = detailsTop + kTrackTitle.lineHeight() / 2;
 	const auto paintMark = [&](Text::CustomEmoji *emoji, int x, int size) {
@@ -403,12 +446,13 @@ void SaveProfileLook(
 			PaintProfileMark(p, emoji, QPoint(x, middle - size / 2), titleColor);
 		}
 	};
-	paintMark(marks.support.get(), inset, supportWidth);
-	const auto nameX = inset + (supportWidth ? supportWidth + smallGap : 0);
+	paintMark(marks.support.get(),
+		supportLeft - int(std::round(supportInk.left())), supportWidth);
 	p.setPen(titleColor);
 	name.drawElided(p, nameX, middle - title->height / 2, available);
 	paintMark(marks.status.get(),
-		nameX + std::min(name.maxWidth(), available) + smallGap, statusWidth);
+		nameX + std::min(name.maxWidth(), available) + statusGap
+			- int(std::round(statusCore.left())), statusWidth);
 	if (!handle.isEmpty()) {
 		p.setFont(subtitle->f);
 		p.setPen(photo ? QColor(255, 255, 255, 215) : st::windowSubTextFg->c);

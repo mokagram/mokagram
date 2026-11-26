@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/random.h"
 #include "ui/effects/premium_graphics.h" // GiftGradientStops.
+#include "ui/text/custom_emoji_instance.h"
 #include "ui/text/text_custom_emoji.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
@@ -156,14 +157,18 @@ QString CollectibleEmoji::entityData() {
 
 void CollectibleEmoji::prepareFrame() {
 	const auto clip = QSize(_size, _size);
-	if (_frame.isNull()) {
-		const auto ratio = style::DevicePixelRatio();
-		_frame = QImage(clip * ratio, QImage::Format_ARGB32_Premultiplied);
+	const auto shot = Ui::CustomEmoji::ShotScale();
+	const auto padding = (shot > 1) ? _size : 0;
+	const auto ratio = style::DevicePixelRatio() * shot;
+	const auto frameSize = (clip + QSize(2 * padding, 2 * padding)) * ratio;
+	if (_frame.size() != frameSize || _frame.devicePixelRatio() != ratio) {
+		_frame = QImage(frameSize, QImage::Format_ARGB32_Premultiplied);
 		_frame.setDevicePixelRatio(ratio);
 	}
 	_frame.fill(Qt::transparent);
 	auto p = QPainter(&_frame);
 	auto hq = PainterHighQualityEnabler(p);
+	p.translate(padding, padding);
 	auto random = std::optional<base::BufferedRandom<uint32>>();
 	const auto now = crl::now();
 	for (auto &star : _stars) {
@@ -208,12 +213,13 @@ void CollectibleEmoji::prepareFrame() {
 	});
 	p.setBrush(gradient);
 	p.setPen(Qt::NoPen);
-	p.drawRect(QRect(QPoint(), clip));
+	p.drawRect(QRect(QPoint(), clip).adjusted(-padding, -padding, padding, padding));
 }
 
 void CollectibleEmoji::paint(QPainter &p, const Context &context) {
 	prepareFrame();
-	p.drawImage(context.position, _frame);
+	const auto padding = (Ui::CustomEmoji::ShotScale() > 1) ? _size : 0;
+	p.drawImage(context.position - QPoint(padding, padding), _frame);
 	if (context.paused) {
 		_animation.stop();
 	} else if (!_animation.animating()) {
