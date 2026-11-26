@@ -37,7 +37,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "info/channel_statistics/boosts/info_boosts_widget.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
-#include "info/profile/tabs/info_profile_tabs_strip.h"
 #include "info/profile/info_profile_emoji_status_panel.h"
 #include "info/profile/info_profile_top_bar.h"
 #include "info/info_controller.h" // Key
@@ -63,6 +62,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/peer/color_sample.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/buttons.h"
+#include "ui/widgets/pill_tabs.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/color_contrast.h"
 #include "ui/painter.h"
@@ -74,7 +74,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h"
 #include "styles/style_credits.h"
-#include "styles/style_info.h" // defaultSubTabs, infoProfileTabsStrip.
+#include "styles/style_info.h" // defaultSubTabs.
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
@@ -1535,47 +1535,38 @@ Fn<void(int)> CreateTabsWidget(
 		not_null<Ui::VerticalLayout*> container,
 		const std::vector<QString> &labels,
 		const std::vector<Fn<void()>> &callbacks) {
-	// Mokagram: use the theme accent for the selected tab.
+	// Mokagram: a tonal pill with the theme accent, without the profile strip's
+	// shadow and outline (which are clipped in this compact header).
 	static const auto tabsStyle = [] {
-		auto result = st::infoProfileTabsStrip;
+		auto result = st::defaultPillTabs;
+		result.height = style::ConvertScale(36);
+		result.borderWidth = style::ConvertScale(3);
+		result.bg = result.bgBorder = st::windowBg;
 		result.fgActive = st::windowFgActive;
 		result.bgActive = st::windowBgActive;
-		result.ripple.color = st::windowBgRipple;
+		result.duration = st::universalDuration;
 		return result;
 	}();
-	const auto tabs = container->add(
-		object_ptr<Info::Profile::TabsStrip>(
-			container,
-			tabsStyle),
-		st::boxRowPadding,
-		style::al_top);
-
-	auto list = std::vector<Info::Profile::StripTab>();
-	list.reserve(labels.size());
-	for (auto i = 0, count = int(labels.size()); i != count; ++i) {
-		list.push_back({
-			.id = QString::number(i),
-			.text = { labels[i] },
-		});
+	auto width = style::ConvertScale(80);
+	for (const auto &label : labels) {
+		// PillTabs reserves one pill height per segment for text padding.
+		width = std::max(
+			width,
+			tabsStyle.textStyle.font->width(label) + tabsStyle.height);
 	}
-	tabs->setTabs(std::move(list));
-	tabs->setActiveTab(u"0"_q);
-
-	const auto invoke = [=](int index) {
-		if (index >= 0 && index < int(callbacks.size()) && callbacks[index]) {
-			callbacks[index]();
-		}
-	};
-	tabs->activated(
-	) | rpl::on_next([=](const QString &id) {
-		tabs->setActiveTab(id);
-		invoke(id.toInt());
+	auto widget = object_ptr<Ui::PillTabs>(container, labels, 0, tabsStyle);
+	widget->setNaturalWidth(width * int(labels.size()));
+	const auto inset = style::ConvertScale(kAppearanceInset);
+	const auto tabs = container->add(
+		std::move(widget),
+		{ inset, style::ConvertScale(kAppearanceGap), inset, 0 },
+		style::al_top);
+	tabs->activeIndexChanges(
+	) | rpl::on_next([=](int index) {
+		callbacks[index]();
 	}, tabs->lifetime());
 
-	return [=](int index) {
-		tabs->setActiveTab(QString::number(index));
-		invoke(index);
-	};
+	return [=](int index) { tabs->setActiveIndex(index); };
 }
 
 not_null<Info::Profile::TopBar*> CreateProfilePreview(
