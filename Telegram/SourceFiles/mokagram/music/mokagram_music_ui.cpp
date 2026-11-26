@@ -7019,6 +7019,116 @@ constexpr auto kHomeTrendingSection = 3;
 constexpr auto kSeekFrameInterval = 33;
 constexpr auto kBackdropFrameInterval = 100;
 
+struct PlayerSpringSpec {
+	double damping;
+	double stiffness;
+};
+
+// Material 3 Standard Motion, unit mass. Effects are critically damped.
+constexpr auto kSpatial = PlayerSpringSpec{ 0.9, 700. };
+constexpr auto kFastSpatial = PlayerSpringSpec{ 0.9, 1400. };
+constexpr auto kEffects = PlayerSpringSpec{ 1., 1600. };
+constexpr auto kFastEffects = PlayerSpringSpec{ 1., 3800. };
+constexpr auto kSlowEffects = PlayerSpringSpec{ 1., 800. };
+// Canvas follows video scene changes slowly enough to avoid flashing.
+constexpr auto kAmbientEffects = PlayerSpringSpec{ 1., 16. };
+
+[[nodiscard]] bool PlayerMotionEnabled() {
+	return !anim::Disabled() && !PowerSaving::On(PowerSaving::kAnimations);
+}
+
+class PlayerSpring final {
+public:
+	template <typename Callback>
+	explicit PlayerSpring(Callback callback)
+	: _animation([this, callback = std::move(callback)](crl::time now) {
+		const auto enabled = PlayerMotionEnabled();
+		if (enabled && now > _last) {
+			step((now - _last) / (1000. * anim::SlowMultiplier()));
+			_last = now;
+		}
+		const auto keep = enabled
+			&& (std::abs(_value - _target) >= 0.001 || std::abs(_velocity) >= 0.02);
+		if (!keep) {
+			stop();
+		}
+		callback();
+		return keep;
+	}) {
+	}
+
+	void start(double from, double target, PlayerSpringSpec spec) {
+		if (!PlayerMotionEnabled()) {
+			stop();
+			return;
+		}
+		const auto running = animating();
+		if (running) {
+			if (_target == target) {
+				return;
+			}
+			// Retarget without discarding the current position or velocity.
+		} else {
+			_value = from;
+			_velocity = 0.;
+		}
+		_target = target;
+		if (_value == _target && _velocity == 0.) {
+			stop();
+			return;
+		}
+		const auto frequency = std::sqrt(spec.stiffness);
+		_decay = spec.damping * frequency;
+		_oscillation = std::sqrt(1. - spec.damping * spec.damping) * frequency;
+		_last = crl::now();
+		if (!running) {
+			_animation.start();
+		}
+	}
+
+	void stop() {
+		if (animating()) {
+			_animation.stop();
+		}
+	}
+
+	[[nodiscard]] bool animating() const { return _animation.animating(); }
+	[[nodiscard]] double value(double target) const {
+		return animating() ? _value : target;
+	}
+	[[nodiscard]] double unitValue(double target) const {
+		return std::clamp(value(target), 0., 1.);
+	}
+	[[nodiscard]] double velocity() const {
+		return animating() ? _velocity : 0.;
+	}
+
+private:
+	void step(double dt) {
+		// Exact solution for critical and under damping, even on a dropped frame.
+		const auto x = _value - _target;
+		const auto y = _velocity + _decay * x;
+		const auto angle = _oscillation * dt;
+		const auto c = _oscillation ? std::cos(angle) : 1.;
+		const auto s = _oscillation ? std::sin(angle) / _oscillation : dt;
+		const auto envelope = std::exp(-_decay * dt);
+		const auto next = (x * c + y * s) * envelope;
+		const auto crossed = !_oscillation && (x * next < 0.);
+		_value = crossed ? _target : _target + next;
+		_velocity = crossed
+			? 0.
+			: (y * c - x * _oscillation * _oscillation * s) * envelope - _decay * next;
+	}
+
+	double _value = 0.;
+	double _velocity = 0.;
+	double _target = 0.;
+	double _decay = 0.;
+	double _oscillation = 0.;
+	crl::time _last = 0;
+	Ui::Animations::Basic _animation;
+};
+
 // Акцент обложки, поднятый до читаемой светлоты; белый без него.
 [[nodiscard]] QColor LiftedAccent(QColor accent) {
 	constexpr auto kMinLightness = 0.62;
@@ -7040,25 +7150,23 @@ constexpr auto kBackdropFrameInterval = 100;
 
 class CoverTransition final {
 public:
-	void reset(QRectF rect, double radius, double smoothing, double expanded) {
-		_rect = rect;
-		_expanded = expanded;
-		_path = preparePath(rect, radius, smoothing);
-	}
-	void retarget(QRectF rect, double radius, double smoothing, double expanded) {
-		_fromRect = _rect;
-		_toRect = rect;
-		_fromExpanded = _expanded;
-		_toExpanded = expanded;
-		_fromPath = _path;
-		_toPath = preparePath(rect, radius, smoothing);
+	void prepare(
+			QRectF compact,
+			double compactRadius,
+			QRectF expanded,
+			double expandedRadius) {
+		_fromRect = compact;
+		_toRect = expanded;
+		_fromPath = preparePath(compact, compactRadius, 0.6);
+		_toPath = preparePath(expanded, expandedRadius, 0.);
 		Expects(_fromPath.elementCount() == _toPath.elementCount());
+		_path = _fromPath;
 	}
 	void update(double progress) {
 		_rect = QRectF(
 			_fromRect.topLeft() + (_toRect.topLeft() - _fromRect.topLeft()) * progress,
 			_fromRect.size() + (_toRect.size() - _fromRect.size()) * progress);
-		_expanded = _fromExpanded + (_toExpanded - _fromExpanded) * progress;
+		_expanded = progress;
 		// Keep the same path storage after the first update of a transition.
 		for (auto i = 0; i != _path.elementCount(); ++i) {
 			const auto from = _fromPath.elementAt(i);
@@ -7069,7 +7177,6 @@ public:
 		}
 		if (progress == 1.) {
 			_rect = _toRect;
-			_expanded = _toExpanded;
 		}
 	}
 	[[nodiscard]] const QRectF &rect() const { return _rect; }
@@ -7123,8 +7230,6 @@ private:
 	QPainterPath _fromPath;
 	QPainterPath _toPath;
 	double _expanded = 0.;
-	double _fromExpanded = 0.;
-	double _toExpanded = 0.;
 };
 
 class FullscreenPlayer final : public Ui::RpWidget {
@@ -7287,7 +7392,7 @@ public:
 			const auto hq = PainterHighQualityEnabler(p);
 			const auto area = _queuePanel->rect();
 			const auto shape = Ui::SquirclePath(QRectF(area), s(22));
-			const auto plain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+			const auto plain = _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
 			if (plain < 1.) {
 				p.save();
 				p.setClipPath(shape, Qt::IntersectClip);
@@ -7357,15 +7462,16 @@ public:
 				return;
 			}
 			auto p = QPainter(_tabTransition);
-			const auto progress = _tabTransitionAnimation.value(1.);
+			const auto progress = _tabTransitionSlide.unitValue(1.);
+			const auto opacity = _tabTransitionFade.unitValue(1.);
 			const auto shift = style::ConvertScale(28) * _tabTransitionDirection;
 			p.drawPixmap(0, 0, _tabTransitionNow);
-			p.setOpacity(1. - progress);
+			p.setOpacity(1. - opacity);
 			p.drawPixmap(
 				int(base::SafeRound(-shift * progress)),
 				0,
 				_tabTransitionWas);
-			p.setOpacity(progress);
+			p.setOpacity(opacity);
 			p.drawPixmap(
 				int(base::SafeRound(shift * (1. - progress))),
 				0,
@@ -7672,17 +7778,6 @@ public:
 
 		PowerSaving::Changes(
 		) | rpl::on_next([=] {
-			if (PowerSaving::On(PowerSaving::kAnimations) && _barSlide.animating()) {
-				_barSlide.stop();
-				layoutPlaybackBar(computeLayout());
-			}
-			if (PowerSaving::On(PowerSaving::kAnimations) && _coverMorph.animating()) {
-				_coverMorph.stop();
-				_coverOverlay->hide();
-				if (!_coverExpanding) setTab(Tab::Home);
-				_plainAnim.stop();
-				_playbackBar->update();
-			}
 			updateAmbientTimer();
 			repaintBackdrop();
 		}, lifetime());
@@ -7694,23 +7789,12 @@ public:
 		raise();
 		setFocus();
 
-		// Появление: плавное проявление всего экрана.
-		const auto effect = new QGraphicsOpacityEffect(this);
-		effect->setOpacity(0.);
-		setGraphicsEffect(effect);
-		_fade.start([=] {
-			const auto value = _fade.value(_closing ? 0. : 1.);
-			if (graphicsEffect() == effect) {
-				effect->setOpacity(value);
-			}
-			if (!_fade.animating()) {
-				if (_closing) {
-					deleteLater();
-				} else {
-					setGraphicsEffect(nullptr);
-				}
-			}
-		}, 0., 1., 180, anim::easeOutCubic);
+		if (PlayerMotionEnabled()) {
+			const auto effect = new QGraphicsOpacityEffect(this);
+			effect->setOpacity(0.);
+			setGraphicsEffect(effect);
+			_fade.start(0., 1., kEffects);
+		}
 	}
 
 	[[nodiscard]] bool canReuse(
@@ -7748,14 +7832,22 @@ public:
 		_spotifyCanvas = nullptr;
 		_canvas.refresh({}, {}, {}, false);
 		_upcomingCanvas.refresh({}, {}, {}, false);
-		auto effect = new QGraphicsOpacityEffect(this);
-		setGraphicsEffect(effect);
-		_fade.start([=] {
-			effect->setOpacity(_fade.value(0.));
-			if (!_fade.animating()) {
-				deleteLater();
-			}
-		}, 1., 0., 180, anim::easeOutCubic);
+		if (!PlayerMotionEnabled()) {
+			_fade.stop();
+			hide();
+			deleteLater();
+			return;
+		}
+		if (!graphicsEffect()) {
+			const auto effect = new QGraphicsOpacityEffect(this);
+			effect->setOpacity(1.);
+			setGraphicsEffect(effect);
+		}
+		_fade.start(1., 0., kFastEffects);
+		if (!_fade.animating()) {
+			hide();
+			deleteLater();
+		}
 	}
 	~FullscreenPlayer() override {
 		if (_cancelMotion) _cancelMotion();
@@ -7943,7 +8035,7 @@ protected:
 		const auto barWidth = std::max(
 			std::min(windowWidth - 2 * margin, s(kBarMaxWidth)),
 			0);
-		const auto barProgress = _barSlide.value(_hasPlaybackTrack ? 1. : 0.);
+		const auto barProgress = _barSlide.unitValue(_hasPlaybackTrack ? 1. : 0.);
 		result.barShown = _hasPlaybackTrack || barProgress > 0.;
 		// Список меняет размер один раз, каждый кадр двигается сама панель.
 		result.contentBottom = height() - gap
@@ -8105,7 +8197,7 @@ protected:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto shown = _coverMorph.animating()
 			? 1. - _coverTransition.expanded()
-			: _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+			: _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
 		const auto shift = int((s(kBarCover) + s(14)) * (1. - shown));
 		return layout.barInfo.adjusted(-shift, 0, 0, 0);
 	}
@@ -8301,7 +8393,10 @@ protected:
 		scheduleHomeMoreIfNeeded();
 		_coverOverlay->setGeometry(rect());
 		if (e->size() != e->oldSize() && _coverMorph.animating()) {
-			startCoverTransition(_coverExpanding);
+			if (!prepareCoverTransition(layout)) {
+				_coverMorph.stop();
+			}
+			updateCoverTransition();
 		}
 	}
 
@@ -8324,14 +8419,12 @@ protected:
 		if (_hasPlaybackTrack == shown) {
 			return;
 		}
-		const auto from = _barSlide.value(_hasPlaybackTrack ? 1. : 0.);
+		const auto from = _hasPlaybackTrack ? 1. : 0.;
 		_hasPlaybackTrack = shown;
-		if (!isVisible() || anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations)) {
+		if (!isVisible()) {
 			_barSlide.stop();
 		} else {
-			_barSlide.start([this] {
-				layoutPlaybackBar(computeLayout());
-			}, from, shown ? 1. : 0., 240, anim::easeOutCubic);
+			_barSlide.start(from, shown ? 1. : 0., kFastSpatial);
 		}
 		if (!shown && _queuePanelOpen) {
 			setQueuePanelOpen(false);
@@ -8347,7 +8440,7 @@ protected:
 
 	void layoutQueuePanel() {
 		const auto &target = _queuePanelTarget;
-		const auto progress = _queueSlide.value(_queuePanelOpen ? 1. : 0.);
+		const auto progress = _queueSlide.unitValue(_queuePanelOpen ? 1. : 0.);
 		if (target.isEmpty() || (!_queuePanelOpen && progress <= 0.)) {
 			_queuePanel->hide();
 			return;
@@ -8380,7 +8473,7 @@ protected:
 		if (_queuePanelOpen == open) {
 			return;
 		}
-		const auto from = _queueSlide.value(_queuePanelOpen ? 1. : 0.);
+		const auto from = _queuePanelOpen ? 1. : 0.;
 		_queuePanelOpen = open;
 		_queueToggle->setQueueOpen(open);
 		if (open) {
@@ -8390,13 +8483,7 @@ protected:
 				_queueToggle->setFocus();
 			}
 		}
-		if (anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations)) {
-			_queueSlide.stop();
-		} else {
-			_queueSlide.start([this] {
-				layoutQueuePanel();
-			}, from, open ? 1. : 0., 240, anim::easeOutCubic);
-		}
+		_queueSlide.start(from, open ? 1. : 0., kSpatial);
 		if (showsQueue()) {
 			_tabScroll->setVisible(!open);
 			update();
@@ -8781,60 +8868,55 @@ protected:
 	[[nodiscard]] double barCoverRadius(const Layout &layout) const {
 		return style::ConvertScale(kBarRadius) - (layout.barCover.y() - layout.bar.y());
 	}
-	void startCoverTransition(bool expanding) {
-		const auto layout = computeLayout();
-		if (layout.cover.isEmpty() || layout.barCover.isEmpty()
-			|| anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations)) {
-			_coverMorph.stop();
-			_coverOverlay->hide();
-			if (!expanding) setTab(Tab::Home);
-			update();
-			return;
+	bool prepareCoverTransition(const Layout &layout) {
+		if (layout.cover.isEmpty() || layout.barCover.isEmpty()) {
+			return false;
 		}
 		const auto scale = 0.94 + 0.06 * _playAnim.value(_isPlaying ? 1. : 0.);
-		if (!_coverMorph.animating()) {
-			_coverTransition.reset(
-				expanding ? QRectF(layout.barCover) : expandedCoverRect(layout),
-				expanding ? barCoverRadius(layout) : style::ConvertScale(22) * scale,
-				expanding ? 0.6 : 0., expanding ? 0. : 1.);
-		}
+		_coverTransition.prepare(
+			QRectF(layout.barCover),
+			barCoverRadius(layout),
+			expandedCoverRect(layout),
+			style::ConvertScale(22) * scale);
+		return true;
+	}
+	void startCoverTransition(bool expanding) {
+		const auto running = _coverMorph.animating();
 		_coverExpanding = expanding;
-		_coverTransition.retarget(
-			expanding ? expandedCoverRect(layout) : QRectF(layout.barCover),
-			expanding ? style::ConvertScale(22) * scale : barCoverRadius(layout),
-			expanding ? 0. : 0.6, expanding ? 1. : 0.);
-		_coverMorph.stop();
-		_coverMorph.start([=](double progress) {
-			_coverTransition.update(progress);
-			update();
-			if (_coverMorph.animating()) {
-				_coverOverlay->update();
-			} else {
-				_coverOverlay->hide();
-			}
-			if (!_coverMorph.animating() && !_coverExpanding && _tab == Tab::Now) {
-				setTab(Tab::Home);
-				_plainAnim.stop();
-				_playbackBar->update();
-				if (_tab == Tab::Home && !anim::Disabled()
-					&& !PowerSaving::On(PowerSaving::kAnimations)) {
-					auto effect = new QGraphicsOpacityEffect(_tabScroll);
-					effect->setOpacity(0.);
-					_tabScroll->setGraphicsEffect(effect);
-					_homeEntrance.start([=] {
-						effect->setOpacity(_homeEntrance.value(1.));
-						if (!_homeEntrance.animating()) {
-							_tabScroll->setGraphicsEffect(nullptr);
-						}
-					}, 0., 1., kSwitchDuration, anim::easeOutCubic);
-				}
-			}
-		}, 0., 1., 240, anim::sineInOut);
+		if (!PlayerMotionEnabled()
+			|| (!running && !prepareCoverTransition(computeLayout()))) {
+			_coverMorph.stop();
+			updateCoverTransition();
+			return;
+		}
+		// Same geometry and progress in both directions; only the target flips.
+		_coverMorph.start(expanding ? 0. : 1., expanding ? 1. : 0., kSpatial);
+		_coverOverlay->setGeometry(rect());
 		if (_coverMorph.animating()) {
-			_coverOverlay->setGeometry(rect());
 			_coverOverlay->show();
 			_coverOverlay->raise();
 		}
+		updateCoverTransition();
+	}
+	void updateCoverTransition() {
+		if (_coverMorph.animating()) {
+			_coverTransition.update(_coverMorph.unitValue(_coverExpanding ? 1. : 0.));
+			_coverOverlay->update();
+		} else {
+			_coverOverlay->hide();
+			if (!_coverExpanding && _tab == Tab::Now) {
+				setTab(Tab::Home);
+				_plainAnim.stop();
+				_playbackBar->update();
+				if (_tab == Tab::Home && PlayerMotionEnabled()) {
+					const auto effect = new QGraphicsOpacityEffect(_tabScroll);
+					effect->setOpacity(0.);
+					_tabScroll->setGraphicsEffect(effect);
+					_homeEntrance.start(0., 1., kEffects);
+				}
+			}
+		}
+		update();
 	}
 	void openNowPlayingFromBar() {
 		setTab(Tab::Now);
@@ -8855,7 +8937,7 @@ protected:
 		overlay->setGeometry(_homeBack->geometry());
 		overlay->paintOn([=](QPainter &p) {
 			const auto hq = PainterHighQualityEnabler(p);
-			const auto progress = _homeBackExit.value(1.);
+			const auto progress = _homeBackExit.unitValue(1.);
 			const auto center = QRectF(overlay->rect()).center();
 			const auto scale = 1. - 0.03 * progress;
 			p.setOpacity(1. - progress);
@@ -8864,13 +8946,7 @@ protected:
 			p.translate(-center);
 			p.drawPixmap(0, 0, image);
 		});
-		_homeBackExit.start([=](float64 progress) {
-			if (progress < 1.) {
-				overlay->update();
-			} else {
-				_homeBackOverlay.reset();
-			}
-		}, 0., 1., 140, anim::easeOutCubic);
+		_homeBackExit.start(0., 1., kFastEffects);
 		overlay->show();
 		overlay->raise();
 	}
@@ -8908,8 +8984,7 @@ protected:
 		const auto from = _tab;
 		const auto animateTransition = _tab != Tab::Now
 			&& tab != Tab::Now
-			&& !anim::Disabled()
-			&& !PowerSaving::On(PowerSaving::kAnimations);
+			&& PlayerMotionEnabled();
 		const auto oldLayout = computeLayout();
 		const auto transitionTop = oldLayout.center.isEmpty()
 			? oldLayout.lyrics.y()
@@ -8922,40 +8997,18 @@ protected:
 		auto was = animateTransition
 			? Ui::GrabWidget(this, transitionArea)
 			: QPixmap();
-		_tabTransitionAnimation.stop();
-		_tabTransition->hide();
-		_tabTransitionWas = QPixmap();
-		_tabTransitionNow = QPixmap();
+		clearTabTransition();
 		_homeEntrance.stop();
 		_tabScroll->setGraphicsEffect(nullptr);
-		const auto plainFrom = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
-		_plainAnim.stop();
-		if (!anim::Disabled() && !PowerSaving::On(PowerSaving::kAnimations)) {
-			_plainAnim.start(
-				[this] {
-					update();
-					_playbackBar->update();
-					_queuePanel->update();
-				},
-				plainFrom,
-				tab == Tab::Now ? 0. : 1.,
-				220,
-				anim::easeOutCubic);
-		}
-		const auto navFrom = _navSlide.value(float64(int(_tab)));
-		_navSlideFrom = navFrom;
+		_plainAnim.start(_tab == Tab::Now ? 0. : 1., tab == Tab::Now ? 0. : 1., kEffects);
+		const auto navFrom = double(int(_tab));
 		_tab = tab;
 		_backdropDirty = true;
 		updateAmbientTimer();
-		if (anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations)) {
+		if (oldLayout.verticalNav) {
 			_navSlide.stop();
 		} else {
-			_navSlide.start(
-				[=] { update(computeLayout().nav); },
-				navFrom,
-				float64(int(tab)),
-				kSwitchDuration,
-				anim::easeOutCubic);
+			_navSlide.start(navFrom, double(int(tab)), kFastSpatial);
 		}
 		update(computeLayout().nav);
 		resetHomeNavigation();
@@ -8980,15 +9033,23 @@ protected:
 				_tabTransition->show();
 				_tabTransition->raise();
 				_queuePanel->raise();
-				_tabTransitionAnimation.start([=] {
-					_tabTransition->update();
-					if (!_tabTransitionAnimation.animating()) {
-						_tabTransition->hide();
-						_tabTransitionWas = QPixmap();
-						_tabTransitionNow = QPixmap();
-					}
-				}, 0., 1., kSwitchDuration, anim::easeOutCubic);
+				_tabTransitionSlide.start(0., 1., kFastSpatial);
+				_tabTransitionFade.start(0., 1., kSlowEffects);
 			}
+		}
+	}
+	void clearTabTransition() {
+		_tabTransitionSlide.stop();
+		_tabTransitionFade.stop();
+		_tabTransition->hide();
+		_tabTransitionWas = QPixmap();
+		_tabTransitionNow = QPixmap();
+	}
+	void updateTabTransition() {
+		if (_tabTransitionSlide.animating() || _tabTransitionFade.animating()) {
+			_tabTransition->update();
+		} else {
+			clearTabTransition();
 		}
 	}
 	void syncLibrary() {
@@ -10333,7 +10394,7 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto plainBackground = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+		const auto plainBackground = _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
 		if (plainBackground < 1.) {
 			paintBackgroundPart(p, e->rect());
 		} else {
@@ -10364,7 +10425,7 @@ protected:
 		p.setPen(Qt::NoPen);
 		const auto homeColor = homeDetailAccent();
 		// На «Сейчас играет» дорожка тоже берёт оттенок обложки.
-		const auto trackPlain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+		const auto trackPlain = _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
 		const auto trackTint = homeColor.isValid()
 			? homeColor
 			: (_accent.isValid() ? _accent : QColor());
@@ -10379,16 +10440,15 @@ protected:
 		p.drawRoundedRect(layout.nav, s(20), s(20));
 		const auto inset = s(4);
 		const auto segment = std::max(layout.nav.width() - 2 * inset, 0) / float64(layout.verticalNav ? 3 : _nav.size());
+		const auto last = double(_nav.size() - 1);
 		const auto at = layout.verticalNav
 			? navColumn(int(_tab), 3)
-			: _navSlide.value(float64(int(_tab)));
-		const auto distance = std::abs(float64(int(_tab)) - _navSlideFrom);
-		const auto progress = distance > 0.
-			? std::clamp(std::abs(at - _navSlideFrom) / distance, 0., 1.)
-			: 1.;
+			: std::clamp(_navSlide.value(double(int(_tab))), 0., last);
 		const auto stretch = layout.verticalNav
 			? 0.
-			: segment * 0.18 * (1. - std::abs(2. * progress - 1.));
+			: segment * std::min(
+				0.18 * std::min(std::abs(_navSlide.velocity()) / std::sqrt(kFastSpatial.stiffness), 1.),
+				2. * std::min(at, last - at));
 		const auto active = QRectF(
 			layout.nav.x() + inset + segment * at - stretch / 2.,
 			layout.nav.y() + inset + (layout.verticalNav ? s(40) * (int(_tab) / 3) : 0),
@@ -10397,7 +10457,7 @@ protected:
 		const auto coverColor = _accent.isValid()
 			? _accent
 			: st::windowActiveTextFg->c;
-		const auto plain = _plainAnim.value(_tab == Tab::Now ? 0. : 1.);
+		const auto plain = _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
 		p.setBrush(homeColor.isValid() ? homeColor : anim::color(coverColor, st::windowActiveTextFg->c, plain));
 		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
@@ -10446,7 +10506,7 @@ protected:
 			const Layout &layout,
 			bool fullCover = true) {
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto fade = _infoFade.value(1.);
+		const auto fade = _infoFade.unitValue(1.);
 		const auto flying = _coverMorph.animating();
 		const auto expanded = flying ? _coverTransition.expanded() : 1.;
 		const auto coverRect = flying ? _coverTransition.rect() : expandedCoverRect(layout);
@@ -10560,15 +10620,15 @@ protected:
 
 	[[nodiscard]] QColor playbackBarColor() const {
 		return anim::color(
-			anim::color(_barFrom, _barTo, _barAnim.value(1.)),
+			anim::color(_barFrom, _barTo, _barAnim.unitValue(1.)),
 			QColor(0x2C, 0x34, 0x40),
-			_plainAnim.value(_tab == Tab::Now ? 0. : 1.));
+			_plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.));
 	}
 
 	void paintPlaybackBarDetails(QPainter &p, const Layout &layout) const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		// На «Сейчас играет» обложки в капсуле нет: там большая.
-		const auto fade = _infoFade.value(1.);
+		const auto fade = _infoFade.unitValue(1.);
 		if (!layout.ultra && _tab != Tab::Now) {
 			p.save();
 			p.setClipPath(Ui::SquirclePath(QRectF(layout.barCover), barCoverRadius(layout)), Qt::IntersectClip);
@@ -10650,7 +10710,7 @@ private:
 		if (_canvasBackground.isNull()) return {};
 		auto result = _canvasBackgroundFrom.copy();
 		auto painter = QPainter(&result);
-		painter.setOpacity(_canvasFade.value(1.));
+		painter.setOpacity(_canvasFade.unitValue(1.));
 		painter.drawImage(result.rect(), _canvasBackground);
 		return result;
 	}
@@ -10666,22 +10726,20 @@ private:
 		_canvasBackground = std::move(background);
 		_canvasAccentFrom = _accent;
 		_canvasAccentTo = accent;
-		const auto animate = !anim::Disabled()
-			&& !PowerSaving::On(PowerSaving::kAnimations);
 		_canvasFade.stop();
-		// Ambient colour follows the video slowly, without flashing at scene cuts.
-		if (animate) {
-			_canvasFade.start([=] {
-				repaintAnimatedBackdrop(crl::now(), !_canvasFade.animating());
-			},
-				0., 1., 2400, anim::easeOutCubic);
-		}
-		_barFrom = anim::color(_barFrom, _barTo, _barAnim.value(1.));
+		_canvasFade.start(0., 1., kAmbientEffects);
+		_barFrom = anim::color(_barFrom, _barTo, _barAnim.unitValue(1.));
 		_barTo = accent.isValid() ? accent.darker(180) : QColor(0x28, 0x28, 0x28);
 		_barAnim.stop();
-		if (animate) {
-			_barAnim.start([=] { update(computeLayout().bar); },
-				0., 1., 2400, anim::easeOutCubic);
+		_barAnim.start(0., 1., kAmbientEffects);
+		repaintPlaybackBar();
+	}
+
+	void repaintPlaybackBar() {
+		if (_tab == Tab::Home) {
+			_playbackBar->update();
+		} else {
+			update(_playbackBar->geometry());
 		}
 	}
 
@@ -10763,7 +10821,7 @@ private:
 	void prepareBackdrop() {
 		if (!_canvasBackground.isNull()) {
 			const auto accent = anim::color(
-				_canvasAccentFrom, _canvasAccentTo, _canvasFade.value(1.));
+				_canvasAccentFrom, _canvasAccentTo, _canvasFade.unitValue(1.));
 			if (_accent != accent) {
 				_accent = accent;
 				_shuffle->setAccent(_accent);
@@ -10904,7 +10962,8 @@ private:
 				_wasTitle = _title;
 				_wasArtist = _artist;
 				_coverWas = _cover;
-				_infoFade.start([=] { update(); }, 0., 1., 320, anim::easeOutCubic);
+				_infoFade.stop();
+				_infoFade.start(0., 1., kSlowEffects);
 			}
 			_title = track.title;
 			_artist = track.artist;
@@ -10919,12 +10978,13 @@ private:
 			_nav[0]->setActiveColor(Qt::white);
 			// Полоса управления плавно перекрашивается под обложку трека.
 			{
-				const auto now = anim::color(_barFrom, _barTo, _barAnim.value(1.));
+				const auto now = anim::color(_barFrom, _barTo, _barAnim.unitValue(1.));
 				_barFrom = now;
 				_barTo = _accent.isValid()
 					? _accent.darker(180)
 					: QColor(0x28, 0x28, 0x28);
-				_barAnim.start([=] { update(); }, 0., 1., 600, anim::easeOutCubic);
+				_barAnim.stop();
+				_barAnim.start(0., 1., kEffects);
 			}
 			// Перемотка и громкость в оттенке обложки, как у островка.
 			_seek->setFillColor(LiftedAccent(_accent));
@@ -10960,7 +11020,7 @@ private:
 			_isPlaying = playing;
 			repaintBackdrop();
 			updateAmbientTimer();
-			_playAnim.start([=] { update(); }, playing ? 0. : 1., playing ? 1. : 0., 180, anim::easeOutCubic);
+			_playAnim.start(playing ? 0. : 1., playing ? 1. : 0., kFastSpatial);
 		}
 		_play->setPlaying(playing);
 		_seek->setExpressive(true, playing);
@@ -11059,16 +11119,22 @@ private:
 	int _queueLayoutRevision = 0;
 	bool _queuePanelOpen = false;
 	QRect _queuePanelTarget;
-	Ui::Animations::Simple _queueSlide;
+	PlayerSpring _queueSlide{ [this] { layoutQueuePanel(); } };
 	const not_null<Ui::RpWidget*> _playbackBar;
 	bool _hasPlaybackTrack = false;
-	Ui::Animations::Simple _barSlide;
+	PlayerSpring _barSlide{ [this] { layoutPlaybackBar(computeLayout()); } };
 	const not_null<SeekBar*> _seek;
 	const not_null<RoundGlyph*> _heart;
 	const not_null<RoundGlyph*> _collapse;
 	NavItem *_homeBack = nullptr;
 	base::unique_qptr<Ui::RpWidget> _homeBackOverlay;
-	Ui::Animations::Simple _homeBackExit;
+	PlayerSpring _homeBackExit{ [this] {
+		if (_homeBackExit.animating()) {
+			_homeBackOverlay->update();
+		} else {
+			_homeBackOverlay.reset();
+		}
+	} };
 	Ui::RpWidget *_homeArtistBar = nullptr;
 	QGraphicsOpacityEffect *_homeArtistBarOpacity = nullptr;
 	const not_null<RoundGlyph*> _filter;
@@ -11081,13 +11147,20 @@ private:
 	Ui::VerticalLayout *_tabList = nullptr;
 	QPointer<HomeAlbumHeader> _homeAlbumHeader;
 	std::array<NavItem*, int(Tab::Count)> _nav = {};
-	Ui::Animations::Simple _navSlide;
-	float64 _navSlideFrom = 0.;
-	Ui::Animations::Simple _tabTransitionAnimation;
+	PlayerSpring _navSlide{ [this] { update(computeLayout().nav); } };
+	PlayerSpring _tabTransitionSlide{ [this] { updateTabTransition(); } };
+	PlayerSpring _tabTransitionFade{ [this] { updateTabTransition(); } };
 	QPixmap _tabTransitionWas;
 	QPixmap _tabTransitionNow;
 	int _tabTransitionDirection = 0;
-	Ui::Animations::Simple _homeEntrance;
+	PlayerSpring _homeEntrance{ [this] {
+		if (_homeEntrance.animating()) {
+			static_cast<QGraphicsOpacityEffect*>(_tabScroll->graphicsEffect())
+				->setOpacity(_homeEntrance.unitValue(1.));
+		} else {
+			_tabScroll->setGraphicsEffect(nullptr);
+		}
+	} };
 	QLineEdit *_searchField = nullptr;
 	SearchIndicator *_searchIndicator = nullptr;
 	QPushButton *_searchRetry = nullptr;
@@ -11195,7 +11268,9 @@ private:
 	QImage _canvasBackgroundFrom;
 	QColor _canvasAccentFrom;
 	QColor _canvasAccentTo;
-	Ui::Animations::Simple _canvasFade;
+	PlayerSpring _canvasFade{ [this] {
+		repaintAnimatedBackdrop(crl::now(), !_canvasFade.animating());
+	} };
 	QImage _spotifyPaletteFrame;
 	QImage _coverVideoFrame;
 	QString _canvasPaletteFor;
@@ -11234,17 +11309,34 @@ private:
 	QString _motionFor;
 	Fn<void()> _cancelMotion;
 	QColor _accent;
-	Ui::Animations::Simple _fade;
-	Ui::Animations::Simple _playAnim;
-	Ui::Animations::Simple _coverMorph;
+	PlayerSpring _fade{ [this] {
+		if (_fade.animating()) {
+			static_cast<QGraphicsOpacityEffect*>(graphicsEffect())
+				->setOpacity(_fade.unitValue(_closing ? 0. : 1.));
+		} else if (_closing) {
+			hide();
+			deleteLater();
+		} else {
+			setGraphicsEffect(nullptr);
+		}
+	} };
+	PlayerSpring _playAnim{ [this] { update(computeLayout().cover); } };
+	PlayerSpring _coverMorph{ [this] { updateCoverTransition(); } };
 	CoverTransition _coverTransition;
 	bool _coverExpanding = false;
-	Ui::Animations::Simple _plainAnim;
-	Ui::Animations::Simple _barAnim;
+	PlayerSpring _plainAnim{ [this] {
+		update();
+		_playbackBar->update();
+		_queuePanel->update();
+	} };
+	PlayerSpring _barAnim{ [this] { repaintPlaybackBar(); } };
 	QColor _barFrom = QColor(0x28, 0x28, 0x28);
 	QColor _barTo = QColor(0x28, 0x28, 0x28);
-	Ui::Animations::Simple _colorAnim;
-	Ui::Animations::Simple _infoFade;
+	PlayerSpring _infoFade{ [this] {
+		update();
+		_playbackBar->update();
+		_coverOverlay->update();
+	} };
 	QPixmap _cover;
 	QPixmap _coverWas;
 	qint64 _coverKey = 0;
