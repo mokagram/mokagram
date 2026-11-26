@@ -931,6 +931,35 @@ void TopBar::updateCollectibleStatus() {
 		: (colorProfile && !colorProfile->bg.empty())
 		? std::optional<QColor>(colorProfile->bg.front())
 		: std::nullopt);
+	// Mokagram: refresh the preview ring even when the outer color is unchanged.
+	if (_source == Source::Preview && !_savedMessages) {
+		const auto unit = QRectF(0., 0., 1., 1.);
+		auto brush = [&] {
+			if (collectible) {
+				const auto &center = collectible->centerColor;
+				const auto &edge = collectible->edgeColor;
+				const auto contrast = ContentColorOverBackground(
+					Ui::BlendColors(center, edge, 0.5));
+				return Ui::UnreadStoryOutlineGradient(
+					unit,
+					Ui::BlendColors(center, contrast, 0.55),
+					Ui::BlendColors(edge, contrast, 0.4));
+			}
+			if (colorProfile && !colorProfile->story.empty()) {
+				return Ui::UnreadStoryOutlineGradient(
+					unit,
+					colorProfile->story.front(),
+					colorProfile->story.back());
+			}
+			return Ui::UnreadStoryOutlineGradient(unit);
+		}();
+		brush.setCoordinateMode(QGradient::ObjectMode);
+		_hasStories = true;
+		_storySegments.assign(1, {
+			.brush = QBrush(brush),
+			.width = style::ConvertFloatScale(3.0),
+		});
+	}
 }
 
 void TopBar::finalizeActions(
@@ -4068,6 +4097,9 @@ void TopBar::paintPinnedToTopGifts(
 }
 
 void TopBar::setupStoryOutline(const QRect &geometry) {
+	if (_source == Source::Preview) {
+		return;
+	}
 	const auto user = _peer->asUser();
 	const auto channel = _peer->asChannel();
 	if (!user && !channel) {
@@ -4117,12 +4149,10 @@ void TopBar::updateStoryOutline(std::optional<QColor> edgeColor) {
 		return;
 	}
 
-	const auto hasActiveStories = (_source == Source::Preview)
-		? true
-		: (user ? user->hasActiveStories() : channel->hasActiveStories());
-	const auto hasLiveStories = (_source == Source::Preview)
-		? false
-		: (user ? user->hasActiveVideoStream() : false);
+	const auto hasActiveStories = user
+		? user->hasActiveStories()
+		: channel->hasActiveStories();
+	const auto hasLiveStories = user && user->hasActiveVideoStream();
 
 	if (_hasStories != hasActiveStories
 		|| _hasLiveStories != hasLiveStories) {
@@ -4138,28 +4168,6 @@ void TopBar::updateStoryOutline(std::optional<QColor> edgeColor) {
 	const auto widthBig = style::ConvertFloatScale(3.0);
 
 	_storySegments.clear();
-
-	if (_source == Source::Preview) {
-		const auto colorProfile = effectiveColorProfile();
-		const auto hasProfileColor = colorProfile
-			&& colorProfile->story.size() > 1;
-		const auto previewBrush = hasProfileColor
-			? Ui::UnreadStoryOutlineGradient(
-				QRectF(userpicGeometry()),
-				colorProfile->story[0],
-				colorProfile->story[1])
-			: _localCollectible
-			? Ui::UnreadStoryOutlineGradient(
-				QRectF(userpicGeometry()),
-				Ui::BlendColors(_localCollectible->edgeColor, Qt::white, .5),
-				Ui::BlendColors(_localCollectible->edgeColor, Qt::white, .5))
-			: Ui::UnreadStoryOutlineGradient(QRectF(userpicGeometry()));
-		_storySegments.push_back({
-			.brush = QBrush(previewBrush),
-			.width = widthBig,
-		});
-		return;
-	}
 
 	auto &stories = _peer->owner().stories();
 	const auto source = stories.source(_peer->id);
