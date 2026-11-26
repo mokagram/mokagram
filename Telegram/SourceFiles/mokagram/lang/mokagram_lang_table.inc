@@ -652,6 +652,7 @@
 	{ "Не получилось посчитать", "Could not calculate" },
 	{ "Не получилось скачать фото", "Could not download the photo" },
 	{ "Не получилось сохранить", "Could not save" },
+	{ "Не удалось загрузить эмодзи", "Could not load emoji" },
 	{ "Не получилось узнать время.", "Could not find out the time." },
 	{ "Не получилось: ", "Failed: " },
 	{ "Не совпадает.", "Does not match." },

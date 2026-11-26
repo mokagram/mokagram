@@ -557,6 +557,10 @@ Ui::CustomEmoji::Preview CustomEmojiManager::prepareNonExactPreview(
 		DocumentId documentId,
 		SizeTag tag,
 		int sizeOverride) const {
+	// Mokagram: exports must not pick up an enlarged frame from the chat cache.
+	if (Ui::CustomEmoji::ShotScale() > 1) {
+		return {};
+	}
 	for (auto i = _instances.size(); i != 0;) {
 		if (SizeIndex(tag) == --i) {
 			continue;

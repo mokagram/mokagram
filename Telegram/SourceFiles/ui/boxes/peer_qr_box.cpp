@@ -7,11 +7,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/boxes/peer_qr_box.h"
 
+#include "base/call_delayed.h"
 #include "base/timer.h"
 #include "base/unixtime.h"
 #include "base/weak_qptr.h"
 #include "boxes/share_box.h"
 #include "core/application.h"
+#include "data/data_emoji_statuses.h"
 #include "data/data_file_origin.h"
 #include "data/data_peer.h"
 #include "data/data_photo_media.h"
@@ -78,6 +80,7 @@ constexpr auto kToastDuration = crl::time(2800);
 constexpr auto kShareCutoff = crl::time(3000);
 constexpr auto kMaxEmojiPicks = 6;
 constexpr auto kProfileImageRatio = 4;
+constexpr auto kProfileEmojiRatio = 8;
 
 enum class FreeMode {
 	Fee,
@@ -177,18 +180,23 @@ struct BoxState {
 	bool rendering = false;
 	bool profileExport = false;
 	QImage profileCard;
+	Fn<bool()> profileAssetsReady;
+	Fn<void()> pendingProfileRender;
+	uint32 profileRenderRequest = 0;
 };
 
 struct ProfileTitleMarks {
 	std::unique_ptr<Text::CustomEmoji> support;
 	std::unique_ptr<Text::CustomEmoji> status;
+	std::unique_ptr<Text::CustomEmoji> statusBody;
 	QImage supportFrame;
 	QImage statusFrame;
+	QImage statusBodyFrame;
 };
 
 struct ProfileEmojiResolution {
 	ProfileEmojiResolution()
-	: previous(std::exchange(CustomEmoji::ShotScale(), kProfileImageRatio)) {
+	: previous(std::exchange(CustomEmoji::ShotScale(), kProfileEmojiRatio)) {
 	}
 	~ProfileEmojiResolution() {
 		CustomEmoji::ShotScale() = previous;
@@ -220,6 +228,7 @@ void PaintProfileMark(
 	frame.setDevicePixelRatio(kProfileImageRatio);
 	frame.fill(Qt::transparent);
 	auto p = QPainter(&frame);
+	auto hq = PainterHighQualityEnabler(p);
 	PaintProfileMark(p, emoji, QPoint(padding, padding), Qt::white);
 	p.end();
 	return frame;
@@ -227,24 +236,39 @@ void PaintProfileMark(
 
 [[nodiscard]] QRectF ProfileMarkBounds(
 		const QImage &frame,
-		int side,
-		bool coreOnly = false) {
+		int side) {
 	if (frame.isNull() || side <= 0) {
 		return QRectF(0, 0, side, side);
 	}
 	const auto ratio = kProfileImageRatio;
 	const auto padding = 2 * side;
-	const auto sample = coreOnly
-		? QRect(padding * ratio, (padding + side / 3) * ratio,
-			side * ratio, (side / 3) * ratio)
-		: frame.rect();
-	const auto bounds = OpaqueBounds(coreOnly ? frame.copy(sample) : frame);
+	const auto bounds = OpaqueBounds(frame);
 	return bounds.isEmpty()
 		? QRectF(0, 0, side, side)
 		: QRectF(
-			QPointF(bounds.topLeft() + sample.topLeft()) / ratio
-				- QPointF(padding, padding),
+			QPointF(bounds.topLeft()) / ratio - QPointF(padding, padding),
 			QSizeF(bounds.size()) / ratio);
+}
+
+[[nodiscard]] int ProfileNameInkWidth(
+		const Text::String &name,
+		int available,
+		int lineHeight) {
+	const auto ratio = kProfileImageRatio;
+	const auto padding = style::ConvertScale(4);
+	auto image = QImage(
+		QSize(available + 2 * padding, lineHeight + 2 * padding) * ratio,
+		QImage::Format_ARGB32_Premultiplied);
+	image.setDevicePixelRatio(ratio);
+	image.fill(Qt::transparent);
+	auto p = Painter(&image);
+	p.setPen(Qt::white);
+	name.drawElided(p, padding, padding, available);
+	p.end();
+	const auto bounds = OpaqueBounds(image);
+	return bounds.isEmpty()
+		? 0
+		: int(std::ceil((bounds.right() + 1) / double(ratio))) - padding;
 }
 
 [[nodiscard]] QString ProfileExportText(const char *text) {
@@ -403,12 +427,14 @@ void SaveProfileLook(
 			std::min<float64>(accent.hslSaturationF(), 0.64),
 			0.13);
 		auto shade = QLinearGradient(cover.topLeft(), cover.bottomLeft());
-		veil.setAlpha(0);
-		shade.setColorAt(0.5, veil);
-		veil.setAlpha(188);
-		shade.setColorAt(0.70, veil);
-		veil.setAlpha(240);
-		shade.setColorAt(1., veil);
+		constexpr auto stops = 16;
+		for (auto i = 0; i <= stops; ++i) {
+			const auto y = i / float64(stops);
+			const auto depth = std::clamp((y - 0.10) / 0.82, 0., 1.);
+			const auto opacity = depth * depth * (3. - 2. * depth);
+			veil.setAlpha(int(std::round(240. * opacity)));
+			shade.setColorAt(y, veil);
+		}
 		p.fillRect(cover, shade);
 	} else {
 		p.fillRect(cover, st::windowBgOver);
@@ -428,9 +454,12 @@ void SaveProfileLook(
 	const auto statusWidth = marks.status ? marks.status->width() : 0;
 	const auto supportInk = ProfileMarkBounds(marks.supportFrame, supportWidth);
 	const auto statusInk = ProfileMarkBounds(marks.statusFrame, statusWidth);
-	const auto statusCore = ProfileMarkBounds(marks.statusFrame, statusWidth, true);
+	// Mokagram: collectible sparkles extend beyond the visible status itself.
+	const auto statusCore = ProfileMarkBounds(
+		marks.statusBody ? marks.statusBodyFrame : marks.statusFrame,
+		statusWidth);
 	const auto supportGap = style::ConvertScale(6);
-	const auto statusGap = style::ConvertScale(2);
+	const auto statusGap = style::ConvertScale(3);
 	const auto supportLeft = inset - style::ConvertScale(3);
 	const auto nameX = supportWidth
 		? supportLeft + int(std::ceil(supportInk.width())) + supportGap
@@ -448,11 +477,15 @@ void SaveProfileLook(
 	};
 	paintMark(marks.support.get(),
 		supportLeft - int(std::round(supportInk.left())), supportWidth);
+	if (marks.status) {
+		const auto inkWidth = ProfileNameInkWidth(
+			name, available, kTrackTitle.lineHeight());
+		paintMark(marks.status.get(),
+			nameX + inkWidth + statusGap - int(std::round(statusCore.left())),
+			statusWidth);
+	}
 	p.setPen(titleColor);
 	name.drawElided(p, nameX, middle - title->height / 2, available);
-	paintMark(marks.status.get(),
-		nameX + std::min(name.maxWidth(), available) + statusGap
-			- int(std::round(statusCore.left())), statusWidth);
 	if (!handle.isEmpty()) {
 		p.setFont(subtitle->f);
 		p.setPen(photo ? QColor(255, 255, 255, 215) : st::windowSubTextFg->c);
@@ -953,6 +986,25 @@ void RenderCardImage(
 		not_null<PeerQrButton*> button,
 		Fn<void(QImage, const ImageSnapshot&)> done) {
 	if (state->rendering || RefuseImage(surface, state)) {
+		return;
+	}
+	if (state->profileAssetsReady && !state->profileAssetsReady()) {
+		if (!state->pendingProfileRender) {
+			const auto request = ++state->profileRenderRequest;
+			button->setBusy(true);
+			state->pendingProfileRender = [=, done = std::move(done)]() mutable {
+				button->setBusy(false);
+				RenderCardImage(box, surface, state, button, std::move(done));
+			};
+			base::call_delayed(6000, box, [=] {
+				if (state->profileRenderRequest == request
+					&& base::take(state->pendingProfileRender)) {
+					button->setBusy(false);
+					box->uiShow()->showToast(
+						ProfileExportText("Не удалось загрузить эмодзи"));
+				}
+			});
+		}
 		return;
 	}
 	auto args = surface->prepareImage();
@@ -1921,6 +1973,12 @@ static void FillPeerQrBoxImpl(
 		}
 		const auto photoKey = box->lifetime().make_state<qint64>(-1);
 		const auto marks = box->lifetime().make_state<ProfileTitleMarks>();
+		state->profileAssetsReady = [=] {
+			const auto resolved = [](const auto &emoji) {
+				return !emoji || emoji->ready();
+			};
+			return resolved(marks->support) && resolved(marks->status);
+		};
 		const auto backdrop = box->lifetime().make_state<QColor>();
 		const auto refreshCard = [=](bool force) {
 			const auto loaded = full ? full->image(Data::PhotoSize::Large) : nullptr;
@@ -1970,14 +2028,23 @@ static void FillPeerQrBoxImpl(
 									refreshCard(true);
 								}
 							}
+							if (state->pendingProfileRender && state->profileAssetsReady()) {
+								base::take(state->pendingProfileRender)();
+							}
 						});
 					}),
 					Data::CustomEmojiSizeTag::Large);
+				if (const auto &emoji = marks->*member) {
+					marks->*frame = ProfileMarkFrame(emoji.get());
+				}
 			};
 			create(support.emojiStatusId,
 				&ProfileTitleMarks::support, &ProfileTitleMarks::supportFrame);
 			create(status,
 				&ProfileTitleMarks::status, &ProfileTitleMarks::statusFrame);
+			create(
+				EmojiStatusId{ status.collectible ? status.collectible->documentId : 0 },
+				&ProfileTitleMarks::statusBody, &ProfileTitleMarks::statusBodyFrame);
 			refreshCard(true);
 		}, box->lifetime());
 	}
@@ -2057,7 +2124,18 @@ static void FillPeerQrBoxImpl(
 		) | rpl::on_next([=](PeerQrGiftSource &&source) {
 			surface->setGiftSource(std::move(source));
 		}, box->lifetime());
-		SetupAppearance(box, surface, state, peer, controller, copy, share);
+		if (!profileExport || peer->isSelf()) {
+			SetupAppearance(box, surface, state, peer, controller, copy, share);
+		} else {
+			Info::Profile::QrServedThemeValue(peer) | rpl::on_next([=](
+					Info::Profile::QrServedTheme &&theme) {
+				const auto look = theme.swatch.appearance.empty()
+					? PeerQrDefaultAppearance()
+					: std::move(theme.swatch.appearance);
+				surface->setAppearance(look, anim::type::normal);
+				state->appearance.recolorProfileCard(look.center);
+			}, box->lifetime());
+		}
 		if (!ownBox && !profileExport) {
 			Info::Profile::UsernameValue(
 				peer,
