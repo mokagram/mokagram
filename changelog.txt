@@ -5,6 +5,7 @@ mokaGram (26.11.26)
 - Restyle the Profile / Name switch as a themed pill.
 - Smooth the transition between Profile and Name in the color preview.
 - Show saved tracks on Music Home while recommendations load.
+- Show a complete For You batch without waiting for slow SoundCloud replies.
 
 mokaGram (24.11.26)
 

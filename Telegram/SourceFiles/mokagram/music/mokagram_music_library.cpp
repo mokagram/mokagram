@@ -38,6 +38,7 @@ namespace {
 
 constexpr auto kHistoryLimit = 1000;
 constexpr auto kShownLimit = 500;
+constexpr auto kForYouWaitMs = 2500;
 constexpr auto kSaveDelayMs = 250;
 constexpr qint64 kEarlySkipMs = 30 * 1000;
 constexpr qint64 kFinishedCooldown = 30 * 86400;
@@ -861,6 +862,9 @@ void Gather(
 		std::vector<Track> tracks,
 		double seedWeight,
 		bool exploration) {
+	if (!collector->finish) {
+		return;
+	}
 	for (auto &track : tracks) {
 		auto &c = collector->candidates[track.id];
 		if (c.track.id.isEmpty()) {
@@ -1258,7 +1262,7 @@ void BuildImpl(
 	const auto sessionTags = TopKeys(profile->sessionTag, 1, 0.);
 
 	const auto collector = std::make_shared<Collector>();
-	collector->finish = [=](const Collector &collector) {
+	const auto rank = [=](const Collector &collector) {
 		const auto &lib = Lib();
 		// Жёсткие исключения: уже играет или стоит в очереди, лайкнуто.
 		auto excluded = std::set<QString>();
@@ -1365,10 +1369,6 @@ void BuildImpl(
 			}
 			scored.push_back({ t, score, artistAffinity > 0.3 });
 		}
-		if (scored.empty()) {
-			done({}, QString::fromUtf8(Mokagram::Lang::Tr("Не нашлось подходящих треков. Попробуйте позже.")));
-			return;
-		}
 		// Жадный отбор: штрафы за повтор исполнителя и жанра, плавный переход от
 		// предыдущего трека, знакомых авторов около 20% (остальное новое по вайбу).
 		const auto knownMax = std::max(1, int(std::round(count * 0.2)));
@@ -1443,8 +1443,18 @@ void BuildImpl(
 				}
 			}
 		}
+		return result;
+	};
+	const auto publish = [done = std::move(done)](std::vector<Track> result) {
+		if (result.empty()) {
+			done({}, QString::fromUtf8(Mokagram::Lang::Tr("Не нашлось подходящих треков. Попробуйте позже.")));
+			return;
+		}
 		MarkShown(result);
 		done(std::move(result), QString());
+	};
+	collector->finish = [=](const Collector &collector) {
+		publish(rank(collector));
 	};
 
 	// Запросы кандидатов: related по семенам, поиск по жанрам и тегам.
@@ -1490,6 +1500,27 @@ void BuildImpl(
 	collector->pending = int(jobs.size());
 	for (const auto &job : jobs) {
 		job();
+	}
+	if (!stream && collector->finish) {
+		// A slow source must not hold up an already complete first batch.
+		QTimer::singleShot(kForYouWaitMs, QCoreApplication::instance(), [
+				weak = std::weak_ptr<Collector>(collector),
+				count,
+				rank,
+				publish] {
+			const auto collector = weak.lock();
+			if (!collector || !collector->finish
+				|| int(collector->candidates.size()) < count) {
+				return;
+			}
+			auto tracks = rank(*collector);
+			if (int(tracks.size()) < count) {
+				return;
+			}
+			collector->finish = nullptr;
+			collector->candidates.clear();
+			publish(std::move(tracks));
+		});
 	}
 }
 
