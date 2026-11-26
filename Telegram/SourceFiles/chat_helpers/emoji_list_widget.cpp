@@ -2224,9 +2224,9 @@ void EmojiListWidget::validateEmojiPaintContext(
 		.size = QSize(_customSingleSize, _customSingleSize),
 		.now = crl::now(),
 		.scale = context.progress,
+		// Mokagram: let background patterns animate when the panel does.
 		.paused = On(powerSavingFlag()) || paused(),
 		.scaled = context.expanding,
-		.internal = { .forceFirstFrame = (_mode == Mode::BackgroundEmoji) },
 	};
 	if (!_emojiPaintContext) {
 		_emojiPaintContext = std::make_unique<
