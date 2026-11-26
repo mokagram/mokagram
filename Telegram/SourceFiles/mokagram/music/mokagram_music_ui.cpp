@@ -5866,11 +5866,67 @@ private:
 	return u"%1:%2"_q.arg(time / 60).arg(time % 60, 2, 10, QChar('0'));
 }
 
+[[nodiscard]] QColor ContrastingForeground(const QColor &background) {
+	return Ui::CountContrast(background, Qt::white) >= Ui::CountContrast(background, Qt::black)
+		? QColor(Qt::white)
+		: QColor(Qt::black);
+}
+
+struct PlaybackBarColors {
+	QColor surface;
+	QColor onSurface;
+	QColor onSurfaceVariant;
+	QColor primary;
+	QColor onPrimary;
+	QColor inactiveTrack;
+};
+
+[[nodiscard]] PlaybackBarColors MakePlaybackBarColors() {
+	const auto readable = [](QColor background, QColor ink, QColor alternate) {
+		return (Ui::CountContrast(background, ink) >= 4.5) ? ink : alternate;
+	};
+	const auto opaque = [](QColor color) {
+		color.setAlpha(255);
+		return color;
+	};
+	const auto surface = anim::color(
+		opaque(st::windowBg->c), opaque(st::windowFg->c), .04);
+	const auto onSurface = readable(
+		surface, opaque(st::windowFg->c), ContrastingForeground(surface));
+	auto primary = opaque(st::activeButtonBg->c);
+	if (Ui::CountContrast(surface, primary) < 3.) {
+		primary = opaque(st::windowActiveTextFg->c);
+		if (Ui::CountContrast(surface, primary) < 3.) {
+			primary = onSurface;
+		}
+	}
+	return {
+		.surface = surface,
+		.onSurface = onSurface,
+		.onSurfaceVariant = readable(
+			surface, opaque(st::windowSubTextFg->c), onSurface),
+		.primary = primary,
+		.onPrimary = readable(
+			primary, opaque(st::activeButtonFg->c), ContrastingForeground(primary)),
+		.inactiveTrack = anim::color(surface, onSurface, .25),
+	};
+}
+
+[[nodiscard]] double PlaybackStateLayer(double hover, double press) {
+	return std::max(.08 * hover, .12 * press);
+}
+
+[[nodiscard]] QColor PlaybackPrimaryFill(const PlaybackBarColors &colors, double layer) {
+	return (layer > 0.)
+		? anim::color(colors.primary, colors.onPrimary, layer)
+		: colors.primary;
+}
+
 class SeekBar final : public Ui::RpWidget {
 public:
-	explicit SeekBar(QWidget *parent, Fn<QColor()> background = nullptr)
+	explicit SeekBar(QWidget *parent, const PlaybackBarColors *colors = nullptr)
 	: RpWidget(parent)
-	, _background(std::move(background)) {
+	, _colors(colors) {
 		resize(width(), 28);
 		setCursor(style::cur_pointer);
 		Mokagram::Settings::Changed() | rpl::on_next([=](const QString &key) {
@@ -5883,7 +5939,7 @@ public:
 		) | rpl::on_next([=](QRect area) {
 			auto p = QPainter(this);
 			if (testAttribute(Qt::WA_OpaquePaintEvent)) {
-				p.fillRect(area, _background());
+				p.fillRect(area, _colors->surface);
 			}
 			auto hq = PainterHighQualityEnabler(p);
 			if (_thin) {
@@ -5896,19 +5952,19 @@ public:
 				const auto h = 4. + 2. * grow;
 				const auto line = QRectF(0, height() / 2. - h / 2., width(), h);
 				p.setPen(Qt::NoPen);
-				p.setBrush(QColor(255, 255, 255, 46));
+				p.setBrush(_colors->inactiveTrack);
 				p.drawRoundedRect(line, h / 2., h / 2.);
 				const auto progress = _dragging ? _drag : _progress;
 				auto fill = line;
 				fill.setWidth(line.width() * progress);
 				if (progress > 0.) {
-					p.setBrush(_fill);
+					p.setBrush(_colors->primary);
 					p.drawRoundedRect(fill, h / 2., h / 2.);
 				}
 				if (grow > 0.) {
 					const auto radius = std::min(5. * grow, line.width() / 2.);
 					const auto x = std::clamp(line.width() * progress, radius, line.width() - radius);
-					p.setBrush(Qt::white);
+					p.setBrush(_colors->onSurface);
 					p.drawEllipse(QPointF(x, line.center().y()), radius, radius);
 				}
 				return;
@@ -5957,10 +6013,6 @@ public:
 		}
 	}
 
-	void setFillColor(QColor color) {
-		_fill = color;
-		update();
-	}
 	void setExpressive(bool expressive, bool playing) {
 		if (_expressive == expressive && _wavePlaying == playing) {
 			return;
@@ -6065,7 +6117,7 @@ private:
 		const auto end = width() * _progress;
 		const auto phase = _wavePhase;
 		const auto amplitude = st::motionWaveAmplitude * _waveAmp;
-		p.setPen(QPen(QColor(255, 255, 255, 65), st::motionWaveStroke,
+		p.setPen(QPen(_colors->inactiveTrack, st::motionWaveStroke,
 			Qt::SolidLine, Qt::RoundCap));
 		p.drawLine(QPointF(std::min(end + st::motionWaveGap, double(width())), y),
 			QPointF(width(), y));
@@ -6076,10 +6128,10 @@ private:
 				* std::sin(x * 2. * M_PI / st::motionWaveLength - phase));
 			if (x == 0.) path.moveTo(point); else path.lineTo(point);
 		}
-		p.setPen(QPen(_fill, st::motionWaveStroke, Qt::SolidLine, Qt::RoundCap));
+		p.setPen(QPen(_colors->primary, st::motionWaveStroke, Qt::SolidLine, Qt::RoundCap));
 		p.drawPath(path);
 		p.setPen(Qt::NoPen);
-		p.setBrush(_fill);
+		p.setBrush(_colors->primary);
 		const auto handle = st::motionWaveHandle;
 		p.drawRoundedRect(QRectF(end - handle / 2.,
 			y - st::motionWaveHandleHeight / 2., handle, st::motionWaveHandleHeight),
@@ -6128,7 +6180,7 @@ private:
 		_timePreview->show();
 	}
 
-	Fn<QColor()> _background;
+	const PlaybackBarColors *const _colors;
 	Ui::RpWidget *_timePreview = nullptr;
 	QString _previewTime;
 	qint64 _duration = 0;
@@ -6140,7 +6192,6 @@ private:
 	float64 _waveAmp = 0.;
 	bool _thin = false;
 	bool _over = false;
-	QColor _fill = Qt::white;
 	float64 _progress = 0.;
 	float64 _drag = 0.;
 	bool _dragging = false;
@@ -6154,7 +6205,7 @@ void PaintIslandGlyph(
 		const char *svg,
 		QPointF c,
 		int size,
-		QColor color = QColor(Qt::white)) {
+		QColor color) {
 	using Key = std::tuple<const void*, int, QRgb>;
 	static auto cache = base::flat_map<Key, QImage>();
 	const auto ratio = style::DevicePixelRatio();
@@ -6179,7 +6230,9 @@ void PaintIslandGlyph(
 
 class VolumeSlider final : public Ui::ContinuousSlider {
 public:
-	explicit VolumeSlider(QWidget *parent) : ContinuousSlider(parent) {
+	VolumeSlider(QWidget *parent, const PlaybackBarColors &colors)
+	: ContinuousSlider(parent)
+	, _colors(colors) {
 		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Громкость")));
 	}
@@ -6187,11 +6240,6 @@ public:
 	void setHovered(bool hovered) {
 		_hovered = hovered;
 		refreshHighlight();
-	}
-
-	void setAccent(QColor accent) {
-		_accent = accent;
-		update();
 	}
 
 protected:
@@ -6206,20 +6254,18 @@ protected:
 		const auto value = getCurrentValue();
 		const auto x = from + (to - from) * value;
 		const auto highlight = _highlight.value();
-		p.setPen(QPen(QColor(255, 255, 255, 65), thickness,
+		p.setPen(QPen(_colors.inactiveTrack, thickness,
 			Qt::SolidLine, Qt::RoundCap));
 		p.drawLine(QPointF(from, y), QPointF(to, y));
 		if (value > 0.) {
-			const auto color = anim::color(QColor(Qt::white),
-				_accent.isValid() ? _accent : st::windowActiveTextFg->c,
-				highlight);
+			const auto color = anim::color(_colors.onSurface, _colors.primary, highlight);
 			p.setPen(QPen(color, thickness, Qt::SolidLine, Qt::RoundCap));
 			p.drawLine(QPointF(from, y), QPointF(x, y));
 		}
 		if (highlight > 0.) {
 			p.setOpacity(highlight);
 			p.setPen(Qt::NoPen);
-			p.setBrush(Qt::white);
+			p.setBrush(_colors.onSurface);
 			const auto radius = style::ConvertScale(6);
 			p.drawEllipse(QPointF(x, y), radius, radius);
 		}
@@ -6270,34 +6316,34 @@ private:
 		_highlight.set(_hovered || isChanging() || hasFocus(), [=] { update(); });
 	}
 
-	QColor _accent;
+	const PlaybackBarColors &_colors;
 	HoverFade _highlight;
 	bool _hovered = false;
 };
 
 class VolumeControl final : public Ui::RpWidget {
 public:
-	explicit VolumeControl(QWidget *parent)
+	VolumeControl(QWidget *parent, const PlaybackBarColors &colors)
 	: RpWidget(parent)
 	, _mute(Ui::CreateChild<Ui::AbstractButton>(this))
-	, _slider(Ui::CreateChild<VolumeSlider>(this)) {
+	, _slider(Ui::CreateChild<VolumeSlider>(this, colors)) {
 		resize(width(), style::ConvertScale(28));
 		_mute->setPointerCursor(true);
 		_mute->setFocusPolicy(Qt::TabFocus);
-		_mute->paintRequest() | rpl::on_next([=](QRect) {
+		_mute->paintRequest() | rpl::on_next([=, &colors](QRect) {
 			auto p = QPainter(_mute);
 			auto hq = PainterHighQualityEnabler(p);
 			const auto bounds = QRectF(_mute->rect());
 			if (_mute->hasFocus()) {
 				const auto inset = style::ConvertScale(2);
 				p.setBrush(Qt::NoBrush);
-				p.setPen(QPen(st::windowActiveTextFg->c, inset));
+				p.setPen(QPen(colors.onSurface, inset));
 				p.drawEllipse(bounds.adjusted(inset, inset, -inset, -inset));
 			}
-			p.setOpacity(_mute->isOver() || _mute->hasFocus() ? 1. : 0.6);
 			using namespace Mokagram::Music::IslandGlyphs;
 			PaintIslandGlyph(p, _muted ? kGlyphSpeaker : kGlyphOutput,
-				bounds.center(), style::ConvertScale(20));
+				bounds.center(), style::ConvertScale(20),
+				_mute->isOver() || _mute->hasFocus() ? colors.onSurface : colors.onSurfaceVariant);
 		}, _mute->lifetime());
 
 		const auto setVolume = [](float64 value) {
@@ -6345,10 +6391,6 @@ public:
 		settings.songVolumeChanges() | rpl::on_next(refresh, lifetime());
 	}
 
-	void setAccent(QColor accent) {
-		_slider->setAccent(accent);
-	}
-
 protected:
 	void enterEventHook(QEnterEvent *e) override {
 		RpWidget::enterEventHook(e);
@@ -6375,12 +6417,6 @@ private:
 };
 
 enum class Glyph { Previous, Next, Play, Add, Shuffle, Repeat, More, Block, Collapse, Queue, Filter };
-
-[[nodiscard]] QColor ContrastingForeground(const QColor &background) {
-	return Ui::CountContrast(background, Qt::white) >= Ui::CountContrast(background, Qt::black)
-		? QColor(Qt::white)
-		: QColor(Qt::black);
-}
 
 [[nodiscard]] QColor PaintPlayerHeaderButton(
 		QPainter &p,
@@ -6414,11 +6450,6 @@ public:
 		}, lifetime());
 	}
 
-	void setAccent(QColor accent) {
-		_accent = accent.isValid() ? accent : QColor(Qt::white);
-		update();
-	}
-
 	void setPlaying(bool playing) {
 		if (_playing != playing) {
 			_playing = playing;
@@ -6428,7 +6459,7 @@ public:
 	void setLiked(bool liked) {
 		if (_liked != liked) {
 			_liked = liked;
-			if (_overlay && liked) {
+			if ((_overlay || _playbackColors) && liked) {
 				_pop.start([=] { update(); }, 0., 1., 360, anim::easeOutCubic);
 			}
 			update();
@@ -6441,9 +6472,8 @@ public:
 			_likeAnimation.start([=] { update(); }, 0., 1., kLikeDuration);
 		}
 	}
-	// Кнопки капсулы плеера: значки островка, без кругов-подложек.
-	void setIsland(bool island) {
-		_island = island;
+	void setPlaybackColors(const PlaybackBarColors &colors) {
+		_playbackColors = &colors;
 		update();
 	}
 	void setQueueOpen(bool open) {
@@ -6459,11 +6489,11 @@ public:
 protected:
 	void onStateChanged(State was, StateChangeSource source) override {
 		AbstractButton::onStateChanged(was, source);
-		if ((_overlay || _island) && ((was & StateFlag::Over) != (state() & StateFlag::Over))) {
+		if ((_overlay || _playbackColors) && ((was & StateFlag::Over) != (state() & StateFlag::Over))) {
 			const auto over = isOver();
 			_hover.start([=] { update(); }, over ? 0. : 1., over ? 1. : 0., 180, anim::easeOutCubic);
 		}
-		if ((_overlay || _island) && ((was & StateFlag::Down) != (state() & StateFlag::Down))) {
+		if ((_overlay || _playbackColors) && ((was & StateFlag::Down) != (state() & StateFlag::Down))) {
 			const auto down = isDown();
 			_press.start([=] { update(); }, down ? 0. : 1., down ? 1. : 0., 120, anim::easeOutCubic);
 		}
@@ -6562,7 +6592,7 @@ private:
 				: st::mediaPlayerRepeatDisabledIcon;
 			// Включённый режим: яркий значок и точка под ним, выключенный приглушён.
 			if (active) {
-				p.setBrush(_accent);
+				p.setBrush(Qt::white);
 				p.drawEllipse(QPointF(c.x(), c.y() + 17. * u), 2. * u, 2. * u);
 			}
 			const auto scale = 28. / std::max(icon.width(), icon.height());
@@ -6574,7 +6604,7 @@ private:
 				p,
 				QPoint(),
 				icon.width(),
-				active ? _accent : QColor(255, 255, 255, 150));
+				active ? QColor(Qt::white) : QColor(255, 255, 255, 150));
 			return;
 		}
 		p.setBrush(Qt::white);
@@ -6603,7 +6633,7 @@ private:
 		p.drawRoundedRect(QRectF(c.x() + dir * 9 * u - 2 * u, c.y() - 11 * u, 4 * u, 22 * u), 1.5 * u, 1.5 * u);
 	}
 
-	void paintIsland(QPainter &p) {
+	void paintPlaybackButton(QPainter &p) {
 		using namespace Mokagram::Music::IslandGlyphs;
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
@@ -6611,37 +6641,30 @@ private:
 		const auto over = _hover.value(isOver() ? 1. : 0.);
 		const auto down = _press.value(isDown() ? 1. : 0.);
 		auto scale = 1. - 0.12 * down;
-		auto color = QColor(Qt::white);
+		const auto &colors = *_playbackColors;
+		const auto layer = PlaybackStateLayer(over, down);
+		auto color = colors.onSurface;
 		auto svg = (const char*)nullptr;
 		auto size = s(22);
-		auto opacity = 0.85 + 0.15 * over;
+		auto selected = false;
 		switch (_glyph) {
 		case Glyph::Previous: svg = kGlyphBack; size = s(34); break;
 		case Glyph::Next: svg = kGlyphForward; size = s(34); break;
 		case Glyph::Play:
 			svg = _playing ? kGlyphPause : kGlyphPlay;
 			size = s(30);
+			color = colors.onPrimary;
+			p.setPen(Qt::NoPen);
+			p.setBrush(PlaybackPrimaryFill(colors, layer));
+			p.drawEllipse(QRectF(rect()).adjusted(s(2), s(2), -s(2), -s(2)));
 			break;
 		case Glyph::Queue:
 			svg = kGlyphQueue;
-			if (hasFocus()) {
-				const auto radius = s(17);
-				p.setPen(QPen(Qt::white, s(1)));
-				p.setBrush(Qt::NoBrush);
-				p.drawEllipse(c, radius, radius);
-			}
-			if (_queueOpen) {
-				const auto radius = s(15);
-				p.setPen(Qt::NoPen);
-				p.setBrush(QColor(255, 255, 255, 46));
-				p.drawEllipse(c, radius, radius);
-			}
-			opacity = _queueOpen ? 1. : (0.6 + 0.25 * over);
+			selected = _queueOpen;
 			break;
 		case Glyph::Add: {
 			svg = _liked ? kGlyphHeartFill : kGlyphHeart;
-			color = _liked ? QColor(0xFF, 0x3B, 0x5C) : QColor(Qt::white);
-			opacity = _liked ? 1. : (0.6 + 0.25 * over);
+			color = _liked ? colors.onSurface : colors.onSurfaceVariant;
 			const auto pop = _pop.value(1.);
 			scale *= 1. + 0.3 * std::sin(pop * M_PI);
 		} break;
@@ -6650,7 +6673,7 @@ private:
 			const auto &settings = Core::App().settings();
 			const auto shuffle = (_glyph == Glyph::Shuffle);
 			const auto mode = settings.playerRepeatMode();
-			const auto active = shuffle
+			selected = shuffle
 				? (settings.playerOrderMode() == Media::OrderMode::Shuffle)
 				: (mode != Media::RepeatMode::None);
 			svg = shuffle
@@ -6658,21 +6681,24 @@ private:
 				: (mode == Media::RepeatMode::One)
 				? kGlyphRepeatOne
 				: kGlyphRepeat;
-			if (active) {
-				// Включённый режим: светлый круг, как в островке.
-				const auto r = s(15);
-				p.setPen(Qt::NoPen);
-				p.setBrush(QColor(255, 255, 255, 46));
-				p.drawEllipse(c, r, r);
-			}
-			opacity = active ? 1. : (0.6 + 0.25 * over);
 		} break;
 		default: break;
 		}
 		if (!svg) {
 			return;
 		}
-		p.setOpacity(opacity);
+		if (_glyph != Glyph::Play && (selected || layer > 0.)) {
+			const auto radius = (std::min(width(), height()) - s(4)) / 2.;
+			p.setPen(Qt::NoPen);
+			p.setBrush(anim::color(colors.surface, colors.onSurface, selected ? .10 + layer : layer));
+			p.drawEllipse(c, radius, radius);
+		}
+		if (_glyph == Glyph::Queue && hasFocus()) {
+			const auto radius = s(17);
+			p.setPen(QPen(colors.onSurface, s(1)));
+			p.setBrush(Qt::NoBrush);
+			p.drawEllipse(c, radius, radius);
+		}
 		p.translate(c);
 		p.scale(scale, scale);
 		PaintIslandGlyph(p, svg, QPointF(), size, color);
@@ -6680,8 +6706,8 @@ private:
 
 	void paint() {
 		auto p = QPainter(this);
-		if (_island) {
-			paintIsland(p);
+		if (_playbackColors) {
+			paintPlaybackButton(p);
 			return;
 		}
 		if (_overlay) {
@@ -6811,8 +6837,7 @@ private:
 
 	Glyph _glyph;
 	Fn<QColor()> _headerBackground;
-	QColor _accent = Qt::white;
-	bool _island = false;
+	const PlaybackBarColors *_playbackColors = nullptr;
 	bool _queueOpen = false;
 	bool _playing = false;
 	bool _liked = false;
@@ -7469,19 +7494,6 @@ private:
 	Ui::Animations::Basic _animation;
 };
 
-// Акцент обложки, поднятый до читаемой светлоты; белый без него.
-[[nodiscard]] QColor LiftedAccent(QColor accent) {
-	constexpr auto kMinLightness = 0.62;
-	if (!accent.isValid()) {
-		return QColor(255, 255, 255);
-	}
-	const auto hsl = accent.toHsl();
-	return QColor::fromHslF(
-		hsl.hslHueF(),
-		hsl.hslSaturationF(),
-		std::max(double(hsl.lightnessF()), kMinLightness));
-}
-
 [[nodiscard]] QRectF CoverSourceRect(QSizeF source, QSizeF target) {
 	const auto scale = std::max(target.width() / source.width(), target.height() / source.height());
 	const auto crop = target / scale;
@@ -7585,13 +7597,13 @@ public:
 	, _queuePanel(Ui::CreateChild<Ui::RpWidget>(this))
 	, _queueScroll(Ui::CreateChild<Ui::ScrollArea>(_queuePanel, st::defaultScrollArea))
 	, _playbackBar(Ui::CreateChild<Ui::RpWidget>(this))
-	, _seek(Ui::CreateChild<SeekBar>(_playbackBar, [=] { return playbackBarColor(); }))
+	, _seek(Ui::CreateChild<SeekBar>(_playbackBar, &_playbackColors))
 	, _heart(Ui::CreateChild<RoundGlyph>(_playbackBar, Glyph::Add, 44))
 	, _collapse(Ui::CreateChild<RoundGlyph>(this, Glyph::Collapse, 44))
 	, _filter(Ui::CreateChild<RoundGlyph>(
 			this, Glyph::Filter, 44, [=] { return headerControlBackground(); }))
 	, _queueToggle(Ui::CreateChild<RoundGlyph>(_playbackBar, Glyph::Queue, 44))
-	, _volume(Ui::CreateChild<VolumeControl>(_playbackBar))
+	, _volume(Ui::CreateChild<VolumeControl>(_playbackBar, _playbackColors))
 	, _tabTransition(Ui::CreateChild<Ui::RpWidget>(this))
 	, _coverOverlay(Ui::CreateChild<Ui::RpWidget>(this))
 	, _tab(openHome ? Tab::Home : Tab::Now)
@@ -7815,6 +7827,11 @@ public:
 				paintPlaybackBarDetails(p, layout);
 			}
 		});
+		style::PaletteChanged() | rpl::on_next([=] {
+			_playbackColors = MakePlaybackBarColors();
+			repaintPlaybackBar();
+			_seek->update();
+		}, lifetime());
 		_coverOverlay->setAttribute(Qt::WA_TransparentForMouseEvents);
 		_coverOverlay->hide();
 		_coverOverlay->paintOn([=](QPainter &p) {
@@ -7979,11 +7996,11 @@ public:
 		) | rpl::on_next([=] {
 			refreshQueueViews();
 		}, lifetime());
-		for (const auto button : { _heart, _collapse, _filter, _queueToggle, _shuffle, _previous, _play, _next, _repeat }) {
+		for (const auto button : { _collapse, _filter }) {
 			button->setOverlay(true);
 		}
 		for (const auto button : { _heart, _queueToggle, _shuffle, _previous, _play, _next, _repeat }) {
-			button->setIsland(true);
+			button->setPlaybackColors(_playbackColors);
 		}
 		_heart->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Нравится")));
 		_collapse->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Свернуть")));
@@ -11095,14 +11112,7 @@ protected:
 		p.setPen(Qt::NoPen);
 		p.fillPath(
 			Ui::SquirclePath(QRectF(layout.bar), style::ConvertScale(kBarRadius)),
-			playbackBarColor());
-	}
-
-	[[nodiscard]] QColor playbackBarColor() const {
-		return anim::color(
-			anim::color(_barFrom, _barTo, _barAnim.unitValue(1.)),
-			QColor(0x2C, 0x34, 0x40),
-			_plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.));
+			_playbackColors.surface);
 	}
 
 	void paintPlaybackBarDetails(QPainter &p, const Layout &layout) const {
@@ -11115,7 +11125,7 @@ protected:
 			const auto draw = [&](const QPixmap &pixmap, double opacity) {
 				p.setOpacity(opacity);
 				if (pixmap.isNull()) {
-					p.fillRect(layout.barCover, QColor(0x32, 0x32, 0x32));
+					p.fillRect(layout.barCover, st::windowBgOver);
 				} else {
 					p.drawPixmap(QRectF(layout.barCover), pixmap,
 						CoverSourceRect(pixmap.size(), layout.barCover.size()));
@@ -11131,15 +11141,16 @@ protected:
 			const auto lines = metadataLines(info, true);
 			auto font = kCompactTitle.font()->underline(_hover == InfoHover::BarTitle);
 			p.setFont(font);
-			p.setPen(Qt::white);
+			p.setPen(_playbackColors.onSurface);
 			p.drawText(
 				lines.title,
 				Qt::AlignLeft | Qt::AlignVCenter,
 				font->elided(_title, lines.title.width()));
 			font = kCompactArtist.font()->underline(_hover == InfoHover::BarArtist);
 			p.setFont(font);
-			p.setPen(QColor(255, 255, 255,
-				_hover == InfoHover::BarArtist ? 255 : 170));
+			p.setPen(_hover == InfoHover::BarArtist
+				? _playbackColors.onSurface
+				: _playbackColors.onSurfaceVariant);
 			p.drawText(
 				lines.artist,
 				Qt::AlignLeft | Qt::AlignVCenter,
@@ -11148,7 +11159,7 @@ protected:
 
 		// Время по сторонам полосы перемотки.
 		p.setFont(kTimeLabel.font());
-		p.setPen(QColor(255, 255, 255, 140));
+		p.setPen(_playbackColors.onSurfaceVariant);
 		p.drawText(layout.timeNow, Qt::AlignRight | Qt::AlignVCenter, _timeNow);
 		p.drawText(layout.timeTotal, Qt::AlignLeft | Qt::AlignVCenter, _timeTotal);
 	}
@@ -11205,11 +11216,6 @@ private:
 		_canvasAccentTo = accent;
 		_canvasFade.stop();
 		_canvasFade.start(0., 1., kAmbientEffects);
-		_barFrom = anim::color(_barFrom, _barTo, _barAnim.unitValue(1.));
-		_barTo = accent.isValid() ? accent.darker(180) : QColor(0x28, 0x28, 0x28);
-		_barAnim.stop();
-		_barAnim.start(0., 1., kAmbientEffects);
-		repaintPlaybackBar();
 	}
 
 	void repaintPlaybackBar() {
@@ -11299,11 +11305,7 @@ private:
 		if (!_canvasBackground.isNull()) {
 			const auto accent = anim::color(
 				_canvasAccentFrom, _canvasAccentTo, _canvasFade.unitValue(1.));
-			if (_accent != accent) {
-				_accent = accent;
-				_shuffle->setAccent(_accent);
-				_repeat->setAccent(_accent);
-			}
+			_accent = accent;
 		}
 		// Keep the blurred backdrop small, but retain colour precision while
 		// compositing the gradients so dark transitions do not become steps.
@@ -11453,21 +11455,9 @@ private:
 					: cover);
 			if (_canvasBackground.isNull()) _accent = CurrentCoverAccent();
 			_nav[0]->setActiveColor(Qt::white);
-			// Полоса управления плавно перекрашивается под обложку трека.
-			{
-				const auto now = anim::color(_barFrom, _barTo, _barAnim.unitValue(1.));
-				_barFrom = now;
-				_barTo = _accent.isValid()
-					? _accent.darker(180)
-					: QColor(0x28, 0x28, 0x28);
-				_barAnim.stop();
-				_barAnim.start(0., 1., kEffects);
+			if (_tab == Tab::Home) {
+				_playbackBar->update();
 			}
-			// Перемотка и громкость в оттенке обложки, как у островка.
-			_seek->setFillColor(LiftedAccent(_accent));
-			_volume->setAccent(_accent.isValid() ? LiftedAccent(_accent) : QColor());
-			_shuffle->setAccent(_accent);
-			_repeat->setAccent(_accent);
 			repaintBackdrop();
 		}
 		const auto playing = state.state == Media::Player::State::Playing
@@ -11608,6 +11598,7 @@ private:
 	bool _queuePanelOpen = false;
 	QRect _queuePanelTarget;
 	PlayerSpring _queueSlide{ [this] { layoutQueuePanel(); } };
+	PlaybackBarColors _playbackColors = MakePlaybackBarColors();
 	const not_null<Ui::RpWidget*> _playbackBar;
 	bool _hasPlaybackTrack = false;
 	PlayerSpring _barSlide{ [this] { layoutPlaybackBar(computeLayout()); } };
@@ -11818,9 +11809,6 @@ private:
 		_playbackBar->update();
 		_queuePanel->update();
 	} };
-	PlayerSpring _barAnim{ [this] { repaintPlaybackBar(); } };
-	QColor _barFrom = QColor(0x28, 0x28, 0x28);
-	QColor _barTo = QColor(0x28, 0x28, 0x28);
 	PlayerSpring _infoFade{ [this] {
 		update();
 		_playbackBar->update();

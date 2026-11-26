@@ -16,6 +16,7 @@ mokaGram (26.11.26)
 - Reduce CPU use while Music Home is loading by repainting only the progress bar.
 - Prevent UI freezes when saving the user data-center cache.
 - Reduce fullscreen lyrics rendering cost on Retina displays by reusing text rasters.
+- Give fullscreen Play/Pause a filled button and keep the playback bar readable across artwork changes.
 
 mokaGram (24.11.26)
 
