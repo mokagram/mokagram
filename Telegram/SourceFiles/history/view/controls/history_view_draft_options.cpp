@@ -267,6 +267,11 @@ PreviewWrap::PreviewWrap(
 		const auto fill = geometry.intersected(clip);
 		if (!fill.isEmpty()) {
 			auto p = QPainter(_box);
+			// Mokagram: the forward preview shares the dialog background.
+			if (_section == Section::Forward) {
+				p.fillRect(fill, st::boxBg);
+				return;
+			}
 			p.setClipRect(fill);
 			Window::SectionWidget::PaintBackground(
 				p,
