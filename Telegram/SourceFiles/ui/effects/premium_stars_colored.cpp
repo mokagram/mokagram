@@ -171,6 +171,7 @@ void CollectibleEmoji::prepareFrame() {
 	p.translate(padding, padding);
 	auto random = std::optional<base::BufferedRandom<uint32>>();
 	const auto now = crl::now();
+	const auto center = QPointF(_size / 2., _size / 2.);
 	for (auto &star : _stars) {
 		// crl::now() is not strictly monotonic everywhere: on Windows it is
 		// built on QueryPerformanceCounter, which steps backwards on some
@@ -188,14 +189,17 @@ void CollectibleEmoji::prepareFrame() {
 
 		const auto time = (now - star.birthTime)
 			/ float64(star.deathTime - star.birthTime);
-		const auto position = star.start + star.delta * time;
+		const auto moving = star.start + star.delta * time;
+		const auto position = (shot > 1)
+			? center + (moving - center) * 0.62
+			: moving;
 		const auto scale = ((now - star.birthTime) < kFading)
 			? ((now - star.birthTime) / float64(kFading))
 			: ((star.deathTime - now) < kFading)
 			? ((star.deathTime - now) / float64(kFading))
 			: 1.;
 		if (scale > 0.) {
-			const auto size = star.size * scale;
+			const auto size = star.size * scale * ((shot > 1) ? 0.74 : 1.);
 			const auto rect = QRectF(
 				position - QPointF(size, size),
 				QSizeF(size, size) * 2);
