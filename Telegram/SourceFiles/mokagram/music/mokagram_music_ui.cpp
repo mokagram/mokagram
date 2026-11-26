@@ -2190,6 +2190,64 @@ private:
 	}
 };
 
+constexpr auto kHomeCardInset = 10;
+constexpr auto kHomeCardGap = 8;
+constexpr auto kHomeCardDetailsHeight = 56;
+
+[[nodiscard]] int HomeShelfCardWidth(int width) {
+	return std::clamp(
+		width - 2 * style::ConvertScale(BoxParts::kOuterSide),
+		1,
+		style::ConvertScale(200));
+}
+
+[[nodiscard]] QRect HomeCardArtRect(int width) {
+	const auto inset = style::ConvertScale(kHomeCardInset);
+	const auto side = std::max(width - 2 * inset, 0);
+	return QRect(inset, inset, side, side);
+}
+
+void PaintHomeSurface(
+		QPainter &p,
+		QRect rect,
+		double hover,
+		bool pressed,
+		bool focused,
+		bool selected = false) {
+	const auto radius = std::min(
+		style::ConvertScale(BoxParts::kCardRadius),
+		std::min(rect.width(), rect.height()) / 2);
+	const auto base = selected
+		? anim::color(st::windowBg->c, st::windowBgActive->c, .16)
+		: st::windowBg->c;
+	p.setPen(Qt::NoPen);
+	p.setBrush(anim::color(base, st::windowFg->c, pressed ? .12 : .08 * hover));
+	p.drawRoundedRect(rect, radius, radius);
+	if (focused) {
+		const auto inset = style::ConvertScale(1);
+		p.setPen(QPen(st::windowActiveTextFg->c, style::ConvertScale(2)));
+		p.setBrush(Qt::NoBrush);
+		const auto innerRadius = std::max(radius - inset, 0);
+		p.drawRoundedRect(rect.adjusted(inset, inset, -inset, -inset),
+			innerRadius, innerRadius);
+		p.setPen(Qt::NoPen);
+	}
+}
+
+void PaintHomeCover(QPainter &p, const QRect &rect, const QImage &art) {
+	const auto radius = style::ConvertScale(BoxParts::kCardRadius - kHomeCardInset);
+	auto clip = QPainterPath();
+	clip.addRoundedRect(rect, radius, radius);
+	p.save();
+	p.setClipPath(clip);
+	if (art.isNull()) {
+		p.fillRect(rect, st::windowBgOver->c);
+	} else {
+		p.drawImage(rect, art);
+	}
+	p.restore();
+}
+
 [[nodiscard]] QRect HomeActionRect(const QRect &art) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
 	const auto size = std::min(s(38), std::max(art.width() - s(16), 0));
@@ -2217,12 +2275,12 @@ struct HomeTrackPlaybackState {
 
 void PaintHomeCardAction(
 		QPainter &p,
-		const QRect &art,
+		const QRect &button,
 		bool album,
 		double shown = 1.,
-		bool playing = false) {
+		bool playing = false,
+		bool current = false) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
-	const auto button = HomeActionRect(art);
 	if (button.width() < s(24)) {
 		return;
 	}
@@ -2232,12 +2290,11 @@ void PaintHomeCardAction(
 	}
 	p.save();
 	p.setOpacity(p.opacity() * shown);
-	p.translate(0., s(6) * (1. - shown));
 	p.setPen(Qt::NoPen);
-	p.setBrush(QColor(0, 0, 0, 120));
+	p.setBrush(current ? st::windowBgActive : st::windowBg);
 	p.drawEllipse(button);
 	const auto center = button.center();
-	const auto glyph = QColor(255, 255, 255, 235);
+	const auto glyph = current ? st::windowFgActive->c : st::windowFg->c;
 	if (album) {
 		p.setPen(QPen(glyph, s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 		p.setBrush(Qt::NoBrush);
@@ -2406,6 +2463,7 @@ public:
 	void onStateChanged(State, StateChangeSource) override {
 		if (_mode == RowMode::Home) {
 			_hoverFade.set(isOver() || isDown(), [=] { update(); });
+			update();
 		}
 	}
 
@@ -2504,10 +2562,7 @@ public:
 				return;
 			}
 			if (_mode == RowMode::Home && open) {
-				const auto s = [](int v) { return style::ConvertScale(v); };
-				const auto inset = s(12);
-				const auto side = std::max(width() - 2 * inset, 0);
-				if (!HomeActionRect(QRect(inset, inset, side, side)).contains(
+				if (!HomeActionRect(HomeCardArtRect(width())).contains(
 						mapFromGlobal(QCursor::pos()))) {
 					open(_track);
 					return;
@@ -2729,7 +2784,9 @@ private:
 
 	[[nodiscard]] QRect heartRect() const {
 		if (_mode == RowMode::Home) {
-			return QRect(width() - 36, height() - 36, 28, 28);
+			const auto inset = style::ConvertScale(8);
+			const auto side = style::ConvertScale(28);
+			return QRect(width() - inset - side, height() - inset - side, side, side);
 		}
 		const auto durationWidth = st::normalFont->width(FormatDuration(_track.durationMs));
 		const auto side = listMetric(28);
@@ -2942,20 +2999,13 @@ private:
 			bool selected,
 			HomeTrackPlaybackState playback) {
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto inset = s(12);
-		const auto artSize = std::max(width() - 2 * inset, 0);
-		const auto art = QRect(inset, inset, artSize, artSize);
-		p.setPen(Qt::NoPen);
-		p.setBrush(anim::color(
-			QColor(0x24, 0x24, 0x24),
-			QColor(0x30, 0x30, 0x30),
-			(selected || playback.current) ? 1. : _hoverFade.value()));
-		p.drawRoundedRect(rect(), s(8), s(8));
-		if (hasFocus()) {
-			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
-			p.setBrush(Qt::NoBrush);
-			p.drawRoundedRect(rect().adjusted(s(1), s(1), -s(1), -s(1)), s(8), s(8));
-			p.setPen(Qt::NoPen);
+		const auto art = HomeCardArtRect(width());
+		const auto current = selected || playback.current;
+		const auto disabled = isDisabled();
+		PaintHomeSurface(p, rect(), disabled ? 0. : _hoverFade.value(),
+			!disabled && isDown(), !disabled && hasFocus(), current);
+		if (disabled) {
+			p.setOpacity(.38);
 		}
 		if (_media) {
 			if (const auto image = _media->thumbnail()) {
@@ -2964,36 +3014,25 @@ private:
 				_art = image->original();
 			}
 		}
-		auto path = QPainterPath();
-		path.addRoundedRect(art, s(6), s(6));
-		p.save();
-		p.setClipPath(path);
-		if (_art.isNull()) {
-			p.fillRect(art, st::windowBgOver->c);
-		} else {
-			p.drawImage(art, _art);
+		PaintHomeCover(p, art, _art);
+		if (!disabled) {
+			PaintHomeCardAction(
+				p,
+				HomeActionRect(art),
+				false,
+				(hasFocus() || playback.current) ? 1. : _hoverFade.value(),
+				_homePlaybackControls && playback.playing,
+				current);
 		}
-		p.restore();
-		const auto actionShown = (hasFocus() || playback.current)
-			? 1.
-			: _hoverFade.value();
-		PaintHomeCardAction(
-			p,
-			art,
-			false,
-			actionShown,
-			_homePlaybackControls && playback.playing);
-		const auto textWidth = std::max(width() - 2 * inset - s(28), 0);
+		const auto textWidth = std::max(art.width() - (_likeButton ? s(30) : 0), 0);
 		p.setFont(st::semiboldFont);
-		p.setPen((selected || playback.current)
-			? st::windowActiveTextFg
-			: st::windowFg);
-		p.drawText(QRect(inset, art.bottom() + s(8), width() - 2 * inset, s(22)),
+		p.setPen(st::windowFg);
+		p.drawText(QRect(art.left(), art.bottom() + s(8), art.width(), s(22)),
 			Qt::AlignVCenter | Qt::AlignLeft,
-			st::semiboldFont->elided(_track.title, width() - 2 * inset));
+			st::semiboldFont->elided(_track.title, art.width()));
 		p.setFont(st::normalFont);
 		p.setPen(st::windowSubTextFg);
-		p.drawText(QRect(inset, art.bottom() + s(30), textWidth, s(22)),
+		p.drawText(QRect(art.left(), art.bottom() + s(30), textWidth, s(22)),
 			Qt::AlignVCenter | Qt::AlignLeft,
 			st::normalFont->elided(_track.artist, textWidth));
 
@@ -3026,17 +3065,19 @@ private:
 
 class HomeSectionHeader final : public Ui::AbstractButton {
 public:
-	HomeSectionHeader(QWidget *parent, QString title, bool back, Fn<void()> action, bool create = false)
+	HomeSectionHeader(
+		QWidget *parent,
+		QString title,
+		Fn<void()> action,
+		bool create = false)
 	: AbstractButton(parent)
 	, _title(std::move(title))
-	, _back(back)
 	, _create(create) {
 		resize(width(), style::ConvertScale(56));
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
-		setAccessibleName(_create ? _title : _back
-			? QString::fromUtf8(Mokagram::Lang::Tr("Назад")) + u": "_q + _title
-			: QString::fromUtf8(Mokagram::Lang::Tr("Показать все")) + u": "_q + _title);
+		setAccessibleName(_create ? _title
+			: PlaylistText("Назад") + u": "_q + _title);
 		setClickedCallback(std::move(action));
 		paintRequest() | rpl::on_next([=](QRect) {
 			auto p = QPainter(this);
@@ -3050,25 +3091,16 @@ public:
 				p.drawRoundedRect(rect().adjusted(s(2), s(2), -s(2), -s(2)), s(6), s(6));
 			}
 			p.setPen(st::windowFg);
-			const auto title = _create ? u"+  "_q + _title : _back ? u"‹  "_q + _title : _title;
+			const auto title = (_create ? u"+  "_q : u"‹  "_q) + _title;
 			p.save();
-			if (_back) {
-				const auto scale = 1. - 0.03 * _press.value(_pressed ? 1. : 0.);
-				p.translate(s(12), height() / 2.);
-				p.scale(scale, scale);
-				p.translate(-s(12), -height() / 2.);
-			}
+			const auto scale = 1. - 0.03 * _press.value(_pressed ? 1. : 0.);
+			p.translate(s(12), height() / 2.);
+			p.scale(scale, scale);
+			p.translate(-s(12), -height() / 2.);
 			p.drawText(QRect(s(12), 0, std::max(width() - s(140), 0), height()),
 				Qt::AlignVCenter | Qt::AlignLeft,
 				QFontMetrics(font).elidedText(title, Qt::ElideRight, std::max(width() - s(140), 0)));
 			p.restore();
-			if (!_back) {
-				p.setFont(st::normalFont);
-				p.setPen(isOver() ? st::windowFg : st::windowSubTextFg);
-				p.drawText(QRect(width() - s(128), 0, s(116), height()),
-					Qt::AlignVCenter | Qt::AlignRight,
-					QString::fromUtf8(Mokagram::Lang::Tr("Показать все")));
-			}
 		}, lifetime());
 	}
 
@@ -3083,7 +3115,7 @@ protected:
 	}
 	void onStateChanged(State was, StateChangeSource source) override {
 		AbstractButton::onStateChanged(was, source);
-		if (!_back || !((was ^ state()) & StateFlag::Down)) {
+		if (!((was ^ state()) & StateFlag::Down)) {
 			return;
 		}
 		const auto pressed = isDown() && _pointerPress;
@@ -3102,12 +3134,80 @@ protected:
 
 private:
 	QString _title;
-	bool _back = false;
 	bool _create = false;
 	bool _pointerPress = false;
 	bool _pressed = false;
 	Ui::Animations::Simple _press;
 
+};
+
+class HomeTonalControl : public Ui::AbstractButton {
+public:
+	explicit HomeTonalControl(QWidget *parent) : AbstractButton(parent) {
+		setPointerCursor(true);
+		setFocusPolicy(Qt::TabFocus);
+	}
+
+protected:
+	void onStateChanged(State, StateChangeSource) override {
+		update();
+	}
+};
+
+class HomeShelfHeader final : public Ui::RpWidget {
+public:
+	HomeShelfHeader(QWidget *parent, QString title, Fn<void()> open = nullptr)
+	: RpWidget(parent)
+	, _title(std::move(title)) {
+		resize(width(), style::ConvertScale(56));
+		if (open) {
+			const auto action = Ui::CreateChild<HomeTonalControl>(this);
+			_action = action;
+			const auto label = PlaylistText("Показать все");
+			action->setAccessibleName(label + u": "_q + _title);
+			action->setClickedCallback(std::move(open));
+			action->paintRequest() | rpl::on_next([=] {
+				auto p = QPainter(action);
+				auto hq = PainterHighQualityEnabler(p);
+				PaintHomeSurface(p, action->rect(), action->isOver() ? 1. : 0.,
+					action->isDown(), action->hasFocus());
+				p.setFont(st::semiboldFont);
+				p.setPen(st::windowFg);
+				p.drawText(action->rect(), Qt::AlignCenter, label);
+			}, action->lifetime());
+			_actionWidth = st::semiboldFont->width(label) + style::ConvertScale(32);
+		}
+	}
+
+protected:
+	int resizeGetHeight(int newWidth) override {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto side = s(BoxParts::kOuterSide);
+		if (_action) {
+			_action->setGeometry(std::max(newWidth - side - _actionWidth, side),
+				s(8), _actionWidth, s(40));
+		}
+		return s(56);
+	}
+
+	void paintEvent(QPaintEvent *) override {
+		auto p = QPainter(this);
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto side = s(BoxParts::kOuterSide);
+		const auto right = _action ? _action->x() - s(8) : width() - side;
+		const auto available = std::max(right - side, 0);
+		auto font = st::semiboldFont->f;
+		font.setPixelSize(s(20));
+		p.setFont(font);
+		p.setPen(st::windowFg);
+		p.drawText(QRect(side, 0, available, height()), Qt::AlignVCenter | Qt::AlignLeft,
+			QFontMetrics(font).elidedText(_title, Qt::ElideRight, available));
+	}
+
+private:
+	QString _title;
+	Ui::AbstractButton *_action = nullptr;
+	int _actionWidth = 0;
 };
 
 class PlaylistRow final : public Ui::AbstractButton {
@@ -3422,6 +3522,7 @@ class HomeAlbumCard final : public Ui::AbstractButton {
 public:
 	void onStateChanged(State was, StateChangeSource source) override {
 		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+		update();
 	}
 
 	HomeAlbumCard(QWidget *parent, not_null<Window::SessionController*> controller, Album album, Fn<void()> open)
@@ -3444,39 +3545,22 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto inset = s(12);
-		const auto side = std::max(width() - 2 * inset, 0);
-		const auto art = QRect(inset, inset, side, side);
-		p.setPen(Qt::NoPen);
-		p.setBrush(anim::color(QColor(0x24, 0x24, 0x24), QColor(0x30, 0x30, 0x30), _hoverFade.value()));
-		p.drawRoundedRect(rect(), s(8), s(8));
-		if (hasFocus()) {
-			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
-			p.setBrush(Qt::NoBrush);
-			p.drawRoundedRect(rect().adjusted(s(1), s(1), -s(1), -s(1)), s(8), s(8));
-		}
-		auto path = QPainterPath();
-		path.addRoundedRect(art, s(6), s(6));
-		p.save();
-		p.setClipPath(path);
-		if (_art.isNull()) {
-			p.fillRect(art, st::windowBgOver->c);
-		} else {
-			p.drawImage(art, _art);
-		}
-		p.restore();
-		PaintHomeCardAction(p, art, true, hasFocus() ? 1. : _hoverFade.value());
+		const auto art = HomeCardArtRect(width());
+		PaintHomeSurface(p, rect(), _hoverFade.value(), isDown(), hasFocus());
+		PaintHomeCover(p, art, _art);
+		PaintHomeCardAction(
+			p, HomeActionRect(art), true, hasFocus() ? 1. : _hoverFade.value());
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowFg);
-		p.drawText(QRect(inset, art.bottom() + s(8), side, s(22)),
-			Qt::AlignVCenter | Qt::AlignLeft, st::semiboldFont->elided(_album.title, side));
+		p.drawText(QRect(art.left(), art.bottom() + s(8), art.width(), s(22)),
+			Qt::AlignVCenter | Qt::AlignLeft, st::semiboldFont->elided(_album.title, art.width()));
 		p.setFont(st::normalFont);
 		p.setPen(st::windowSubTextFg);
 		const auto details = _album.releaseYear > 0
 			? QString::number(_album.releaseYear) + u" · "_q + releaseKindText()
 			: releaseKindText() + u" · "_q + _album.artist;
-		p.drawText(QRect(inset, art.bottom() + s(30), side, s(22)),
-			Qt::AlignVCenter | Qt::AlignLeft, st::normalFont->elided(details, side));
+		p.drawText(QRect(art.left(), art.bottom() + s(30), art.width(), s(22)),
+			Qt::AlignVCenter | Qt::AlignLeft, st::normalFont->elided(details, art.width()));
 	}
 
 private:
@@ -3502,6 +3586,7 @@ class HomeRecentTile final : public Ui::AbstractButton {
 public:
 	void onStateChanged(State was, StateChangeSource source) override {
 		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+		update();
 	}
 
 	HomeRecentTile(QWidget *parent, not_null<Window::SessionController*> controller, RecentItem item, Fn<void()> activate, Fn<void()> play)
@@ -3515,9 +3600,7 @@ public:
 			? QString::fromUtf8(Mokagram::Lang::Tr("Альбом")) + u": "_q
 			: QString()) + title + u" - "_q + artist);
 		setClickedCallback([=] {
-			const auto s = [](int v) { return style::ConvertScale(v); };
-			const auto button = QRect(width() - s(56), (height() - s(44)) / 2, s(44), s(44));
-			if (button.contains(mapFromGlobal(QCursor::pos()))) {
+			if (actionRect().contains(mapFromGlobal(QCursor::pos()))) {
 				if (!_item.isAlbum
 					&& HomeTrackPlayback(_item.track.id).current) {
 					Media::Player::instance()->playPause(AudioMsgId::Type::Song);
@@ -3583,47 +3666,37 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		p.setPen(Qt::NoPen);
-		p.setBrush(anim::color(QColor(0x29, 0x29, 0x29), QColor(0x35, 0x35, 0x35), _hoverFade.value()));
-		p.drawRoundedRect(rect(), s(6), s(6));
-		const auto art = QRect(0, 0, std::min(height(), width()), height());
-		p.save();
-		auto path = QPainterPath();
-		path.addRoundedRect(rect(), s(6), s(6));
-		p.setClipPath(path);
-		if (_art.isNull()) {
-			p.fillRect(art, st::windowBgOver->c);
-		} else {
-			p.drawImage(art, _art);
-		}
-		p.restore();
-		const auto left = art.right() + s(13);
-		const auto available = std::max(width() - left - s(64), 0);
-		{
-			const auto art = QRect(width() - s(64), (height() - s(60)) / 2, s(60), s(60));
-			const auto actionShown = (hasFocus() || _current)
-				? 1.
-				: _hoverFade.value();
-			PaintHomeCardAction(
-				p,
-				art,
-				false,
-				actionShown,
-				_playing);
-		}
-		const auto title = _item.isAlbum ? _item.album.title : _item.track.title;
+		PaintHomeSurface(p, rect(), _hoverFade.value(), isDown(), hasFocus(), _current);
+		const auto inset = s(kHomeCardInset);
+		const auto side = std::max(std::min(s(44), width() - 2 * inset), 0);
+		const auto art = QRect(inset, (height() - side) / 2, side, side);
+		PaintHomeCover(p, art, _art);
+		const auto action = actionRect();
+		PaintHomeCardAction(p, action, false,
+			(hasFocus() || _current) ? 1. : _hoverFade.value(), _playing, _current);
+		const auto left = art.left() + art.width() + s(12);
+		const auto available = std::max(action.left() - s(8) - left, 0);
+		const auto textHeight = s(22);
+		const auto top = height() / 2 - textHeight;
+		const auto &title = _item.isAlbum ? _item.album.title : _item.track.title;
+		const auto &artist = _item.isAlbum ? _item.album.artist : _item.track.artist;
 		p.setFont(st::semiboldFont);
-		p.setPen(_current ? st::windowActiveTextFg : st::windowFg);
-		p.drawText(QRect(left, 0, available, height()), Qt::AlignLeft | Qt::AlignVCenter,
+		p.setPen(st::windowFg);
+		p.drawText(QRect(left, top, available, textHeight), Qt::AlignLeft | Qt::AlignVCenter,
 			st::semiboldFont->elided(title, available));
-		if (hasFocus()) {
-			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
-			p.setBrush(Qt::NoBrush);
-			p.drawRoundedRect(rect().adjusted(s(1), s(1), -s(1), -s(1)), s(6), s(6));
-		}
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		p.drawText(QRect(left, top + textHeight, available, textHeight),
+			Qt::AlignLeft | Qt::AlignVCenter, st::normalFont->elided(artist, available));
 	}
 
 private:
+	[[nodiscard]] QRect actionRect() const {
+		const auto side = style::ConvertScale(38);
+		return QRect(width() - style::ConvertScale(16) - side,
+			(height() - side) / 2, side, side);
+	}
+
 	RecentItem _item;
 	QImage _art;
 	bool _current = false;
@@ -3638,6 +3711,7 @@ public:
 	void onStateChanged(State was, StateChangeSource source) override {
 		AbstractButton::onStateChanged(was, source);
 		_hoverFade.set(isOver() || isDown(), [=] { update(); });
+		update();
 	}
 
 	HomeArtistCard(QWidget *parent, Track track, Fn<void(Track)> open)
@@ -3658,16 +3732,8 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		p.setPen(Qt::NoPen);
-		p.setBrush(anim::color(QColor(0x24, 0x24, 0x24), QColor(0x30, 0x30, 0x30), _hoverFade.value()));
-		p.drawRoundedRect(rect(), s(8), s(8));
-		if (hasFocus()) {
-			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
-			p.setBrush(Qt::NoBrush);
-			p.drawRoundedRect(rect().adjusted(s(1), s(1), -s(1), -s(1)), s(8), s(8));
-		}
-		const auto inset = s(12);
-		const auto art = QRect(inset, inset, width() - 2 * inset, width() - 2 * inset);
+		PaintHomeSurface(p, rect(), _hoverFade.value(), isDown(), hasFocus());
+		const auto art = HomeCardArtRect(width());
 		p.save();
 		auto clip = QPainterPath();
 		clip.addEllipse(art);
@@ -3684,10 +3750,12 @@ protected:
 		p.restore();
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowFg);
-		p.drawText(QRect(inset, art.bottom() + s(8), width() - 2 * inset, s(22)), Qt::AlignVCenter, st::semiboldFont->elided(_track.artist, width() - 2 * inset));
+		p.drawText(QRect(art.left(), art.bottom() + s(8), art.width(), s(22)),
+			Qt::AlignVCenter, st::semiboldFont->elided(_track.artist, art.width()));
 		p.setFont(st::normalFont);
 		p.setPen(st::windowSubTextFg);
-		p.drawText(QRect(inset, art.bottom() + s(30), width() - 2 * inset, s(22)), Qt::AlignVCenter, QString::fromUtf8(Mokagram::Lang::Tr("Исполнитель")));
+		p.drawText(QRect(art.left(), art.bottom() + s(30), art.width(), s(22)),
+			Qt::AlignVCenter, QString::fromUtf8(Mokagram::Lang::Tr("Исполнитель")));
 	}
 private:
 	Track _track;
@@ -3807,16 +3875,18 @@ public:
 
 protected:
 	int resizeGetHeight(int newWidth) override {
+		const auto count = int(_items.size());
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto gap = s(12);
-		const auto available = std::max(newWidth - 2 * gap, 1);
+		const auto gap = s(kHomeCardGap);
+		const auto side = s(BoxParts::kOuterSide);
+		const auto available = std::max(newWidth - 2 * side, 1);
 		const auto columns = std::clamp((available + gap) / (s(240) + gap), 1, 4);
 		const auto itemWidth = (available - (columns - 1) * gap) / columns;
-		for (auto i = 0; i != int(_items.size()); ++i) {
-			_items[i]->setGeometry(gap + (i % columns) * (itemWidth + gap),
+		for (auto i = 0; i != count; ++i) {
+			_items[i]->setGeometry(side + (i % columns) * (itemWidth + gap),
 				(i / columns) * (s(64) + gap), itemWidth, s(64));
 		}
-		return ((_items.size() + columns - 1) / columns) * (s(64) + gap) + s(16);
+		return ((count + columns - 1) / columns) * (s(64) + gap) + s(8);
 	}
 
 private:
@@ -3824,98 +3894,23 @@ private:
 
 };
 
-// Затухание по краю карусели: карточки уходят в фон, а не обрываются.
-class HomeEdgeFade final : public Ui::RpWidget {
-public:
-	// Край, у которого фон гуще: слева, справа или сверху.
-	enum class Edge { Left, Right, Top, Bottom };
-
-	HomeEdgeFade(QWidget *parent, Edge edge)
-	: RpWidget(parent)
-	, _edge(edge) {
-		setAttribute(Qt::WA_TransparentForMouseEvents);
-	}
-
-	// Цвет фона под краем, если он не просто #1c1c1c (например, тонировка альбома).
-	void setColor(Fn<QColor()> color) {
-		_color = std::move(color);
-	}
-
-protected:
-	void paintEvent(QPaintEvent *e) override {
-		auto p = QPainter(this);
-		auto from = _color ? _color() : QColor(0x1c, 0x1c, 0x1c);
-		auto to = from;
-		to.setAlpha(0);
-		const auto vertical = (_edge == Edge::Top || _edge == Edge::Bottom);
-		const auto reversed = (_edge == Edge::Right || _edge == Edge::Bottom);
-		auto gradient = QLinearGradient(
-			0, 0, vertical ? 0 : width(), vertical ? height() : 0);
-		gradient.setColorAt(0., reversed ? to : from);
-		gradient.setColorAt(1., reversed ? from : to);
-		p.fillRect(rect(), gradient);
-	}
-
-private:
-	const Edge _edge = Edge::Left;
-	Fn<QColor()> _color;
-
-};
-
-class HomeCarouselArrow final : public Ui::AbstractButton {
+class HomeCarouselArrow final : public HomeTonalControl {
 public:
 	HomeCarouselArrow(QWidget *parent, bool forward, Fn<void()> action)
-	: AbstractButton(parent)
+	: HomeTonalControl(parent)
 	, _forward(forward) {
-		setPointerCursor(true);
-		setFocusPolicy(Qt::NoFocus);
-		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr(
-			forward
-				? Mokagram::Lang::Tr("Вперёд")
-				: Mokagram::Lang::Tr("Назад"))));
+		setAccessibleName(PlaylistText(forward ? "Вперёд" : "Назад"));
 		setClickedCallback(std::move(action));
 	}
 
-	// Появляется и пропадает плавно, а не щёлкает.
-	void toggle(bool shown) {
-		if (_shown == shown) {
-			return;
-		}
-		_shown = shown;
-		if (shown) {
-			show();
-		}
-		_fade.start([=] {
-			update();
-			if (!_shown && !_fade.animating()) {
-				hide();
-			}
-		}, shown ? 0. : 1., shown ? 1. : 0., 180, anim::easeOutCubic);
-	}
-
 protected:
-	void onStateChanged(State was, StateChangeSource source) override {
-		const auto now = isOver();
-		if (now != bool(was & StateFlag::Over)) {
-			_hover.start([=] { update(); },
-				now ? 0. : 1., now ? 1. : 0., 140, anim::easeOutCubic);
-		}
-	}
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto visible = _fade.value(_shown ? 1. : 0.);
-		const auto over = _hover.value(isOver() ? 1. : 0.);
-		p.setOpacity(visible);
-		const auto scale = 0.85 + 0.15 * visible;
-		p.translate(rect().center());
-		p.scale(scale, scale);
-		p.translate(-rect().center());
-		p.setPen(Qt::NoPen);
-		p.setBrush(anim::color(QColor(0, 0, 0, 150), QColor(0, 0, 0, 200), over));
-		p.drawEllipse(rect());
-		p.setPen(QPen(QColor(255, 255, 255, 220), s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		PaintHomeSurface(p, rect(), isOver() ? 1. : 0., isDown(), hasFocus());
+		p.setPen(QPen(st::windowFg->c, s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		p.setBrush(Qt::NoBrush);
 		const auto center = rect().center();
 		const auto sign = _forward ? 1 : -1;
 		p.drawPolyline(QPolygon({ center + QPoint(-sign * s(4), -s(8)),
@@ -3923,10 +3918,7 @@ protected:
 	}
 
 private:
-	bool _forward = false;
-	bool _shown = false;
-	Ui::Animations::Simple _fade;
-	Ui::Animations::Simple _hover;
+	const bool _forward;
 
 };
 
@@ -3993,8 +3985,6 @@ public:
 			_next = Ui::CreateChild<HomeCarouselArrow>(this, true, [=] {
 				slide(_scroll->width() * 3 / 4);
 			});
-			_fadeLeft = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Left);
-			_fadeRight = Ui::CreateChild<HomeEdgeFade>(this, HomeEdgeFade::Edge::Right);
 		} else {
 			_content = this;
 		}
@@ -4033,33 +4023,31 @@ public:
 protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto gap = s(12);
-		const auto available = std::max(newWidth - 2 * gap, 1);
+		const auto gap = s(kHomeCardGap);
+		const auto side = s(BoxParts::kOuterSide);
+		const auto available = std::max(newWidth - 2 * side, 1);
 		if (_expanded) {
 			const auto columns = std::clamp((available + gap) / (s(180) + gap), 1, 8);
 			const auto cardWidth = (available - (columns - 1) * gap) / columns;
-			const auto cardHeight = cardWidth + s(56);
+			const auto cardHeight = cardWidth + s(kHomeCardDetailsHeight);
 			for (auto i = 0; i != int(_items.size()); ++i) {
-				_items[i]->setGeometry(gap + (i % columns) * (cardWidth + gap),
+				_items[i]->setGeometry(side + (i % columns) * (cardWidth + gap),
 					(i / columns) * (cardHeight + gap), cardWidth, cardHeight);
 			}
 			return ((_items.size() + columns - 1) / columns) * (cardHeight + gap);
 		}
-		const auto cardWidth = std::min(s(200), available);
-		const auto cardHeight = cardWidth + s(56);
+		const auto cardWidth = HomeShelfCardWidth(newWidth);
+		const auto cardHeight = cardWidth + s(kHomeCardDetailsHeight);
 		_scroll->setGeometry(0, 0, newWidth, cardHeight + gap);
-		_content->resize(gap + int(_items.size()) * (cardWidth + gap), cardHeight + gap);
+		_content->resize(2 * side + int(_items.size()) * (cardWidth + gap) - gap,
+			cardHeight + gap);
 		for (auto i = 0; i != int(_items.size()); ++i) {
-			_items[i]->setGeometry(gap + i * (cardWidth + gap), 0, cardWidth, cardHeight);
+			_items[i]->setGeometry(side + i * (cardWidth + gap), 0, cardWidth, cardHeight);
 		}
-		const auto arrow = s(48);
-		const auto fade = s(72);
-		_fadeLeft->setGeometry(0, 0, fade, cardHeight + gap);
-		_fadeRight->setGeometry(std::max(newWidth - fade, 0), 0, fade, cardHeight + gap);
-		_fadeLeft->raise();
-		_fadeRight->raise();
-		_previous->setGeometry(gap, (cardWidth - arrow) / 2, arrow, arrow);
-		_next->setGeometry(std::max(newWidth - gap - arrow, 0), (cardWidth - arrow) / 2, arrow, arrow);
+		const auto arrow = s(40);
+		_previous->setGeometry(side, (cardWidth - arrow) / 2, arrow, arrow);
+		_next->setGeometry(std::max(newWidth - side - arrow, 0),
+			(cardWidth - arrow) / 2, arrow, arrow);
 		_previous->raise();
 		_next->raise();
 		if (!_restoreQueued) {
@@ -4079,10 +4067,8 @@ private:
 		if (!_scroll || !_previous || !_next) return;
 		const auto canBack = _scroll->scrollLeft() > 0;
 		const auto canForward = _scroll->scrollLeft() < _scroll->scrollLeftMax();
-		_previous->toggle(canBack);
-		_next->toggle(canForward);
-		_fadeLeft->setVisible(canBack);
-		_fadeRight->setVisible(canForward);
+		_previous->setVisible(canBack);
+		_next->setVisible(canForward);
 	}
 
 	bool _expanded = false;
@@ -4094,8 +4080,6 @@ private:
 	Ui::RpWidget *_content = nullptr;
 	HomeCarouselArrow *_previous = nullptr;
 	HomeCarouselArrow *_next = nullptr;
-	HomeEdgeFade *_fadeLeft = nullptr;
-	HomeEdgeFade *_fadeRight = nullptr;
 	Ui::Animations::Simple _slide;
 	Ui::ScrollDirectionLock _wheelDirectionLock;
 	std::vector<Ui::RpWidget*> _items;
@@ -4931,14 +4915,13 @@ private:
 
 // ---- полноценный плеер ----
 
-class HomeRetryView final : public Ui::AbstractButton {
+class HomeRetryView final : public HomeTonalControl {
 public:
 	HomeRetryView(QWidget *parent, QString message, Fn<void()> retry)
-	: AbstractButton(parent)
+	: HomeTonalControl(parent)
 	, _message(std::move(message)) {
-		setPointerCursor(true);
-		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Попробовать снова")));
+		setAccessibleDescription(_message);
 		setClickedCallback(std::move(retry));
 	}
 
@@ -4946,27 +4929,26 @@ protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto text = QFontMetrics(st::normalFont->f).boundingRect(
-			QRect(0, 0, std::max(newWidth - s(24), 1), s(1000)),
+			QRect(0, 0, std::max(newWidth - 2 * s(BoxParts::kOuterSide + 16), 1), s(1000)),
 			Qt::TextWordWrap, _message);
 		return text.height() + s(64);
 	}
 
-	void paintEvent(QPaintEvent *e) override {
+	void paintEvent(QPaintEvent *) override {
 		auto p = QPainter(this);
 		const auto s = [](int v) { return style::ConvertScale(v); };
+		auto hq = PainterHighQualityEnabler(p);
+		const auto side = s(BoxParts::kOuterSide);
+		const auto body = rect().adjusted(side, 0, -side, -s(8));
+		PaintHomeSurface(p, body, isOver() ? 1. : 0., isDown(), hasFocus());
+		const auto text = body.marginsRemoved(QMargins(s(16), s(12), s(16), s(8)));
 		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
-		p.drawText(QRect(s(12), 0, std::max(width() - s(24), 0), height() - s(40)),
+		p.setPen(st::windowFg);
+		p.drawText(text.adjusted(0, 0, 0, -s(36)),
 			Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, _message);
-		p.setPen(st::windowActiveTextFg);
-		p.drawText(QRect(s(12), height() - s(40), std::max(width() - s(24), 0), s(32)),
-			Qt::AlignLeft | Qt::AlignVCenter,
-			QString::fromUtf8(Mokagram::Lang::Tr("Попробовать снова")));
-		if (hasFocus()) {
-			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
-			p.setBrush(Qt::NoBrush);
-			p.drawRoundedRect(rect().adjusted(s(2), s(2), -s(2), -s(2)), s(6), s(6));
-		}
+		p.setFont(st::semiboldFont);
+		p.drawText(QRect(text.left(), text.bottom() - s(32) + 1, text.width(), s(32)),
+			Qt::AlignLeft | Qt::AlignVCenter, PlaylistText("Попробовать снова"));
 	}
 
 private:
@@ -4979,7 +4961,8 @@ public:
 	HomeLoadingView(QWidget *parent, QString text)
 	: RpWidget(parent)
 	, _text(std::move(text)) {
-		if (!PowerSaving::On(PowerSaving::kAnimations)) {
+		setAccessibleName(_text);
+		if (!anim::Disabled() && !PowerSaving::On(PowerSaving::kAnimations)) {
 			_started = crl::now();
 			_animation.init([=](crl::time) {
 				update(progressBarRect());
@@ -4992,36 +4975,36 @@ public:
 protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto gap = s(12);
-		const auto available = std::max(newWidth - 2 * gap, 1);
-		const auto columns = std::clamp((available + gap) / (s(180) + gap), 1, 6);
-		const auto cardWidth = (available - (columns - 1) * gap) / columns;
-		return s(56) + ((6 + columns - 1) / columns) * (cardWidth + s(56) + gap);
+		return s(56) + s(kHomeCardDetailsHeight) + s(kHomeCardGap)
+			+ HomeShelfCardWidth(newWidth);
 	}
 
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto gap = s(12);
-		const auto available = std::max(width() - 2 * gap, 1);
+		const auto side = s(BoxParts::kOuterSide);
+		const auto available = std::max(width() - 2 * side, 1);
 		const auto &dirty = e->region();
-		const auto text = QRect(gap, 0, available, s(24));
+		const auto text = QRect(side, 0, available, s(24));
 		if (dirty.intersects(text)) {
 			p.setFont(st::normalFont);
 			p.setPen(st::windowSubTextFg);
-			p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft, _text);
+			p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft,
+				st::normalFont->elided(_text, available));
 		}
 		const auto bar = progressBarRect();
 		p.setPen(Qt::NoPen);
 		if (dirty.intersects(bar)) {
-			p.setBrush(QColor(0x36, 0x36, 0x36));
+			p.setBrush(st::windowBgOver);
 			p.drawRoundedRect(bar, s(2), s(2));
 			// Сегмент въезжает слева и уезжает вправо за край полоски, поэтому на
 			// стыке цикла нет скачка в начало.
 			const auto segment = bar.width() * 0.3;
-			const auto phase = _started ? std::fmod((crl::now() - _started) / 1400., 1.) : 0.;
-			const auto x = bar.left() - segment + (bar.width() + segment) * phase;
+			const auto x = _started
+				? bar.left() - segment + (bar.width() + segment)
+					* std::fmod((crl::now() - _started) / 1400., 1.)
+				: bar.left();
 			p.save();
 			auto clip = QPainterPath();
 			clip.addRoundedRect(bar, s(2), s(2));
@@ -5034,28 +5017,35 @@ protected:
 		if (e->rect().bottom() < cardsTop) {
 			return;
 		}
-		const auto columns = std::clamp((available + gap) / (s(180) + gap), 1, 6);
-		const auto cardWidth = (available - (columns - 1) * gap) / columns;
-		const auto cardHeight = cardWidth + s(56);
-		for (auto i = 0; i != 6; ++i) {
-			const auto left = gap + (i % columns) * (cardWidth + gap);
-			const auto top = cardsTop + (i / columns) * (cardHeight + gap);
-			p.setBrush(QColor(0x24, 0x24, 0x24));
-			p.drawRoundedRect(QRect(left, top, cardWidth, cardHeight), s(8), s(8));
-			p.setBrush(QColor(0x32, 0x32, 0x32));
-			const auto art = std::max(cardWidth - 2 * gap, 0);
-			p.drawRoundedRect(QRect(left + gap, top + gap, art, art), s(6), s(6));
-			p.drawRoundedRect(QRect(left + gap, top + cardWidth, art * 3 / 4, s(8)), s(4), s(4));
-			p.drawRoundedRect(QRect(left + gap, top + cardWidth + s(20), art / 2, s(8)), s(4), s(4));
+		const auto cardWidth = HomeShelfCardWidth(width());
+		const auto cardHeight = cardWidth + s(kHomeCardDetailsHeight);
+		const auto step = cardWidth + s(kHomeCardGap);
+		const auto art = HomeCardArtRect(cardWidth);
+		const auto coverRadius = s(BoxParts::kCardRadius - kHomeCardInset);
+		const auto radius = std::min(s(BoxParts::kCardRadius), cardWidth / 2);
+		for (auto left = side; left < width(); left += step) {
+			const auto card = QRect(left, cardsTop, cardWidth, cardHeight);
+			if (!dirty.intersects(card)) {
+				continue;
+			}
+			p.setBrush(st::windowBg);
+			p.drawRoundedRect(card, radius, radius);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(art.translated(card.topLeft()), coverRadius, coverRadius);
+			const auto textLeft = left + art.left();
+			p.drawRoundedRect(QRect(textLeft, cardsTop + cardWidth + s(4),
+				art.width() * 3 / 4, s(10)), s(5), s(5));
+			p.drawRoundedRect(QRect(textLeft, cardsTop + cardWidth + s(28),
+				art.width() / 2, s(8)), s(4), s(4));
 		}
 	}
 
 private:
 	QRect progressBarRect() const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto gap = s(12);
-		const auto available = std::max(width() - 2 * gap, 1);
-		return QRect(gap, s(32), std::min(available, s(240)), s(3));
+		const auto side = s(BoxParts::kOuterSide);
+		const auto available = std::max(width() - 2 * side, 1);
+		return QRect(side, s(32), std::min(available, s(240)), s(3));
 	}
 
 	QString _text;
@@ -9944,7 +9934,7 @@ protected:
 					: (_homeSection == 5) ? tr("Daily Drops")
 					: tr("Для вас");
 				_tabList->add(object_ptr<HomeSectionHeader>(
-					_tabList, title, true, crl::guard(this, [=] {
+					_tabList, title, crl::guard(this, [=] {
 						_homeSection = 0;
 						rebuildTab();
 						_tabScroll->scrollToY(_homeFeedScroll);
@@ -9987,8 +9977,8 @@ protected:
 			}
 			const auto section = [&](QString title, int id, const std::vector<Track> &tracks) {
 				if (tracks.empty()) return;
-				_tabList->add(object_ptr<HomeSectionHeader>(
-					_tabList, title, false, crl::guard(this, [=] {
+				_tabList->add(object_ptr<HomeShelfHeader>(
+					_tabList, title, crl::guard(this, [=] {
 						_homeFeedScroll = _tabScroll->scrollTop();
 						_homeSection = id;
 						rebuildTab();
@@ -10006,8 +9996,8 @@ protected:
 					const Album &album,
 					std::shared_ptr<int> offset) {
 				if (album.id.isEmpty()) return;
-				_tabList->add(object_ptr<HomeSectionHeader>(
-					_tabList, std::move(title), false, crl::guard(this, [=] {
+				_tabList->add(object_ptr<HomeShelfHeader>(
+					_tabList, std::move(title), crl::guard(this, [=] {
 						_homeFeedScroll = _tabScroll->scrollTop();
 						_homeSection = id;
 						rebuildTab();
@@ -10029,7 +10019,7 @@ protected:
 			};
 			const auto recent = RecentItems();
 			if (!recent.empty()) {
-				_tabList->add(object_ptr<Ui::FlatLabel>(_tabList, tr("Недавно"), st::boxLabel), QMargins(12, 8, 12, 4));
+				_tabList->add(object_ptr<HomeShelfHeader>(_tabList, tr("Недавно")));
 				_tabList->add(object_ptr<HomeRecentGrid>(_tabList, _controller, recent,
 					crl::guard(this, [=](Album album) { openHomeAlbum(std::move(album)); }),
 					crl::guard(this, [=](Track track) { openHomeTrack(std::move(track)); })));
@@ -10075,8 +10065,8 @@ protected:
 			for (auto i = 0; i != int(_homePages.size()); ++i) {
 				const auto &page = _homePages[i];
 				const auto title = i ? tr("Ещё для вас") : tr("Для вас");
-				_tabList->add(object_ptr<HomeSectionHeader>(
-					_tabList, title, false, crl::guard(this, [=] {
+				_tabList->add(object_ptr<HomeShelfHeader>(
+					_tabList, title, crl::guard(this, [=] {
 						_homeFeedScroll = _tabScroll->scrollTop();
 						_homeSection = 100 + 2 * i;
 						rebuildTab();
@@ -10170,7 +10160,7 @@ protected:
 				return p.id == _openedPlaylist;
 			});
 			if (found != playlists.end()) {
-				_tabList->add(object_ptr<HomeSectionHeader>(_tabList, found->name, true, [=] {
+				_tabList->add(object_ptr<HomeSectionHeader>(_tabList, found->name, [=] {
 					_openedPlaylist.clear();
 					rebuildTab();
 				}));
@@ -10186,7 +10176,7 @@ protected:
 				}
 			} else {
 				_openedPlaylist.clear();
-				_tabList->add(object_ptr<HomeSectionHeader>(_tabList, tr("Создать плейлист"), true, [=] {
+				_tabList->add(object_ptr<HomeSectionHeader>(_tabList, tr("Создать плейлист"), [=] {
 					PlaylistNameBox(_controller, tr("Создать плейлист"), {}, crl::guard(this, [=](QString name) {
 						_openedPlaylist = CreatePlaylist(name);
 					}));
@@ -10350,7 +10340,7 @@ protected:
 		// Вне «Сейчас играет» экран в цветах клиента, как остальные окна.
 		if (plainBackground > 0.) {
 			p.setOpacity(plainBackground);
-			p.fillRect(e->rect(), _tab == Tab::Home && _homeArtistOpen
+			p.fillRect(e->rect(), _tab == Tab::Home
 				? st::boxBg->c
 				: QColor(0x1c, 0x1c, 0x1c));
 			p.setOpacity(1.);
@@ -10402,9 +10392,9 @@ protected:
 			const auto bottom = top + s(56) + headerHeight;
 			auto gradient = QLinearGradient(0, top, 0, bottom);
 			gradient.setColorAt(0., _homeAccent.isValid()
-				? _homeAccent.darker(150)
-				: QColor(0x32, 0x32, 0x32));
-			gradient.setColorAt(1., QColor(0x1c, 0x1c, 0x1c));
+				? anim::color(st::boxBg->c, _homeAccent, .16)
+				: st::windowBg->c);
+			gradient.setColorAt(1., st::boxBg->c);
 			p.fillRect(e->rect(), gradient);
 		}
 		const auto layout = computeLayout();

@@ -6,6 +6,7 @@ mokaGram (26.11.26)
 - Restyle the Profile / Name switch as a themed pill.
 - Smooth the transition between Profile and Name in the color preview.
 - Show saved tracks on Music Home while recommendations load.
+- Restyle Music Home with Material 3 cards, carousels and loading states.
 - Show a complete For You batch without waiting for slow SoundCloud replies.
 - Fix public Canvas lookup for YouTube Music topic channels and multi-artist credits.
 - Reduce CPU use while Music Home is loading by repainting only the progress bar.
