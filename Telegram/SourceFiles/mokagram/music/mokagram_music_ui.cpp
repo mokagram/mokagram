@@ -4779,14 +4779,6 @@ public:
 		setNaturalWidth(st::semiboldFont->width(_label) + style::ConvertScale(24));
 	}
 
-	void setSelected(bool selected) {
-		if (_selected != selected) {
-			_selected = selected;
-			accessibilityStateChanged({ .checked = true });
-			update();
-		}
-	}
-
 	Ui::AccessibilityState accessibilityState() const override {
 		auto result = HomeTonalControl::accessibilityState();
 		result.checkable = true;
@@ -6717,6 +6709,9 @@ public:
 		if (_active != active) {
 			const auto from = _fade.value(_active ? 1. : 0.);
 			_active = active;
+			if (isPageTab()) {
+				accessibilityStateChanged({ .selected = true });
+			}
 			if (anim::Disabled() || PowerSaving::On(PowerSaving::kAnimations)) {
 				_fade.stop();
 				update();
@@ -6741,6 +6736,13 @@ public:
 			_centered = centered;
 			update();
 		}
+	}
+
+	Ui::AccessibilityState accessibilityState() const override {
+		auto state = AbstractButton::accessibilityState();
+		state.selectable = isPageTab();
+		state.selected = isPageTab() && _active;
+		return state;
 	}
 
 protected:
@@ -7409,9 +7411,28 @@ public:
 			setQueuePanelOpen(!_queuePanelOpen);
 		});
 		_queuePanel->hide();
-		_queueTabs[0] = Ui::CreateChild<MusicChoiceChip>(_queuePanel, queueTitle, true);
-		_queueTabs[1] = Ui::CreateChild<MusicChoiceChip>(_queuePanel, PlaylistText("Недавно"), false);
+		_queueTabBar = Ui::CreateChild<Ui::RpWidget>(_queuePanel);
+		const auto tabAccent = [] { return st::windowActiveTextFg->c; };
+		_queueTabs[0] = Ui::CreateChild<NavItem>(_queueTabBar, queueTitle, true, tabAccent);
+		_queueTabs[1] = Ui::CreateChild<NavItem>(
+			_queueTabBar, PlaylistText("Недавно"), true, tabAccent);
+		_queueTabBar->paintOn([=](QPainter &p) {
+			const auto hq = PainterHighQualityEnabler(p);
+			const auto area = _queueTabBar->rect();
+			const auto inset = s(4);
+			const auto segment = std::max(area.width() - 2 * inset, 0) / 2.;
+			const auto at = _queueTabSlide.unitValue(_queueHistory ? 1. : 0.);
+			p.setPen(Qt::NoPen);
+			p.setBrush(TintedNavTrack(tabAccent()));
+			p.drawRoundedRect(area, area.height() / 2., area.height() / 2.);
+			const auto active = QRectF(inset + segment * at, inset,
+				segment, area.height() - 2 * inset);
+			p.setBrush(tabAccent());
+			p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
+		});
 		for (auto i = 0; i != int(_queueTabs.size()); ++i) {
+			_queueTabs[i]->setIsPageTab(true);
+			_queueTabs[i]->setActive(i == 0);
 			_queueTabs[i]->setClickedCallback([=] { setQueueHistory(i == 1); });
 		}
 		_queueContent = _queueScroll->setOwnedWidget(
@@ -8518,14 +8539,14 @@ protected:
 			const auto tabsTop = s(8);
 			const auto tabsHeight = s(40);
 			const auto side = s(16);
-			const auto gap = s(8);
-			const auto space = std::max(target.width() - 2 * side - gap, 0);
-			const auto first = std::min(_queueTabs[0]->naturalWidth(), space / 2);
-			_queueTabs[0]->resize(first, tabsHeight);
-			_queueTabs[0]->moveToLeft(side, tabsTop, target.width());
-			_queueTabs[1]->resize(std::min(_queueTabs[1]->naturalWidth(), space - first), tabsHeight);
-			_queueTabs[1]->moveToLeft(side + first + gap, tabsTop, target.width());
-			_queueSearch->resizeToWidth(std::max(target.width() - s(32), 1));
+			const auto tabWidth = std::max(target.width() - 2 * side, 0);
+			_queueTabBar->setGeometry(side, tabsTop, tabWidth, tabsHeight);
+			const auto inset = s(4);
+			const auto inner = std::max(tabWidth - 2 * inset, 0);
+			const auto first = inner / 2;
+			_queueTabs[0]->setGeometry(inset, 0, first, tabsHeight);
+			_queueTabs[1]->setGeometry(inset + first, 0, inner - first, tabsHeight);
+			_queueSearch->resizeToWidth(std::max(tabWidth, 1));
 			_queueSearch->moveToLeft(side, tabsTop + tabsHeight);
 			const auto scrollTop = _queueSearch->geometry().bottom() + s(9);
 			_queueScroll->setGeometry(
@@ -10394,8 +10415,10 @@ protected:
 			return;
 		}
 		_queueHistory = history;
-		_queueTabs[0]->setSelected(!history);
-		_queueTabs[1]->setSelected(history);
+		_queueTabSlide.start(history ? 0. : 1., history ? 1. : 0., kFastSpatial);
+		_queueTabBar->update();
+		_queueTabs[0]->setActive(!history);
+		_queueTabs[1]->setActive(history);
 		const auto label = PlaylistText(history ? "Поиск в истории" : "Поиск в очереди");
 		_queueSearch->setPlaceholder(rpl::single(label));
 		_queueSearch->setAccessibleName(label);
@@ -11254,7 +11277,9 @@ private:
 	const not_null<Ui::ScrollArea*> _tabScroll;
 	const not_null<Ui::RpWidget*> _queuePanel;
 	const not_null<Ui::ScrollArea*> _queueScroll;
-	std::array<MusicChoiceChip*, 2> _queueTabs = {};
+	Ui::RpWidget *_queueTabBar = nullptr;
+	std::array<NavItem*, 2> _queueTabs = {};
+	PlayerSpring _queueTabSlide{ [this] { _queueTabBar->update(); } };
 	Ui::InputField *_queueSearch = nullptr;
 	Ui::VerticalLayout *_queueContent = nullptr;
 	Ui::SlideWrap<Ui::FlatLabel> *_queueNowLabel = nullptr;
