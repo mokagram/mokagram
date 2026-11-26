@@ -4300,7 +4300,6 @@ public:
 		Fn<void(QImage, QRect)> showCover,
 		bool isArtist,
 		QString bannerUrl,
-		Fn<void()> play,
 		Fn<void()> openArtist,
 		Fn<void()> bannerReady)
 	: RpWidget(parent)
@@ -4331,59 +4330,19 @@ public:
 		if (!_isArtist && !_album.artist.trimmed().isEmpty()
 			&& (!_album.artistId.isEmpty() || count > 0)) {
 			_artist = Ui::CreateChild<HomeTonalControl>(this);
-			_artistWidth = st::semiboldFont->width(_album.artist) + style::ConvertScale(24);
+			_artistWidth = st::semiboldFont->width(_album.artist);
+			_artist->setToolTip(_album.artist);
 			_artist->setAccessibleName(_album.artist);
 			_artist->setClickedCallback(std::move(openArtist));
 			_artist->paintOn([=](QPainter &p) {
-				auto hq = PainterHighQualityEnabler(p);
-				const auto s = [](int v) { return style::ConvertScale(v); };
-				const auto hovered = _artist->isDown() ? .12 : _artist->isOver() ? .08 : 0.;
-				p.setBrush(anim::color(st::windowBgOver->c, st::windowFg->c, hovered));
-				p.setPen(_artist->hasFocus()
-					? QPen(st::windowActiveTextFg->c, s(2))
-					: QPen(Qt::NoPen));
-				const auto radius = _artist->height() / 2;
-				p.drawRoundedRect(_artist->rect().adjusted(s(1), s(1), -s(1), -s(1)),
-					radius, radius);
-				p.setFont(st::semiboldFont);
+				auto font = st::semiboldFont->f;
+				font.setUnderline(_artist->isOver() || _artist->isDown() || _artist->hasFocus());
+				p.setFont(font);
 				p.setPen(st::windowFg);
-				const auto text = _artist->rect().adjusted(s(12), 0, -s(12), 0);
-				p.drawText(text, Qt::AlignCenter,
-					st::semiboldFont->elided(_album.artist, std::max(text.width(), 0)));
+				p.drawText(_artist->rect(), Qt::AlignVCenter | Qt::AlignLeft,
+					st::semiboldFont->elided(_album.artist, _artist->width()));
 			});
 		}
-
-		const auto playLabel = PlaylistText("Воспроизвести");
-		_play = Ui::CreateChild<HomeTonalControl>(this);
-		_play->setAccessibleName(playLabel);
-		_play->setClickedCallback(std::move(play));
-		_playWidth = st::semiboldFont->width(playLabel) + style::ConvertScale(32);
-		_play->paintOn([=](QPainter &p) {
-			auto hq = PainterHighQualityEnabler(p);
-			const auto s = [](int v) { return style::ConvertScale(v); };
-			const auto disabled = _play->isDisabled();
-			const auto state = _play->isDown() ? .12 : _play->isOver() ? .08 : 0.;
-			p.setOpacity(_identityOpacity);
-			p.setPen(Qt::NoPen);
-			p.setBrush(disabled
-				? st::windowBgOver->c
-				: anim::color(st::windowBgActive->c, st::windowFgActive->c, state));
-			const auto radius = _play->height() / 2;
-			p.drawRoundedRect(_play->rect(), radius, radius);
-			if (_play->hasFocus()) {
-				const auto inset = s(2);
-				p.setPen(QPen(st::windowFgActive->c, inset));
-				p.setBrush(Qt::NoBrush);
-				p.drawRoundedRect(_play->rect().adjusted(inset, inset, -inset, -inset),
-					radius - inset, radius - inset);
-			}
-			p.setFont(st::semiboldFont);
-			p.setPen(disabled ? st::windowSubTextFg : st::windowFgActive);
-			const auto text = _play->rect().adjusted(s(8), 0, -s(8), 0);
-			p.drawText(text, Qt::AlignCenter,
-				st::semiboldFont->elided(playLabel, std::max(text.width(), 0)));
-		});
-
 		LoadImage(ArtUrl(_album.artworkUrl, u"t500x500"_q), crl::guard(this, [=](QImage image) {
 			_art = std::move(image);
 			_cover->setVisible(!_art.isNull() && _identityOpacity >= .5);
@@ -4401,22 +4360,9 @@ public:
 		}
 	}
 
-	void setPlayable(bool playable) {
-		_play->setDisabled(!playable);
-		_play->setEnabled(playable);
-	}
-
-	[[nodiscard]] bool playable() const {
-		return !_play->isDisabled();
-	}
-
 	void setArtistIdentityOpacity(double opacity) {
 		if (_identityOpacity == opacity) return;
 		_identityOpacity = opacity;
-		_play->update();
-		_play->setVisible(!_play->geometry().isEmpty() && opacity > 0.);
-		_play->setAttribute(Qt::WA_TransparentForMouseEvents, opacity < .5);
-		_play->setFocusPolicy(opacity < .5 ? Qt::NoFocus : Qt::TabFocus);
 		_cover->setVisible(!_art.isNull() && opacity >= .5);
 		update();
 	}
@@ -4433,8 +4379,6 @@ protected:
 		const auto layout = geometryForWidth(width());
 		_cover->setGeometry(layout.art);
 		if (_artist) _artist->setGeometry(layout.author);
-		_play->setGeometry(layout.play);
-		_play->setVisible(!layout.play.isEmpty() && _identityOpacity > 0.);
 	}
 
 	int resizeGetHeight(int newWidth) override {
@@ -4497,7 +4441,6 @@ private:
 		QRect title;
 		QRect author;
 		QRect facts;
-		QRect play;
 		bool compact = false;
 	};
 
@@ -4509,7 +4452,6 @@ private:
 		const auto left = side + inset;
 		const auto right = side + cardWidth - inset;
 		const auto available = right - left;
-		const auto playWidth = std::min(_playWidth, available);
 		auto result = HeaderLayout();
 		result.compact = cardWidth < s(_isArtist ? 480 : 540);
 		const auto hasBanner = _isArtist && !_banner.isNull();
@@ -4521,30 +4463,22 @@ private:
 			: (result.compact ? 192 : 208)));
 		const auto titleHeight = s(result.compact ? 40 : 48);
 		const auto kindHeight = s(20);
-		const auto buttonHeight = s(40);
 		if (_isArtist) {
 			const auto row = std::max(artSide, kindHeight + titleHeight);
 			const auto textLeft = left + artSide + s(16);
-			const auto textRight = result.compact ? right : right - playWidth - s(16);
-			const auto textWidth = std::max(textRight - textLeft, 0);
+			const auto textWidth = std::max(right - textLeft, 0);
 			const auto textTop = body + (row - kindHeight - titleHeight) / 2;
 			result.art = QRect(left, body + (row - artSide) / 2, artSide, artSide);
 			result.kind = QRect(textLeft, textTop, textWidth, kindHeight);
 			result.title = QRect(textLeft, textTop + kindHeight, textWidth, titleHeight);
-			const auto playTop = result.compact
-				? body + row + s(12)
-				: body + (row - buttonHeight) / 2;
-			result.play = QRect(result.compact ? left : right - playWidth,
-				playTop, playWidth, buttonHeight);
-			result.card = QRect(side, 0, cardWidth,
-				std::max(body + row, playTop + buttonHeight) + inset);
+			result.card = QRect(side, 0, cardWidth, body + row + inset);
 		} else {
-			const auto authorHeight = _album.artist.isEmpty() ? 0 : s(_artist ? 32 : 24);
+			const auto authorHeight = _album.artist.isEmpty() ? 0 : s(24);
 			const auto factsHeight = _facts.isEmpty() ? 0 : s(20);
 			const auto factsGap = factsHeight && authorHeight ? s(4) : 0;
 			const auto titleGap = s(4);
 			const auto detailsHeight = kindHeight + titleHeight + titleGap
-				+ authorHeight + factsGap + factsHeight + s(12) + buttonHeight;
+				+ authorHeight + factsGap + factsHeight;
 			const auto row = std::max(artSide, detailsHeight);
 			const auto textLeft = result.compact ? left : left + artSide + s(24);
 			const auto textWidth = std::max(right - textLeft, 0);
@@ -4562,8 +4496,6 @@ private:
 			result.author = QRect(textLeft, authorTop, authorWidth, authorHeight);
 			const auto factsTop = authorTop + authorHeight + factsGap;
 			result.facts = QRect(textLeft, factsTop, textWidth, factsHeight);
-			result.play = QRect(textLeft, factsTop + factsHeight + s(12),
-				std::min(playWidth, textWidth), buttonHeight);
 			result.card = QRect(side, 0, cardWidth,
 				std::max(body + row, textTop + detailsHeight) + inset);
 		}
@@ -4627,8 +4559,6 @@ private:
 	HomeTonalControl *_cover = nullptr;
 	HomeTonalControl *_artist = nullptr;
 	int _artistWidth = 0;
-	HomeTonalControl *_play = nullptr;
-	int _playWidth = 0;
 	double _identityOpacity = 1.;
 };
 
@@ -4735,14 +4665,14 @@ protected:
 		const auto shape = rect().adjusted(s(1), s(4), -s(1), -s(4));
 		const auto base = _selected
 			? anim::color(st::windowBg->c, st::windowBgActive->c, .24)
-			: st::boxBg->c;
+			: st::windowBg->c;
 		p.setBrush(anim::color(base, st::windowFg->c, isDown() ? .12 : isOver() ? .08 : 0.));
 		p.setPen(hasFocus()
 			? QPen(st::windowActiveTextFg->c, s(2))
-			: _selected ? QPen(Qt::NoPen) : QPen(st::windowSubTextFg->c, s(1)));
-		const auto radius = s(_selected ? 16 : 8);
+			: QPen(Qt::NoPen));
+		const auto radius = s(8);
 		p.drawRoundedRect(shape, radius, radius);
-		const auto font = _selected ? st::semiboldFont : st::normalFont;
+		const auto font = st::semiboldFont;
 		p.setFont(font);
 		p.setPen(st::windowFg);
 		p.drawText(shape, Qt::AlignCenter,
@@ -4800,7 +4730,7 @@ protected:
 		const auto gap = s(kHomeCardGap);
 		const auto chipHeight = s(40);
 		auto x = 0;
-		auto y = rowHeight + gap;
+		auto y = rowHeight;
 		for (const auto chip : _filters) {
 			const auto width = std::min(chip->naturalWidth(), newWidth);
 			if (x > 0 && x + width > newWidth) {
@@ -7181,27 +7111,18 @@ public:
 		}));
 		_homeBack->hide();
 		_homeArtistBar = Ui::CreateChild<Ui::RpWidget>(_tabScroll->viewport());
+		_homeArtistBar->setAttribute(Qt::WA_TransparentForMouseEvents);
 		_homeArtistBarOpacity = new QGraphicsOpacityEffect(_homeArtistBar);
 		_homeArtistBarOpacity->setOpacity(0.);
 		_homeArtistBar->setGraphicsEffect(_homeArtistBarOpacity);
-		_homeArtistBarPlay = Ui::CreateChild<Ui::RoundButton>(
-			_homeArtistBar,
-			rpl::single(PlaylistText("Воспроизвести")),
-			BoxParts::PillActive());
-		_homeArtistBarPlay->setFocusPolicy(Qt::TabFocus);
-		_homeArtistBarPlay->setClickedCallback([=] { playHomeArtist(); });
 		_homeArtistBar->paintOn([=](QPainter &p) {
 			const auto s = [](int value) { return style::ConvertScale(value); };
 			auto hq = PainterHighQualityEnabler(p);
 			p.fillRect(_homeArtistBar->rect(), st::boxBg);
-			p.setPen(Qt::NoPen);
-			p.setBrush(st::windowBg);
-			const auto inner = _homeArtistBar->rect().adjusted(s(14), 0, -s(14), 0);
-			p.drawRoundedRect(inner, s(22), s(22));
-			const auto text = QRect(
-				inner.left() + s(16), 0,
-				std::max(_homeArtistBarPlay->x() - inner.left() - s(28), 0),
-				_homeArtistBar->height());
+			const auto side = s(BoxParts::kOuterSide);
+			const auto inner = _homeArtistBar->rect().adjusted(side, 0, -side, 0);
+			BoxParts::PaintCard(p, inner);
+			const auto text = inner.adjusted(s(16), 0, -s(16), 0);
 			p.setFont(st::semiboldFont);
 			p.setPen(st::windowFg);
 			p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft,
@@ -9331,17 +9252,6 @@ protected:
 		}));
 	}
 
-	void playHomeArtist() {
-		auto results = HomeArtistPopular(_homeArtistTracks, _homeArtistYouTubeTracks);
-		std::erase_if(results, [](const Track &track) {
-			return !CanPlayTrack(track);
-		});
-		if (results.empty()) return;
-
-		QueueState().results = std::move(results);
-		PlayFromResults(0);
-	}
-
 	void updateHomeArtistBar() {
 		if (_tab != Tab::Home || !_homeArtistOpen || !_homeAlbumHeader) {
 			_homeArtistBar->hide();
@@ -9360,13 +9270,6 @@ protected:
 		const auto width = _tabScroll->viewport()->width();
 		_homeArtistBar->setGeometry(0, 0, width, height);
 		_homeArtistBarOpacity->setOpacity(opacity);
-		const auto interactive = opacity >= 0.5;
-		_homeArtistBar->setAttribute(Qt::WA_TransparentForMouseEvents, !interactive);
-		_homeArtistBarPlay->setFocusPolicy(interactive ? Qt::TabFocus : Qt::NoFocus);
-		_homeArtistBarPlay->setFullWidth(std::min(s(144), std::max(width - s(44), 0) / 2));
-		_homeArtistBarPlay->moveToRight(
-			s(22), (height - _homeArtistBarPlay->height()) / 2);
-		_homeArtistBarPlay->setDisabled(!_homeAlbumHeader->playable());
 		_homeArtistBar->raise();
 		_homeArtistBar->update();
 	}
@@ -9743,26 +9646,12 @@ protected:
 			const auto &queue = QueueState();
 			const auto liked = LikedTracks();
 			if (_homeAlbumOpen) {
-				const auto popular = _homeArtistOpen
-					? HomeArtistPopular(_homeArtistTracks, _homeArtistYouTubeTracks)
-					: std::vector<Track>();
 				const auto albumHeader = _tabList->add(object_ptr<HomeAlbumHeader>(
 					_tabList, _homeAlbum, int(_homeAlbumTracks.size()), _homeAlbumIsTrack,
 					crl::guard(this, [=](QImage image, QRect source) {
 						source.moveTopLeft(mapFromGlobal(source.topLeft()));
 						Ui::CreateChild<HomeCoverPreview>(this, std::move(image), source);
 					}), _homeArtistOpen, _homeArtistBannerUrl,
-					crl::guard(this, [=] {
-						if (_homeArtistOpen) {
-							playHomeArtist();
-						} else {
-							auto playable = std::vector<Track>();
-							playable.reserve(_homeAlbumTracks.size());
-							std::ranges::copy_if(_homeAlbumTracks,
-								std::back_inserter(playable), CanPlayTrack);
-							PlayAll(playable, true);
-						}
-					}),
 					crl::guard(this, [=] {
 						if (!_homeAlbum.artistId.isEmpty()) {
 							showArtistProfile({
@@ -9787,12 +9676,11 @@ protected:
 						update();
 					})), QMargins(0, 0, 0, style::ConvertScale(8)));
 				_homeAlbumHeader = albumHeader;
-				albumHeader->setPlayable(_homeArtistOpen
-					? std::ranges::any_of(popular, CanPlayTrack)
-					: std::ranges::any_of(_homeAlbumTracks, CanPlayTrack));
 				if (!_homeAlbumIsTrack && !_homeArtistOpen) InstallAlbumContextMenu(albumHeader, _controller, _homeAlbum);
 
 				if (_homeArtistOpen) {
+					const auto popular = HomeArtistPopular(
+						_homeArtistTracks, _homeArtistYouTubeTracks);
 					if (!popular.empty()) {
 						_tabList->add(object_ptr<HomeShelfHeader>(_tabList, tr("Популярное")));
 						addRows(popular, RowMode::Album, {}, _homeArtistVisibleTracks);
@@ -11089,7 +10977,6 @@ private:
 	Ui::Animations::Simple _homeBackExit;
 	Ui::RpWidget *_homeArtistBar = nullptr;
 	QGraphicsOpacityEffect *_homeArtistBarOpacity = nullptr;
-	Ui::RoundButton *_homeArtistBarPlay = nullptr;
 	const not_null<RoundGlyph*> _filter;
 	base::unique_qptr<Ui::PopupMenu> _filterMenu;
 	const not_null<RoundGlyph*> _queueToggle;
