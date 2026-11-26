@@ -5877,7 +5877,6 @@ struct PlaybackBarColors {
 	QColor onSurface;
 	QColor onSurfaceVariant;
 	QColor primary;
-	QColor onPrimary;
 	QColor inactiveTrack;
 };
 
@@ -5906,20 +5905,12 @@ struct PlaybackBarColors {
 		.onSurfaceVariant = readable(
 			surface, opaque(st::windowSubTextFg->c), onSurface),
 		.primary = primary,
-		.onPrimary = readable(
-			primary, opaque(st::activeButtonFg->c), ContrastingForeground(primary)),
 		.inactiveTrack = anim::color(surface, onSurface, .25),
 	};
 }
 
 [[nodiscard]] double PlaybackStateLayer(double hover, double press) {
 	return std::max(.08 * hover, .12 * press);
-}
-
-[[nodiscard]] QColor PlaybackPrimaryFill(const PlaybackBarColors &colors, double layer) {
-	return (layer > 0.)
-		? anim::color(colors.primary, colors.onPrimary, layer)
-		: colors.primary;
 }
 
 class SeekBar final : public Ui::RpWidget {
@@ -6653,10 +6644,6 @@ private:
 		case Glyph::Play:
 			svg = _playing ? kGlyphPause : kGlyphPlay;
 			size = s(30);
-			color = colors.onPrimary;
-			p.setPen(Qt::NoPen);
-			p.setBrush(PlaybackPrimaryFill(colors, layer));
-			p.drawEllipse(QRectF(rect()).adjusted(s(2), s(2), -s(2), -s(2)));
 			break;
 		case Glyph::Queue:
 			svg = kGlyphQueue;
