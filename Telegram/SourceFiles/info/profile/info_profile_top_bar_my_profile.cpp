@@ -74,6 +74,16 @@ void TopBar::setupMyProfileActions(
 		controller->showSettings(::Settings::InformationId());
 	});
 
+	// Mokagram: expose profile export in the personal profile actions.
+	const auto more = add(
+		tr::lng_profile_action_short_more(),
+		st::infoProfileTopBarActionMore
+	);
+	_actionMore = more;
+	more->setClickedCallback([=] {
+		showTopBarMenu(controller, false);
+	});
+
 	finalizeActions(buttons);
 }
 

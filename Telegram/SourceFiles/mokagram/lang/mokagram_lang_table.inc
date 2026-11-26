@@ -894,6 +894,7 @@
 	{ "Скорость разлёта, %", "Scatter speed, %" },
 	{ "Скошенный квадрат", "Slanted square" },
 	{ "Скриншот сообщений", "Message screenshot" },
+	{ "Скриншот профиля", "Profile screenshot" },
 	{ "Ramka", "Ramka" },
 	{ "Скруглённый квадрат", "Rounded square" },
 	{ "Скрывает сообщения, подходящие под ваши шаблоны (регулярные выражения).", "Hides messages that match your patterns (regular expressions)." },
