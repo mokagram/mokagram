@@ -3630,6 +3630,17 @@ private:
 
 };
 
+[[nodiscard]] QString HomeReleaseKindText(ReleaseKind kind) {
+	switch (kind) {
+	case ReleaseKind::Single: return PlaylistText("Сингл");
+	case ReleaseKind::Ep: return PlaylistText("EP");
+	case ReleaseKind::Compilation: return PlaylistText("Сборник");
+	case ReleaseKind::Unknown:
+	case ReleaseKind::Album: return PlaylistText("Альбом");
+	}
+	Unexpected("Release kind.");
+}
+
 class HomeAlbumCard final : public Ui::AbstractButton {
 public:
 	void onStateChanged(State was, StateChangeSource source) override {
@@ -3642,7 +3653,7 @@ public:
 	, _album(std::move(album)) {
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
-		setAccessibleName(releaseKindText() + u" · "_q + _album.title
+		setAccessibleName(HomeReleaseKindText(_album.releaseKind) + u" · "_q + _album.title
 			+ u" · "_q + _album.artist);
 		setClickedCallback(std::move(open));
 		InstallAlbumContextMenu(this, controller, _album);
@@ -3668,25 +3679,15 @@ protected:
 			Qt::AlignVCenter | Qt::AlignLeft, st::semiboldFont->elided(_album.title, art.width()));
 		p.setFont(st::normalFont);
 		p.setPen(st::windowSubTextFg);
+		const auto kind = HomeReleaseKindText(_album.releaseKind);
 		const auto details = _album.releaseYear > 0
-			? QString::number(_album.releaseYear) + u" · "_q + releaseKindText()
-			: releaseKindText() + u" · "_q + _album.artist;
+			? QString::number(_album.releaseYear) + u" · "_q + kind
+			: kind + u" · "_q + _album.artist;
 		p.drawText(QRect(art.left(), art.bottom() + s(30), art.width(), s(22)),
 			Qt::AlignVCenter | Qt::AlignLeft, st::normalFont->elided(details, art.width()));
 	}
 
 private:
-	[[nodiscard]] QString releaseKindText() const {
-		switch (_album.releaseKind) {
-		case ReleaseKind::Single: return PlaylistText("Сингл");
-		case ReleaseKind::Ep: return PlaylistText("EP");
-		case ReleaseKind::Compilation: return PlaylistText("Сборник");
-		case ReleaseKind::Unknown:
-		case ReleaseKind::Album: return PlaylistText("Альбом");
-		}
-		Unexpected("Release kind.");
-	}
-
 	Album _album;
 	QImage _art;
 
@@ -4421,12 +4422,48 @@ private:
 	QString _title;
 };
 
+[[nodiscard]] QString HomeReleaseFacts(
+		int year,
+		int count,
+		const std::vector<Track> &tracks,
+		bool complete) {
+	auto facts = QStringList();
+	if (year > 0) {
+		facts.push_back(QString::number(year));
+	}
+	if (count > 0) {
+		const auto last = count % 10;
+		const auto tens = (count / 10) % 10;
+		auto summary = (count == 1) ? PlaylistText("1 трек")
+			: PlaylistText(tens == 1 ? "%1 треков"
+				: last == 1 ? "%1 трек"
+				: (last >= 2 && last <= 4) ? "%1 трека"
+				: "%1 треков").arg(count);
+		if (complete && tracks.size() == size_t(count)) {
+			auto duration = qint64(0);
+			for (const auto &track : tracks) {
+				if (track.durationMs <= 0) {
+					duration = 0;
+					break;
+				}
+				duration += track.durationMs;
+			}
+			if (duration >= 1000) {
+				summary = u"%1, %2"_q.arg(summary, Ui::FormatDurationWords(duration / 1000));
+			}
+		}
+		facts.push_back(std::move(summary));
+	}
+	return facts.join(u" · "_q);
+}
+
 class HomeAlbumHeader final : public Ui::RpWidget {
 public:
 	HomeAlbumHeader(
 		QWidget *parent,
 		Album album,
-		int count,
+		QString facts,
+		QString artistAvatarUrl,
 		bool isTrack,
 		Fn<void(QImage, QRect)> showCover,
 		bool isArtist,
@@ -4437,12 +4474,16 @@ public:
 	, _album(std::move(album))
 	, _isArtist(isArtist)
 	, _tyankaAvatar(isArtist && TyankaHikka::IsArtist(_album.title))
-	, _kind(isTrack ? QString() : PlaylistText(isArtist ? "Исполнитель" : "Альбом"))
-	, _facts(!isTrack && !isArtist && count > 0
-		? PlaylistText("треков: %1").arg(count)
-		: QString())
+	, _kind(isTrack
+		? QString()
+		: isArtist ? PlaylistText("Исполнитель") : HomeReleaseKindText(_album.releaseKind))
+	, _facts(std::move(facts))
 	, _showCover(std::move(showCover)) {
 		setToolTip(_album.title);
+		setAccessibleName(_album.title);
+		auto description = QStringList{ _kind, _facts };
+		description.removeAll(QString());
+		setAccessibleDescription(description.join(u" · "_q));
 		_cover = Ui::CreateChild<HomeTonalControl>(this);
 		_cover->setAccessibleName(PlaylistText("Открыть обложку"));
 		_cover->setClickedCallback([=] { openCover(); });
@@ -4458,20 +4499,42 @@ public:
 				radius, radius);
 		});
 
-		if (!_isArtist && !_album.artist.trimmed().isEmpty()
-			&& (!_album.artistId.isEmpty() || count > 0)) {
+		if (!_isArtist && !_album.artist.trimmed().isEmpty()) {
+			_authorWidth = st::semiboldFont->width(_album.artist);
+		}
+		if (_authorWidth > 0 && openArtist) {
 			_artist = Ui::CreateChild<HomeTonalControl>(this);
-			_artistWidth = st::semiboldFont->width(_album.artist);
+			if (!artistAvatarUrl.isEmpty()) {
+				_avatarSpace = style::ConvertScale(30);
+				LoadImage(artistAvatarUrl, crl::guard(this, [=](QImage image) {
+					_artistAvatar = std::move(image);
+					_artist->update();
+				}));
+			}
 			_artist->setToolTip(_album.artist);
 			_artist->setAccessibleName(_album.artist);
 			_artist->setClickedCallback(std::move(openArtist));
 			_artist->paintOn([=](QPainter &p) {
+				auto text = _artist->rect();
+				const auto avatarSide = style::ConvertScale(24);
+				if (_avatarSpace && text.width() > _avatarSpace) {
+					const auto avatar = QRect(
+						0, (text.height() - avatarSide) / 2, avatarSide, avatarSide);
+					const auto hq = PainterHighQualityEnabler(p);
+					auto clip = QPainterPath();
+					clip.addEllipse(avatar);
+					p.save();
+					p.setClipPath(clip);
+					paintArtwork(p, avatar, _artistAvatar);
+					p.restore();
+					text.setLeft(_avatarSpace);
+				}
 				auto font = st::semiboldFont->f;
 				font.setUnderline(_artist->isOver() || _artist->isDown() || _artist->hasFocus());
 				p.setFont(font);
 				p.setPen(st::windowFg);
-				p.drawText(_artist->rect(), Qt::AlignVCenter | Qt::AlignLeft,
-					st::semiboldFont->elided(_album.artist, _artist->width()));
+				p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft,
+					st::semiboldFont->elided(_album.artist, text.width()));
 			});
 		}
 		LoadImage(ArtUrl(_album.artworkUrl, u"t500x500"_q), crl::guard(this, [=](QImage image) {
@@ -4507,9 +4570,9 @@ public:
 protected:
 	void resizeEvent(QResizeEvent *e) override {
 		RpWidget::resizeEvent(e);
-		const auto layout = geometryForWidth(width());
-		_cover->setGeometry(layout.art);
-		if (_artist) _artist->setGeometry(layout.author);
+		_layout = geometryForWidth(width());
+		_cover->setGeometry(_layout.art);
+		if (_artist) _artist->setGeometry(_layout.author);
 	}
 
 	int resizeGetHeight(int newWidth) override {
@@ -4517,7 +4580,7 @@ protected:
 	}
 
 	void paintEvent(QPaintEvent *) override {
-		const auto layout = geometryForWidth(width());
+		const auto &layout = _layout;
 		if (layout.card.isEmpty()) return;
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
@@ -4557,9 +4620,12 @@ protected:
 		paintText(layout.kind, st::normalFont->f, _kind);
 		if (!_artist) paintText(layout.author, st::normalFont->f, _album.artist);
 		paintText(layout.facts, st::normalFont->f, _facts);
+		if (layout.inlineFacts) {
+			paintText(layout.separator, st::normalFont->f, u"·"_q);
+		}
 		p.setPen(st::windowFg);
 		auto font = st::semiboldFont->f;
-		font.setPixelSize(s(layout.compact ? 28 : 36));
+		font.setPixelSize(layout.titleSize);
 		paintText(layout.title, font, _album.title);
 	}
 
@@ -4571,8 +4637,10 @@ private:
 		QRect kind;
 		QRect title;
 		QRect author;
+		QRect separator;
 		QRect facts;
-		bool compact = false;
+		int titleSize = 0;
+		bool inlineFacts = false;
 	};
 
 	[[nodiscard]] HeaderLayout geometryForWidth(int width) const {
@@ -4584,15 +4652,23 @@ private:
 		const auto right = side + cardWidth - inset;
 		const auto available = right - left;
 		auto result = HeaderLayout();
-		result.compact = cardWidth < s(_isArtist ? 480 : 540);
+		const auto compact = cardWidth < s(_isArtist ? 480 : 420);
 		const auto hasBanner = _isArtist && !_banner.isNull();
 		const auto bannerHeight = hasBanner ? std::clamp(cardWidth / 4, s(112), s(220)) : 0;
 		result.banner = QRect(side, 0, cardWidth, bannerHeight);
 		const auto body = bannerHeight + inset;
-		const auto artSide = std::min(available, s(_isArtist
-			? (result.compact ? 64 : 88)
-			: (result.compact ? 192 : 208)));
-		const auto titleHeight = s(result.compact ? 40 : 48);
+		const auto artSide = std::min(available, _isArtist
+			? s(compact ? 64 : 88)
+			: std::clamp(available / (compact ? 2 : 3), s(128), s(200)));
+		result.titleSize = _isArtist
+			? s(compact ? 28 : 36)
+			: std::clamp(available / 12, s(32), s(60));
+		auto titleFont = st::semiboldFont->f;
+		titleFont.setPixelSize(result.titleSize);
+		const auto titleMetrics = QFontMetrics(titleFont);
+		const auto titleHeight = _isArtist
+			? s(compact ? 40 : 48)
+			: titleMetrics.height();
 		const auto kindHeight = _kind.isEmpty() ? 0 : s(20);
 		if (_isArtist) {
 			const auto row = std::max(artSide, kindHeight + titleHeight);
@@ -4604,31 +4680,40 @@ private:
 			result.title = QRect(textLeft, textTop + kindHeight, textWidth, titleHeight);
 			result.card = QRect(side, 0, cardWidth, body + row + inset);
 		} else {
-			const auto authorHeight = _album.artist.isEmpty() ? 0 : s(24);
-			const auto factsHeight = _facts.isEmpty() ? 0 : s(20);
-			const auto factsGap = factsHeight && authorHeight ? s(4) : 0;
-			const auto titleGap = s(4);
-			const auto detailsHeight = kindHeight + titleHeight + titleGap
-				+ authorHeight + factsGap + factsHeight;
-			const auto row = std::max(artSide, detailsHeight);
-			const auto textLeft = result.compact ? left : left + artSide + s(24);
+			const auto textLeft = compact ? left : left + artSide + s(20);
 			const auto textWidth = std::max(right - textLeft, 0);
-			const auto textTop = result.compact
-				? body + artSide + s(16)
-				: body + (row - detailsHeight) / 2;
-			result.art = QRect(result.compact ? left + (available - artSide) / 2 : left,
-				result.compact ? body : body + (row - artSide) / 2, artSide, artSide);
+			const auto titleWidth = titleMetrics.horizontalAdvance(_album.title);
+			if (titleWidth > textWidth) {
+				result.titleSize = std::max(s(28),
+					int(qint64(result.titleSize) * textWidth / titleWidth));
+			}
+			const auto authorWidth = _authorWidth + _avatarSpace;
+			const auto factsWidth = st::normalFont->width(_facts);
+			const auto separatorWidth = s(12);
+			const auto both = authorWidth > 0 && factsWidth > 0;
+			result.inlineFacts = both && authorWidth + separatorWidth + factsWidth <= textWidth;
+			const auto hasMetadata = authorWidth > 0 || factsWidth > 0;
+			const auto metadataHeight = !hasMetadata ? 0
+				: (both && !result.inlineFacts) ? s(48) : s(24);
+			const auto titleGap = hasMetadata ? s(6) : 0;
+			const auto detailsHeight = kindHeight + titleHeight + titleGap + metadataHeight;
+			const auto row = compact ? artSide + s(16) + detailsHeight
+				: std::max(artSide, detailsHeight);
+			const auto textTop = compact ? body + artSide + s(16) : body + row - detailsHeight;
+			result.art = QRect(compact ? left + (available - artSide) / 2 : left,
+				compact ? body : body + row - artSide, artSide, artSide);
 			result.kind = QRect(textLeft, textTop, textWidth, kindHeight);
 			result.title = QRect(textLeft, textTop + kindHeight, textWidth, titleHeight);
-			const auto authorTop = textTop + kindHeight + titleHeight + titleGap;
-			const auto authorWidth = _artist
-				? std::min(textWidth, _artistWidth)
-				: textWidth;
-			result.author = QRect(textLeft, authorTop, authorWidth, authorHeight);
-			const auto factsTop = authorTop + authorHeight + factsGap;
-			result.facts = QRect(textLeft, factsTop, textWidth, factsHeight);
-			result.card = QRect(side, 0, cardWidth,
-				std::max(body + row, textTop + detailsHeight) + inset);
+			const auto metadataTop = textTop + kindHeight + titleHeight + titleGap;
+			result.author = QRect(textLeft, metadataTop, std::min(textWidth, authorWidth), s(24));
+			const auto factsLeft = result.inlineFacts ? textLeft + authorWidth + separatorWidth
+				: textLeft;
+			const auto factsTop = result.inlineFacts || !authorWidth
+				? metadataTop : metadataTop + s(24);
+			result.separator = QRect(textLeft + authorWidth + s(4), metadataTop,
+				separatorWidth - s(4), s(24));
+			result.facts = QRect(factsLeft, factsTop, right - factsLeft, factsWidth ? s(24) : 0);
+			result.card = QRect(side, 0, cardWidth, body + row + inset);
 		}
 		return result;
 	}
@@ -4683,13 +4768,16 @@ private:
 	crl::time _lastAvatarClick = 0;
 	QString _kind;
 	QString _facts;
+	HeaderLayout _layout;
 	QImage _art;
+	QImage _artistAvatar;
 	QImage _banner;
 	QColor _bannerTone;
 	Fn<void(QImage, QRect)> _showCover;
 	HomeTonalControl *_cover = nullptr;
 	HomeTonalControl *_artist = nullptr;
-	int _artistWidth = 0;
+	int _authorWidth = 0;
+	int _avatarSpace = 0;
 	double _identityOpacity = 1.;
 };
 
@@ -9602,6 +9690,7 @@ protected:
 
 	void loadHomeAlbum() {
 		_homeAlbumTracks.clear();
+		_homeReleaseArtistAvatar.clear();
 		_homeAlbumLoading = true;
 		_homeAlbumNote = QString::fromUtf8(Mokagram::Lang::Tr("Загружаю альбом…"));
 		const auto generation = ++_homeAlbumGeneration;
@@ -9617,6 +9706,22 @@ protected:
 				if (track.artworkUrl.isEmpty()) track.artworkUrl = _homeAlbum.artworkUrl;
 			}
 			_homeAlbumTracks = std::move(tracks);
+			const auto artist = std::ranges::find_if(_homeAlbumTracks, [&](const Track &track) {
+				return !track.artistArtworkUrl.isEmpty()
+					&& (!_homeAlbum.artistId.isEmpty()
+						? _homeAlbum.artistId == track.artistId
+						: _homeAlbum.artist.trimmed().compare(
+							track.artist.trimmed(), Qt::CaseInsensitive) == 0);
+			});
+			if (artist != _homeAlbumTracks.end()) {
+				_homeReleaseArtistAvatar = artist->artistArtworkUrl;
+			} else if (_homeAlbum.artistId.startsWith(u"yt:"_q)) {
+				LoadYouTubeMusicArtistInfo(_homeAlbum.artistId, crl::guard(this, [=](ArtistInfo info) {
+					if (generation != _homeAlbumGeneration || info.avatarUrl.isEmpty()) return;
+					_homeReleaseArtistAvatar = std::move(info.avatarUrl);
+					if (_tab == Tab::Home && _homeAlbumOpen) scheduleTabRebuild();
+				}));
+			}
 			if (!_homeAlbumTracks.empty() && !_homeAlbumTracks.front().artistId.isEmpty()) {
 				const auto artistId = _homeAlbumTracks.front().artistId;
 				if (_homeAlbum.artistId.isEmpty()) {
@@ -9892,13 +9997,20 @@ protected:
 			const auto &queue = QueueState();
 			const auto liked = LikedTracks();
 			if (_homeAlbumOpen) {
-				const auto albumHeader = _tabList->add(object_ptr<HomeAlbumHeader>(
-					_tabList, _homeAlbum, int(_homeAlbumTracks.size()), _homeAlbumIsTrack,
-					crl::guard(this, [=](QImage image, QRect source) {
-						source.moveTopLeft(mapFromGlobal(source.topLeft()));
-						Ui::CreateChild<HomeCoverPreview>(this, std::move(image), source);
-					}), _homeArtistOpen, _homeArtistBannerUrl,
-					crl::guard(this, [=] {
+				const auto count = int(_homeAlbumTracks.size());
+				const auto facts = (!_homeArtistOpen && !_homeAlbumIsTrack)
+					? HomeReleaseFacts(
+						_homeAlbum.releaseYear,
+						std::max(count, _homeAlbum.trackCount),
+						_homeAlbumTracks,
+						_homeAlbumNote.isEmpty())
+					: QString();
+				const auto avatar = _homeArtistOpen ? QString()
+					: (_homeAlbumIsTrack && count > 0) ? _homeAlbumTracks.front().artistArtworkUrl
+					: _homeReleaseArtistAvatar;
+				auto openArtist = Fn<void()>();
+				if (!_homeArtistOpen && (!_homeAlbum.artistId.isEmpty() || count > 0)) {
+					openArtist = crl::guard(this, [=] {
 						if (!_homeAlbum.artistId.isEmpty()) {
 							showArtistProfile({
 								_homeAlbum.artistId, _homeAlbum.artist, {}, {} });
@@ -9916,7 +10028,15 @@ protected:
 						} else if (!_homeAlbumTracks.empty()) {
 							chooseTrackArtist(_homeAlbumTracks.front());
 						}
-					}), crl::guard(this, [=] {
+					});
+				}
+				const auto albumHeader = _tabList->add(object_ptr<HomeAlbumHeader>(
+					_tabList, _homeAlbum, facts, avatar, _homeAlbumIsTrack,
+					crl::guard(this, [=](QImage image, QRect source) {
+						source.moveTopLeft(mapFromGlobal(source.topLeft()));
+						Ui::CreateChild<HomeCoverPreview>(this, std::move(image), source);
+					}), _homeArtistOpen, _homeArtistBannerUrl, std::move(openArtist),
+					crl::guard(this, [=] {
 						updateHomeArtistBar();
 						_queuePanel->update();
 						update();
@@ -11405,6 +11525,7 @@ private:
 	base::unique_qptr<Ui::PopupMenu> _trackArtistsMenu;
 	int _artistLinkGeneration = 0;
 	QString _homeAlbumNote;
+	QString _homeReleaseArtistAvatar;
 	QTimer _homeMoreRetryTimer;
 	int _homeSection = 0;
 	int _homeFeedScroll = 0;
