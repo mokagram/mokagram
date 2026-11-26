@@ -92,6 +92,7 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QToolButton>
 #include <array>
+#include <span>
 #include "ui/image/image.h"
 #include "ui/image/image_prepare.h"
 #include "ui/layers/generic_box.h"
@@ -109,6 +110,7 @@
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/padding_wrap.h"
+#include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/wrap/vertical_layout_reorder.h"
 #include "ui/widgets/scroll_area.h"
@@ -2456,7 +2458,10 @@ void InstallAlbumContextMenu(
 	});
 }
 
-enum class RowMode { Results, Queue, Context, Home, Album, ArtistPopular };
+enum class RowMode {
+	Results, Queue, Context, Home, Album, ArtistPopular,
+	QueueCurrent, QueueUpcoming, QueueHistory,
+};
 
 class Row final : public Ui::AbstractButton {
 public:
@@ -2511,6 +2516,8 @@ public:
 		const auto unavailable = !CanPlayTrack(_track);
 		const auto unavailableText = QString::fromUtf8(Mokagram::Lang::Tr("Недоступен для воспроизведения"));
 		if (_mode != RowMode::Home && _mode != RowMode::ArtistPopular
+			&& _mode != RowMode::QueueCurrent && _mode != RowMode::QueueUpcoming
+			&& _mode != RowMode::QueueHistory
 			&& !_track.videoId.isEmpty() && _track.playbackCount > 0) {
 			_playsText = QString::fromUtf8(Mokagram::Lang::Tr("%1 просл."))
 				.arg(::Lang::FormatCountToShort(_track.playbackCount).string);
@@ -2585,10 +2592,14 @@ public:
 					return;
 				}
 			}
-			if (_mode == RowMode::Queue) {
+			if (_mode == RowMode::QueueCurrent) {
+				Media::Player::instance()->playPause(AudioMsgId::Type::Song);
+			} else if (_mode == RowMode::Queue || _mode == RowMode::QueueUpcoming) {
 				PlayIndex(index);
 			} else if (_mode == RowMode::Context) {
 				PlayContext(index);
+			} else if (_mode == RowMode::QueueHistory) {
+				playRecent();
 			} else {
 				if (_results) {
 					QueueState().results = *_results;
@@ -2609,6 +2620,14 @@ public:
 		}) | rpl::on_next([=](not_null<QEvent*> e) {
 			e->accept();
 			if (CanPlayTrack(_track)) {
+				if (_mode == RowMode::QueueCurrent) {
+					const auto event = static_cast<QContextMenuEvent*>(e.get());
+					ShowCurrentTrackMenu(controller,
+						event->reason() == QContextMenuEvent::Keyboard
+							? mapToGlobal(rect().center())
+							: event->globalPos(), this);
+					return;
+				}
 				showMenu(controller, playIndex, static_cast<QContextMenuEvent*>(e.get()));
 			}
 		}, lifetime());
@@ -2666,6 +2685,27 @@ public:
 	void setCatalogStyle() {
 		_catalogStyle = true;
 		resize(width(), style::ConvertScale(kCatalogRowHeight));
+	}
+
+private:
+	void playRecent() const {
+		auto &queue = QueueState();
+		const auto at = std::min<int>(queue.index + 1, queue.tracks.size());
+		const auto next = queue.tracks.begin() + at;
+		const auto existing = std::find_if(next, queue.tracks.end(),
+			[&](const Track &track) { return track.id == _track.id; });
+		if (existing == queue.tracks.end()) {
+			queue.tracks.insert(next, _track);
+		} else if (existing != next) {
+			std::rotate(next, existing, existing + 1);
+		}
+		PlayIndex(at);
+	}
+
+	[[nodiscard]] bool showsCurrentTrack() const {
+		return _mode == RowMode::QueueCurrent
+			|| (_mode != RowMode::QueueUpcoming && _mode != RowMode::QueueHistory
+				&& QueueState().currentId == _track.id);
 	}
 
 protected:
@@ -2862,10 +2902,12 @@ private:
 				: event->globalPos());
 		};
 		add(QString::fromUtf8(Mokagram::Lang::Tr("Воспроизвести")), [=] {
-			if (_mode == RowMode::Queue) {
+			if (_mode == RowMode::Queue || _mode == RowMode::QueueUpcoming) {
 				PlayIndex(index);
 			} else if (_mode == RowMode::Context) {
 				PlayContext(index);
+			} else if (_mode == RowMode::QueueHistory) {
+				playRecent();
 			} else {
 				if (_results) {
 					QueueState().results = *_results;
@@ -2886,11 +2928,13 @@ private:
 				RemovePlaylistTrack(_playlistId, track.id);
 			}, &st::menuIconDelete);
 		}
-		if (_mode != RowMode::Queue && _mode != RowMode::Context) {
+		if (_mode != RowMode::Queue && _mode != RowMode::QueueUpcoming) {
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Играть следующим")), [=] { EnqueueNext(track); controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Добавлено в очередь"))); }, &st::menuIconAbove);
 			add(QString::fromUtf8(Mokagram::Lang::Tr("В конец очереди")), [=] { EnqueueLast(track); controller->showToast(QString::fromUtf8(Mokagram::Lang::Tr("Добавлено в очередь"))); }, &st::menuIconBelow);
 		} else {
-			add(QString::fromUtf8(Mokagram::Lang::Tr("Выше")), [=] { QueueMove(index, -1); }, &st::menuIconAbove);
+			if (_mode != RowMode::QueueUpcoming || index > QueueState().index + 1) {
+				add(QString::fromUtf8(Mokagram::Lang::Tr("Выше")), [=] { QueueMove(index, -1); }, &st::menuIconAbove);
+			}
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Ниже")), [=] { QueueMove(index, 1); }, &st::menuIconBelow);
 			add(QString::fromUtf8(Mokagram::Lang::Tr("Убрать из очереди")), [=] { QueueRemove(index); }, &st::menuIconDelete);
 		}
@@ -2923,7 +2967,7 @@ private:
 	void paint(QRect area) {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
-		const auto selected = (QueueState().currentId == _track.id);
+		const auto selected = showsCurrentTrack();
 		if (_mode == RowMode::Home) {
 			paintHome(
 				p,
@@ -3458,14 +3502,14 @@ void Row::updateAnimation() {
 	}
 	const auto eligible = isVisible()
 		&& QGuiApplication::applicationState() == Qt::ApplicationActive
-		&& QueueState().currentId == _track.id
+		&& showsCurrentTrack()
 		&& !PowerSaving::On(PowerSaving::kAnimations);
 	if (!eligible) {
 		_equalizerTimer.stop();
 		return;
 	}
 	const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
-	const auto animate = UsesQueue(state.id)
+	const auto animate = (_mode == RowMode::QueueCurrent || UsesQueue(state.id))
 		&& (state.state == Media::Player::State::Playing
 			|| state.state == Media::Player::State::Starting
 			|| state.state == Media::Player::State::Resuming);
@@ -4725,14 +4769,22 @@ enum class DiscographyFilter {
 	SinglesAndEps,
 };
 
-class HomeDiscographyChip final : public HomeTonalControl {
+class MusicChoiceChip final : public HomeTonalControl {
 public:
-	HomeDiscographyChip(QWidget *parent, QString label, bool selected)
+	MusicChoiceChip(QWidget *parent, QString label, bool selected)
 	: HomeTonalControl(parent)
 	, _label(std::move(label))
 	, _selected(selected) {
 		setAccessibleName(_label);
 		setNaturalWidth(st::semiboldFont->width(_label) + style::ConvertScale(24));
+	}
+
+	void setSelected(bool selected) {
+		if (_selected != selected) {
+			_selected = selected;
+			accessibilityStateChanged({ .checked = true });
+			update();
+		}
 	}
 
 	Ui::AccessibilityState accessibilityState() const override {
@@ -4795,7 +4847,7 @@ public:
 		};
 		for (auto i = 0; i != int(labels.size()); ++i) {
 			const auto category = DiscographyFilter(i);
-			const auto button = _filters[i] = Ui::CreateChild<HomeDiscographyChip>(
+			const auto button = _filters[i] = Ui::CreateChild<MusicChoiceChip>(
 				this, PlaylistText(labels[i]), selected == category);
 			button->setClickedCallback([=] { filter(category); });
 		}
@@ -4832,7 +4884,7 @@ protected:
 private:
 	Ui::FlatLabel *_title = nullptr;
 	Ui::RoundButton *_toggle = nullptr;
-	std::array<HomeDiscographyChip*, 3> _filters = {};
+	std::array<MusicChoiceChip*, 3> _filters = {};
 };
 
 class HomeCoverPreview final : public Ui::RpWidget {
@@ -7357,8 +7409,25 @@ public:
 			setQueuePanelOpen(!_queuePanelOpen);
 		});
 		_queuePanel->hide();
-		_queueList = _queueScroll->setOwnedWidget(
+		_queueTabs[0] = Ui::CreateChild<MusicChoiceChip>(_queuePanel, queueTitle, true);
+		_queueTabs[1] = Ui::CreateChild<MusicChoiceChip>(_queuePanel, PlaylistText("Недавно"), false);
+		for (auto i = 0; i != int(_queueTabs.size()); ++i) {
+			_queueTabs[i]->setClickedCallback([=] { setQueueHistory(i == 1); });
+		}
+		_queueContent = _queueScroll->setOwnedWidget(
 			object_ptr<Ui::VerticalLayout>(_queueScroll));
+		const auto addLabel = [&](QString text, const style::FlatLabel &style, QMargins padding) {
+			return _queueContent->add(object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
+				_queueContent, object_ptr<Ui::FlatLabel>(_queueContent, std::move(text), style),
+				padding));
+		};
+		_queueNowLabel = addLabel(PlaylistText("Сейчас играет"), st::defaultSubsectionTitle,
+			QMargins(s(8), s(4), s(8), s(2)));
+		_queueNow = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
+		_queueNextLabel = addLabel(PlaylistText("Далее в очереди"), st::defaultSubsectionTitle,
+			QMargins(s(8), s(12), s(8), s(2)));
+		_queueList = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
+		_queueEmpty = addLabel({}, st::boxDividerLabel, QMargins(s(8), s(8), s(8), 0));
 		_queueReorder = std::make_unique<Ui::VerticalLayoutReorder>(_queueList, _queueScroll);
 		_queueReorder->updates() | rpl::on_next([=](Ui::VerticalLayoutReorder::Single change) {
 			using State = Ui::VerticalLayoutReorder::State;
@@ -7371,12 +7440,13 @@ public:
 				return;
 			}
 			const auto revision = _queueLayoutRevision;
+			const auto first = _queueUpcomingFirst;
 			Ui::PostponeCall(this, [=] {
 				if (row) {
 					row->setQueueDragging(false);
 				}
 				if (change.state == State::Applied && _queueLayoutRevision == revision) {
-					QueueMove(change.oldPosition, change.newPosition - change.oldPosition);
+					QueueMove(first + change.oldPosition, change.newPosition - change.oldPosition);
 				}
 			});
 		}, lifetime());
@@ -7412,18 +7482,6 @@ public:
 				p.fillPath(shape, gradient);
 			} else {
 				p.fillPath(shape, st::boxBg);
-			}
-			p.setOpacity(1.);
-			if (_queueList->count() == 0) {
-				const auto top = _queueScroll->y();
-				p.setFont(labelFont(15, false));
-				p.setPen(st::windowSubTextFg);
-				p.drawText(
-					QRect(s(16), top, std::max(_queuePanel->width() - s(32), 0), s(48)),
-					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
-					QString::fromUtf8(Mokagram::Lang::Tr(
-						_queueSearch->getLastText().trimmed().isEmpty()
-							? "Очередь пуста." : "Ничего не найдено")));
 			}
 		});
 		_shuffle->resize(s(36), s(36));
@@ -7697,6 +7755,9 @@ public:
 		RecentChanged() | rpl::on_next([=] {
 			if (_tab == Tab::Home && !_homeSection && !_homeAlbumOpen) {
 				scheduleTabRebuild();
+			}
+			if (_queuePanelOpen && _queueHistory) {
+				scheduleQueuePanelRefresh();
 			}
 		}, lifetime());
 		PlaylistsChanged() | rpl::on_next([=] {
@@ -8454,14 +8515,24 @@ protected:
 		}
 		if (resize) {
 			const auto s = [](int v) { return style::ConvertScale(v); };
+			const auto tabsTop = s(8);
+			const auto tabsHeight = s(40);
+			const auto side = s(16);
+			const auto gap = s(8);
+			const auto space = std::max(target.width() - 2 * side - gap, 0);
+			const auto first = std::min(_queueTabs[0]->naturalWidth(), space / 2);
+			_queueTabs[0]->resize(first, tabsHeight);
+			_queueTabs[0]->moveToLeft(side, tabsTop, target.width());
+			_queueTabs[1]->resize(std::min(_queueTabs[1]->naturalWidth(), space - first), tabsHeight);
+			_queueTabs[1]->moveToLeft(side + first + gap, tabsTop, target.width());
 			_queueSearch->resizeToWidth(std::max(target.width() - s(32), 1));
-			_queueSearch->moveToLeft(s(16), s(12));
+			_queueSearch->moveToLeft(side, tabsTop + tabsHeight);
 			const auto scrollTop = _queueSearch->geometry().bottom() + s(9);
 			_queueScroll->setGeometry(
 				s(8), scrollTop, std::max(target.width() - s(16), 0),
 				std::max(target.height() - scrollTop - s(12), 0));
-			if (_queueList->width() != _queueScroll->width()) {
-				_queueList->resizeToWidth(_queueScroll->width());
+			if (_queueContent->width() != _queueScroll->width()) {
+				_queueContent->resizeToWidth(_queueScroll->width());
 			}
 		}
 		if (_queuePanel->isHidden()) {
@@ -10296,36 +10367,107 @@ protected:
 			fillTabQueue();
 			update();
 		}
-		if (_queuePanelOpen) {
-			refreshQueuePanel();
+		if (_queuePanelOpen && !_queueHistory) {
+			scheduleQueuePanelRefresh();
 		}
 	}
 
 	void fillTabQueue() {
 		_tabNote.clear();
-		fillQueue(_tabList, _tabScroll, _tabContent);
+		const auto playingId = PlayingTrack().id;
+		const auto [tracks, mode] = queueTracks(playingId);
+		fillQueueRows(_tabList, tracks, mode, 0, 1, {});
+		_tabContent->resizeToWidth(_tabScroll->width());
+		const auto current = mode == RowMode::Queue
+			? QueueState().index
+			: int(ranges::find(tracks, playingId, &Track::id) - begin(tracks));
+		if (current >= 0 && current < _tabList->count()) {
+			_tabScroll->scrollToY(_tabList->widgetAt(std::max(current - 1, 0))->y());
+		}
 		if (_tabList->count() == 0) {
 			_tabNote = QString::fromUtf8(Mokagram::Lang::Tr("Очередь пуста."));
 		}
 	}
 
-	void refreshQueuePanel() {
-		++_queueLayoutRevision;
-		_queueReorder->cancel();
-		fillQueue(_queueList, _queueScroll, _queueList, _queueSearch->getLastText());
-		_queuePanel->update();
+	void setQueueHistory(bool history) {
+		if (_queueHistory == history) {
+			return;
+		}
+		_queueHistory = history;
+		_queueTabs[0]->setSelected(!history);
+		_queueTabs[1]->setSelected(history);
+		const auto label = PlaylistText(history ? "Поиск в истории" : "Поиск в очереди");
+		_queueSearch->setPlaceholder(rpl::single(label));
+		_queueSearch->setAccessibleName(label);
+		_queueScroll->scrollToY(0);
+		refreshQueuePanel();
 	}
 
-	void fillQueue(
-		not_null<Ui::VerticalLayout*> list,
-		not_null<Ui::ScrollArea*> scroll,
-		not_null<Ui::RpWidget*> content,
-		const QString &query = {}) {
+	void scheduleQueuePanelRefresh() {
+		if (std::exchange(_queuePanelRefreshPending, true)) {
+			return;
+		}
+		Ui::PostponeCall(this, [=] {
+			if (std::exchange(_queuePanelRefreshPending, false) && _queuePanelOpen) {
+				refreshQueuePanel();
+			}
+		});
+	}
+
+	void refreshQueuePanel() {
+		_queuePanelRefreshPending = false;
+		++_queueLayoutRevision;
+		_queueReorder->cancel();
+		const auto terms = _queueSearch->getLastText().simplified().split(' ', Qt::SkipEmptyParts);
+		const auto playing = _queueHistory ? Track() : PlayingTrack();
+		const auto hasCurrent = !playing.id.isEmpty();
+		_queueNowLabel->toggle(hasCurrent, anim::type::instant);
+		_queueNextLabel->toggle(!_queueHistory, anim::type::instant);
+		fillQueueRows(_queueNow, std::span(&playing, hasCurrent ? 1 : 0),
+			RowMode::QueueCurrent, 0, 1, {});
+		if (_queueHistory) {
+			auto recent = RecentItems();
+			std::vector<Track> tracks;
+			tracks.reserve(recent.size());
+			for (auto &item : recent) {
+				if (!item.isAlbum) {
+					tracks.push_back(std::move(item.track));
+				}
+			}
+			fillQueueRows(_queueList, tracks, RowMode::QueueHistory, 0, 1, terms);
+		} else {
+			const auto [tracks, mode] = queueTracks(playing.id);
+			if (mode == RowMode::Queue) {
+				_queueUpcomingFirst = std::max(QueueState().index + 1, 0);
+				fillQueueRows(_queueList, tracks, RowMode::QueueUpcoming,
+					_queueUpcomingFirst, 1, terms);
+				if (terms.empty()) {
+					_queueReorder->start();
+				}
+			} else {
+				const auto current = ranges::find(tracks, playing.id, &Track::id);
+				const auto order = Core::App().settings().playerOrderMode();
+				const auto step = (order == Media::OrderMode::Reverse) ? 1 : -1;
+				const auto first = (current == end(tracks))
+					? -1
+					: int(current - begin(tracks)) + step;
+				fillQueueRows(_queueList, tracks, RowMode::Context, first, step, terms);
+			}
+		}
+		const auto empty = (_queueList->count() == 0);
+		_queueEmpty->toggle(empty, anim::type::instant);
+		if (empty) {
+			_queueEmpty->entity()->setText(PlaylistText(!terms.empty() ? "Ничего не найдено"
+				: _queueHistory ? "Нет недавно прослушанных треков" : "Нет следующих треков"));
+		}
+		_queueContent->resizeToWidth(_queueScroll->width());
+	}
+
+	[[nodiscard]] std::pair<const std::vector<Track>&, RowMode> queueTracks(
+			const QString &playingId) {
 		const auto &queue = QueueState();
-		const auto playingId = PlayingTrack().id;
 		const auto inQueue = playingId.isEmpty()
 			|| ranges::contains(queue.tracks, playingId, &Track::id);
-		const auto &tracks = inQueue ? queue.tracks : ContextTracks();
 		if (!inQueue) {
 			// Играет трек из чата: очередь это музыка того же чата.
 			const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
@@ -10345,11 +10487,20 @@ protected:
 				}
 			}
 		}
-		const auto mode = inQueue ? RowMode::Queue : RowMode::Context;
-		const auto terms = query.simplified().split(' ', Qt::SkipEmptyParts);
+		return inQueue
+			? std::pair<const std::vector<Track>&, RowMode>(queue.tracks, RowMode::Queue)
+			: std::pair<const std::vector<Track>&, RowMode>(ContextTracks(), RowMode::Context);
+	}
+
+	void fillQueueRows(
+			not_null<Ui::VerticalLayout*> list,
+			std::span<const Track> tracks,
+			RowMode mode,
+			int first,
+			int step,
+			const QStringList &terms) {
 		auto shown = 0;
-		auto active = -1;
-		for (auto i = 0; i != int(tracks.size()); ++i) {
+		for (auto i = first; i >= 0 && i < int(tracks.size()); i += step) {
 			const auto &track = tracks[i];
 			if (!terms.empty()) {
 				const auto text = track.title + u" "_q + track.artist;
@@ -10360,9 +10511,6 @@ protected:
 				}
 			}
 			const auto rowIndex = shown++;
-			if (active < 0 && (inQueue ? i == queue.index : track.id == playingId)) {
-				active = rowIndex;
-			}
 			if (rowIndex < list->count()) {
 				const auto existing = list->widgetAt(rowIndex).get();
 				const auto row = dynamic_cast<Row*>(existing);
@@ -10380,13 +10528,6 @@ protected:
 		}
 		while (list->count() > shown) {
 			delete list->widgetAt(list->count() - 1).get();
-		}
-		content->resizeToWidth(scroll->width());
-		if (terms.empty() && active >= 0) {
-			scroll->scrollToY(list->widgetAt(std::max(active - 1, 0))->y());
-		}
-		if (list.get() == _queueList && inQueue && terms.empty()) {
-			_queueReorder->start();
 		}
 	}
 
@@ -11113,10 +11254,19 @@ private:
 	const not_null<Ui::ScrollArea*> _tabScroll;
 	const not_null<Ui::RpWidget*> _queuePanel;
 	const not_null<Ui::ScrollArea*> _queueScroll;
+	std::array<MusicChoiceChip*, 2> _queueTabs = {};
 	Ui::InputField *_queueSearch = nullptr;
+	Ui::VerticalLayout *_queueContent = nullptr;
+	Ui::SlideWrap<Ui::FlatLabel> *_queueNowLabel = nullptr;
+	Ui::VerticalLayout *_queueNow = nullptr;
+	Ui::SlideWrap<Ui::FlatLabel> *_queueNextLabel = nullptr;
 	Ui::VerticalLayout *_queueList = nullptr;
+	Ui::SlideWrap<Ui::FlatLabel> *_queueEmpty = nullptr;
 	std::unique_ptr<Ui::VerticalLayoutReorder> _queueReorder;
 	int _queueLayoutRevision = 0;
+	int _queueUpcomingFirst = 0;
+	bool _queuePanelRefreshPending = false;
+	bool _queueHistory = false;
 	bool _queuePanelOpen = false;
 	QRect _queuePanelTarget;
 	PlayerSpring _queueSlide{ [this] { layoutQueuePanel(); } };
