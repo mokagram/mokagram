@@ -8,7 +8,7 @@ mokaGram (26.11.26)
 - Restyle Music Home with Material 3 cards, carousels and loading states.
 - Fade clipped Music carousel edges into the background wherever more cards can be scrolled into view.
 - Restyle music artist and album pages in Material 3, with consistent discography filters and a plain artist link.
-- Play albums directly from Music cards, including YouTube Music releases.
+- Play, pause and resume albums directly from Music cards, including YouTube Music releases.
 - Give music releases a larger title and group the artist, year, track count and total runtime in the header.
 - Hide redundant type and count labels in single-track headers.
 - Show a complete For You batch without waiting for slow SoundCloud replies.

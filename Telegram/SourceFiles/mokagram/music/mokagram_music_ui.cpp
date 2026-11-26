@@ -287,12 +287,18 @@ struct Radio {
 	bool loading = false;
 };
 
+struct QueueAlbum {
+	QString id;
+	std::vector<QString> trackIds;
+};
+
 struct Queue {
 	std::shared_ptr<Radio> radio;
 	std::shared_ptr<Radio> pendingRadio;
 	base::flat_map<QString, FullMsgId> messages;
 	base::weak_ptr<Main::Session> session;
 	std::vector<Track> tracks;       // очередь воспроизведения
+	QueueAlbum album;
 	std::vector<Track> results;      // то, что сейчас показано в списке
 	std::vector<Track> searchResults;
 	std::vector<Track> forYou;
@@ -358,6 +364,7 @@ void BindController(not_null<Window::SessionController*> controller) {
 		queue.messages.clear();
 		queue.selectedChat = {};
 		queue.tracks.clear();
+		queue.album = {};
 		queue.results.clear();
 		queue.searchResults.clear();
 		queue.current = {};
@@ -871,6 +878,7 @@ void CommitRadio(
 	queue.custom = false;
 	queue.autoIds.clear();
 	queue.tracks = { seed };
+	queue.album = {};
 	queue.tracks.insert(queue.tracks.end(), tracks.begin(), tracks.end());
 	queue.index = 0;
 	queue.currentId = seed.id;
@@ -1563,6 +1571,7 @@ void PlayFromResults(int resultIndex) {
 		queue.radio.reset();
 		queue.pendingRadio.reset();
 		queue.tracks = queue.results;
+		queue.album = {};
 		queue.stream = StreamEnabled();
 		++queue.streamEpoch;
 		queue.refilling = false;
@@ -2093,7 +2102,10 @@ private:
 
 };
 
-void PlayAll(std::vector<Track> tracks, bool skipUnavailable = false) {
+void PlayAll(
+		std::vector<Track> tracks,
+		bool skipUnavailable = false,
+		QString albumId = {}) {
 	auto &queue = QueueState();
 	if (tracks.empty()) {
 		return;
@@ -2102,6 +2114,15 @@ void PlayAll(std::vector<Track> tracks, bool skipUnavailable = false) {
 	queue.radio.reset();
 	queue.pendingRadio.reset();
 	queue.tracks = std::move(tracks);
+	queue.album = { .id = std::move(albumId) };
+	if (!queue.album.id.isEmpty()) {
+		auto &ids = queue.album.trackIds;
+		ids.reserve(queue.tracks.size());
+		for (const auto &track : queue.tracks) {
+			ids.push_back(track.id);
+		}
+		std::ranges::sort(ids);
+	}
 	queue.stream = StreamEnabled();
 	queue.refilling = false;
 	queue.waiting = false;
@@ -2115,11 +2136,62 @@ void PlayAll(std::vector<Track> tracks, bool skipUnavailable = false) {
 	PlayIndex(0, skipUnavailable);
 }
 
+struct HomeTrackPlaybackState {
+	bool current = false;
+	bool playing = false;
+
+	bool operator==(const HomeTrackPlaybackState &) const = default;
+};
+
+[[nodiscard]] HomeTrackPlaybackState HomePlaybackState(
+		Media::Player::State state) {
+	return {
+		!Media::Player::IsStoppedOrStopping(state),
+		state == Media::Player::State::Playing
+			|| state == Media::Player::State::Starting
+			|| state == Media::Player::State::Resuming,
+	};
+}
+
+[[nodiscard]] HomeTrackPlaybackState HomeTrackPlayback(const QString &id) {
+	if (PlayingTrack().id != id) {
+		return {};
+	}
+	return HomePlaybackState(
+		Media::Player::instance()->getState(AudioMsgId::Type::Song).state);
+}
+
+[[nodiscard]] HomeTrackPlaybackState HomeAlbumPlayback(const QString &id) {
+	const auto &queue = QueueState();
+	if (id.isEmpty() || queue.album.id != id
+		|| !std::ranges::binary_search(queue.album.trackIds, queue.currentId)) {
+		return {};
+	}
+	const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+	return UsesQueue(state.id) ? HomePlaybackState(state.state) : HomeTrackPlaybackState();
+}
+
+[[nodiscard]] auto HomePlaybackChanges() {
+	return Media::Player::instance()->updatedNotifier(
+	) | rpl::filter([](const Media::Player::TrackState &state) {
+		return state.id.type() == AudioMsgId::Type::Song;
+	}) | rpl::map([](const Media::Player::TrackState &state) {
+		return std::pair(state.id, state.state);
+	}) | rpl::distinct_until_changed();
+}
+
 void PlayHomeAlbum(
 		not_null<Window::SessionController*> controller,
 		const Album &album,
 		Fn<void()> done = nullptr) {
 	BindController(controller);
+	if (HomeAlbumPlayback(album.id).current) {
+		Media::Player::instance()->playPause(AudioMsgId::Type::Song);
+		if (done) {
+			done();
+		}
+		return;
+	}
 	const auto token = ++QueueState().pendingToken;
 	AlbumTracks(album.id, crl::guard(controller, [=](std::vector<Track> tracks, QString error) {
 		if (done) {
@@ -2143,7 +2215,7 @@ void PlayHomeAlbum(
 			}
 		}
 		RecordRecentAlbum(album);
-		PlayAll(std::move(tracks), true);
+		PlayAll(std::move(tracks), true, album.id);
 	}));
 }
 
@@ -2288,24 +2360,6 @@ void PaintHomeCover(QPainter &p, const QRect &rect, const QImage &art) {
 	const auto size = std::min(s(38), std::max(art.width() - s(16), 0));
 	return QRect(art.right() - s(8) - size + 1,
 		art.bottom() - s(8) - size + 1, size, size);
-}
-
-struct HomeTrackPlaybackState {
-	bool current = false;
-	bool playing = false;
-};
-
-[[nodiscard]] HomeTrackPlaybackState HomeTrackPlayback(const QString &id) {
-	if (PlayingTrack().id != id) {
-		return {};
-	}
-	const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
-	return {
-		!Media::Player::IsStoppedOrStopping(state.state),
-		state.state == Media::Player::State::Playing
-			|| state.state == Media::Player::State::Starting
-			|| state.state == Media::Player::State::Resuming,
-	};
 }
 
 void PaintHomePlayGlyph(QPainter &p, QPoint center, QColor color) {
@@ -2495,6 +2549,83 @@ void InstallAlbumContextMenu(
 	});
 }
 
+class HomeCardPlayButton final : public QToolButton {
+public:
+	HomeCardPlayButton(QWidget *parent, QString title)
+	: QToolButton(parent)
+	, _title(std::move(title)) {
+		setCursor(Qt::PointingHandCursor);
+		setFocusPolicy(Qt::TabFocus);
+		setAttribute(Qt::WA_NoMousePropagation);
+		refreshLabel();
+	}
+
+	void layoutOnCover(int cardWidth) {
+		const auto action = HomeActionRect(HomeCardArtRect(cardWidth));
+		setGeometry(action);
+		setVisible(action.width() >= style::ConvertScale(24));
+	}
+
+	void setPresentation(HomeTrackPlaybackState playback, double shown) {
+		if (_playback != playback || _shown != shown) {
+			const auto relabel = (_playback.playing != playback.playing);
+			_playback = playback;
+			_shown = shown;
+			if (relabel) {
+				refreshLabel();
+			}
+			update();
+		}
+	}
+
+	[[nodiscard]] bool loading() const {
+		return _loading;
+	}
+
+	void setLoading(bool loading) {
+		if (_loading != loading) {
+			_loading = loading;
+			refreshLabel();
+			update();
+		}
+	}
+
+protected:
+	void paintEvent(QPaintEvent *) override {
+		const auto shown = (hasFocus() || isDown() || _loading) ? 1. : _shown;
+		if (shown <= 0. && !_playback.playing) {
+			return;
+		}
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		PaintHomeCardAction(p, rect(), _loading ? shown * .65 : shown,
+			_playback.playing, _playback.current);
+		if (hasFocus()) {
+			const auto focus = style::ConvertScale(2);
+			const auto inset = focus / 2.;
+			p.setPen(QPen(st::windowActiveTextFg->c, focus));
+			p.setBrush(Qt::NoBrush);
+			p.drawEllipse(QRectF(rect()).adjusted(inset, inset, -inset, -inset));
+		}
+	}
+
+private:
+	void refreshLabel() {
+		const auto label = PlaylistText(_loading
+			? "Загружаю альбом…"
+			: _playback.playing
+			? "Пауза"
+			: "Воспроизвести");
+		setAccessibleName(label + u": "_q + _title);
+		setToolTip(label);
+	}
+
+	const QString _title;
+	HomeTrackPlaybackState _playback;
+	double _shown = 0.;
+	bool _loading = false;
+};
+
 enum class RowMode {
 	Results, Queue, Context, Home, Album, ArtistPopular,
 	QueueCurrent, QueueUpcoming, QueueHistory,
@@ -2581,6 +2712,8 @@ public:
 			connect(qApp, &QGuiApplication::applicationStateChanged, this, [=] {
 				updateAnimation();
 			});
+		} else if (_homePlaybackControls && !unavailable) {
+			HomePlaybackChanges() | rpl::on_next([=] { update(); }, lifetime());
 		}
 		{
 			if (const auto item = TrackMessage(track)) {
@@ -2613,21 +2746,15 @@ public:
 			update();
 		}, lifetime());
 		const auto playIndex = (resultIndex >= 0) ? resultIndex : index;
-		setClickedCallback([=] {
+		const auto opensTrack = (_mode == RowMode::Home && bool(open));
+		const auto play = [=] {
 			if (_queueDragging) {
 				return;
 			}
-			if (_mode == RowMode::Home && open) {
-				if (!HomeActionRect(HomeCardArtRect(width())).contains(
-						mapFromGlobal(QCursor::pos()))) {
-					open(_track);
-					return;
-				}
-				if (_homePlaybackControls
-					&& HomeTrackPlayback(_track.id).current) {
-					Media::Player::instance()->playPause(AudioMsgId::Type::Song);
-					return;
-				}
+			if (opensTrack && _homePlaybackControls
+				&& HomeTrackPlayback(_track.id).current) {
+				Media::Player::instance()->playPause(AudioMsgId::Type::Song);
+				return;
 			}
 			if (_mode == RowMode::QueueCurrent) {
 				Media::Player::instance()->playPause(AudioMsgId::Type::Song);
@@ -2646,7 +2773,16 @@ public:
 				}
 				PlayFromResults(playIndex);
 			}
-		});
+		};
+		if (_mode == RowMode::Home && !unavailable) {
+			_playButton = Ui::CreateChild<HomeCardPlayButton>(this, _track.title);
+			connect(_playButton, &QToolButton::clicked, this, play);
+		}
+		if (opensTrack) {
+			setClickedCallback([=] { open(_track); });
+		} else {
+			setClickedCallback(play);
+		}
 		paintRequest(
 		) | rpl::on_next([=](QRect area) {
 			paint(area);
@@ -2758,6 +2894,9 @@ protected:
 		}
 		if (_likeButton) {
 			_likeButton->setGeometry(heartRect());
+		}
+		if (_playButton) {
+			_playButton->layoutOnCover(width());
 		}
 	}
 
@@ -3163,13 +3302,10 @@ private:
 			}
 		}
 		PaintHomeCover(p, art, _art);
-		if (!disabled) {
-			PaintHomeCardAction(
-				p,
-				HomeActionRect(art),
-				(hasFocus() || playback.current) ? 1. : _hoverFade.value(),
-				_homePlaybackControls && playback.playing,
-				current);
+		if (_playButton) {
+			_playButton->setPresentation(
+				{ current, _homePlaybackControls && playback.playing },
+				(hasFocus() || playback.current) ? 1. : _hoverFade.value());
 		}
 		const auto textWidth = std::max(art.width() - (_likeButton ? s(30) : 0), 0);
 		p.setFont(st::semiboldFont);
@@ -3198,6 +3334,7 @@ private:
 	bool _catalogStyle = false;
 	bool _homePlaybackControls = true;
 	TrackLikeButton *_likeButton = nullptr;
+	HomeCardPlayButton *_playButton = nullptr;
 	bool _glass = false;
 	QImage _art;
 	QImage _scaledArt;
@@ -3677,51 +3814,6 @@ private:
 	Unexpected("Release kind.");
 }
 
-class HomeAlbumPlayButton final : public QToolButton {
-public:
-	explicit HomeAlbumPlayButton(QWidget *parent) : QToolButton(parent) {
-		setCursor(Qt::PointingHandCursor);
-		setFocusPolicy(Qt::TabFocus);
-		setAttribute(Qt::WA_NoMousePropagation);
-		setToolTip(PlaylistText("Воспроизвести"));
-	}
-
-	bool loading() const {
-		return _loading;
-	}
-
-	void setLoading(bool loading) {
-		_loading = loading;
-		setToolTip(PlaylistText(loading ? "Загружаю альбом…" : "Воспроизвести"));
-		update();
-	}
-
-protected:
-	void paintEvent(QPaintEvent *) override {
-		auto p = QPainter(this);
-		auto hq = PainterHighQualityEnabler(p);
-		const auto focus = style::ConvertScale(2);
-		p.setPen(hasFocus() ? QPen(st::windowActiveTextFg->c, focus) : QPen(Qt::NoPen));
-		p.setBrush(isDown()
-			? st::windowBgRipple
-			: st::windowBg);
-		const auto inset = hasFocus() ? focus / 2. : 0.;
-		p.drawEllipse(QRectF(rect()).adjusted(inset, inset, -inset, -inset));
-		if (!_loading) {
-			PaintHomePlayGlyph(p, rect().center(), st::windowFg->c);
-		} else {
-			auto font = st::semiboldFont->f;
-			font.setPixelSize(style::ConvertScale(16));
-			p.setFont(font);
-			p.setPen(st::windowFg);
-			p.drawText(rect(), Qt::AlignCenter, u"…"_q);
-		}
-	}
-
-private:
-	bool _loading = false;
-};
-
 class HomeAlbumCard final : public Ui::AbstractButton {
 public:
 	void onStateChanged(State was, StateChangeSource source) override {
@@ -3733,8 +3825,7 @@ public:
 	: AbstractButton(parent)
 	, _album(std::move(album)) {
 		if (!_album.id.isEmpty()) {
-			_play = Ui::CreateChild<HomeAlbumPlayButton>(this);
-			_play->setAccessibleName(PlaylistText("Воспроизвести") + u": "_q + _album.title);
+			_play = Ui::CreateChild<HomeCardPlayButton>(this, _album.title);
 			connect(_play, &QToolButton::clicked, this, [=] {
 				if (!_play->loading()) {
 					_play->setLoading(true);
@@ -3743,6 +3834,17 @@ public:
 					}));
 				}
 			});
+			const auto refreshPlayback = [=] {
+				const auto playback = HomeAlbumPlayback(_album.id);
+				if (_playback != playback) {
+					_playback = playback;
+					update();
+				}
+			};
+			HomePlaybackChanges() | rpl::on_next(refreshPlayback, lifetime());
+			QueueState().changes.events(
+			) | rpl::on_next(refreshPlayback, lifetime());
+			refreshPlayback();
 		}
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
@@ -3760,9 +3862,7 @@ protected:
 	void resizeEvent(QResizeEvent *event) override {
 		AbstractButton::resizeEvent(event);
 		if (_play) {
-			const auto action = HomeActionRect(HomeCardArtRect(width()));
-			_play->setGeometry(action);
-			_play->setVisible(action.width() >= style::ConvertScale(24));
+			_play->layoutOnCover(width());
 		}
 	}
 
@@ -3771,8 +3871,12 @@ protected:
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto art = HomeCardArtRect(width());
-		PaintHomeSurface(p, rect(), _hoverFade.value(), isDown(), hasFocus());
+		PaintHomeSurface(p, rect(), _hoverFade.value(), isDown(), hasFocus(), _playback.current);
 		PaintHomeCover(p, art, _art);
+		if (_play) {
+			_play->setPresentation(_playback,
+				(hasFocus() || _playback.current) ? 1. : _hoverFade.value());
+		}
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowFg);
 		p.drawText(QRect(art.left(), art.bottom() + s(8), art.width(), s(22)),
@@ -3790,7 +3894,8 @@ protected:
 private:
 	Album _album;
 	QImage _art;
-	HomeAlbumPlayButton *_play = nullptr;
+	HomeCardPlayButton *_play = nullptr;
+	HomeTrackPlaybackState _playback;
 
 	HoverFade _hoverFade;
 
@@ -3827,7 +3932,7 @@ public:
 		});
 		const auto refreshPlayback = [=] {
 			const auto playback = _item.isAlbum
-				? HomeTrackPlaybackState()
+				? HomeAlbumPlayback(_item.album.id)
 				: HomeTrackPlayback(_item.track.id);
 			if (_current != playback.current || _playing != playback.playing) {
 				_current = playback.current;
@@ -3835,14 +3940,14 @@ public:
 				update();
 			}
 		};
-		Media::Player::instance()->updatedNotifier(
-		) | rpl::on_next(refreshPlayback, lifetime());
+		HomePlaybackChanges() | rpl::on_next(refreshPlayback, lifetime());
 		QueueState().changes.events(
 		) | rpl::on_next(refreshPlayback, lifetime());
 		refreshPlayback();
 		const auto recentItem = _item;
 		InstallMusicContextMenu(this, [=](not_null<Ui::PopupMenu*> menu) {
-			menu->addAction(PlaylistText("Воспроизвести"), play, &st::menuIconSoundOn);
+			const auto pause = recentItem.isAlbum && HomeAlbumPlayback(recentItem.album.id).playing;
+			menu->addAction(PlaylistText(pause ? "Пауза" : "Воспроизвести"), play, &st::menuIconSoundOn);
 			if (recentItem.isAlbum) {
 				menu->addAction(PlaylistText("Открыть альбом"), activate, &st::menuIconSearch);
 				AddAlbumToPlaylistMenu(menu, controller, recentItem.album);
