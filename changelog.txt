@@ -1,5 +1,6 @@
 mokaGram (26.11.26)
 
+- Play or pause the featured track directly from the profile header.
 - Group gifts and story shortcuts in a rounded profile card.
 - Keep the selected collectible's pattern and matching avatar ring in the color preview.
 - Restyle the Profile / Name switch as a themed pill.

@@ -119,13 +119,6 @@ infoProfileTopBarPillsReserve: infoProfileTopBarPillsSkip
 	+ infoProfileBalancePillHeight
 	+ infoProfileTopBarPillsSkip
 	- infoProfileTopBarActionButtonsPadding.bottom;
-infoProfileMusicPillFadeWidth: infoProfileBalancePillHeight;
-infoProfileMusicPillPerformerStyle: TextStyle(defaultTextStyle) {
-	font: infoProfileBalancePillAmountFont;
-}
-infoProfileMusicPillTitleStyle: TextStyle(defaultTextStyle) {
-	font: infoProfileBalancePillLabelFont;
-}
 infoStatusHiddenToastIcon: icon{{ "community/requests_hidden", toastFg }};
 infoBotVerifyBadge: InfoPeerBadge(infoPeerBadge) {
 	position: point(-2px, 2px);
