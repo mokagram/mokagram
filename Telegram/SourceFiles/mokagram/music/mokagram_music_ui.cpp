@@ -7905,22 +7905,18 @@ protected:
 	[[nodiscard]] Layout computeLayout() const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		auto result = Layout();
-		const auto margin = s(width() < s(560) ? 8 : 16);
+		const auto windowWidth = width();
+		const auto margin = s(windowWidth < s(560) ? 8 : 16);
 		const auto gap = s(12);
 		const auto pad = s(16);
 		const auto now = (_tab == Tab::Now);
 		const auto queueWidth = std::min(
-			std::max(width() - 2 * margin, 0),
-			std::clamp(width() / 4, s(280), s(360)));
-		const auto queueProgress = queuePanelDocked()
-			? _queueSlide.value(_queuePanelOpen ? 1. : 0.)
-			: 0.;
-		const auto mainWidth = width()
-			- int(base::SafeRound((queueWidth + gap) * queueProgress));
+			std::max(windowWidth - 2 * margin, 0),
+			std::clamp(windowWidth / 4, s(280), s(360)));
 		// Толстая капсула как у островка: по центру, не на всю ширину.
 		const auto barHeight = s(kBarHeight);
 		const auto barWidth = std::max(
-			std::min(mainWidth - 2 * margin, s(kBarMaxWidth)),
+			std::min(windowWidth - 2 * margin, s(kBarMaxWidth)),
 			0);
 		const auto barProgress = _barSlide.value(_hasPlaybackTrack ? 1. : 0.);
 		result.barShown = _hasPlaybackTrack || barProgress > 0.;
@@ -7928,7 +7924,7 @@ protected:
 		result.contentBottom = height() - gap
 			- (_hasPlaybackTrack ? margin + barHeight : 0);
 		result.bar = QRect(
-			(mainWidth - barWidth) / 2,
+			(windowWidth - barWidth) / 2,
 			height() - int(base::SafeRound((margin + barHeight) * barProgress)),
 			barWidth,
 			barHeight);
@@ -7938,18 +7934,18 @@ protected:
 		const auto back = QRect(s(24) + _filter->width(), margin, s(96), s(40));
 		const auto reserve = margin + _collapse->width() + s(8);
 		const auto leftReserve = homeDetail ? back.x() + back.width() + s(8) : reserve;
-		const auto tabsBelow = homeDetail && (mainWidth - leftReserve - reserve < s(240));
+		const auto tabsBelow = homeDetail && (windowWidth - leftReserve - reserve < s(240));
 		const auto navLeft = tabsBelow ? margin : leftReserve;
 		const auto navRight = tabsBelow ? margin : reserve;
-		const auto navWidth = std::clamp(mainWidth - navLeft - navRight, 0, s(900));
-		result.verticalNav = width() < s(720) || (homeDetail && navWidth < s(540));
+		const auto navWidth = std::clamp(windowWidth - navLeft - navRight, 0, s(900));
+		result.verticalNav = windowWidth < s(720) || (homeDetail && navWidth < s(540));
 		result.nav = QRect(
-			std::max((mainWidth - navWidth) / 2, navLeft),
+			std::max((windowWidth - navWidth) / 2, navLeft),
 			tabsBelow ? margin + s(40) + gap : margin,
 			navWidth,
 			s(result.verticalNav ? 80 : 40));
 		result.collapse = QPoint(
-			width() - margin - _collapse->width(),
+			windowWidth - margin - _collapse->width(),
 			margin + (s(40) - _collapse->height()) / 2);
 		if (homeDetail) {
 			result.homeBack = back;
@@ -7957,14 +7953,14 @@ protected:
 		const auto top = result.nav.y() + result.nav.height() + gap;
 		const auto areaBottom = result.contentBottom;
 		const auto areaHeight = std::max(areaBottom - top, 0);
-		result.queuePanel = QRect(width() - margin - queueWidth, top, queueWidth, areaHeight);
+		result.queuePanel = QRect(windowWidth - margin - queueWidth, top, queueWidth, areaHeight);
 
 		if (now) {
 			auto lyricsLeft = margin;
 			auto lyricsTop = top;
-			if (width() >= s(800)) {
+			if (windowWidth >= s(800)) {
 				// Обложка слева, текст песни по центру остального экрана.
-				const auto colWidth = std::clamp(int(mainWidth * 0.29), s(190), s(460));
+				const auto colWidth = std::clamp(int(windowWidth * 0.29), s(190), s(460));
 				const auto side = std::max(std::min({
 					colWidth - 2 * pad,
 					std::max(areaHeight - s(16), 0) * 4 / 5,
@@ -7976,9 +7972,9 @@ protected:
 			} else {
 				// В узком окне обложка над текстом, если по высоте хватает места для обоих.
 				const auto coverHeight = std::min(areaHeight * 2 / 5, s(360));
-				const auto side = std::min(mainWidth - 2 * (margin + pad), coverHeight * 4 / 5);
+				const auto side = std::min(windowWidth - 2 * (margin + pad), coverHeight * 4 / 5);
 				if (side >= s(128)) {
-					result.cover = QRect((mainWidth - side) / 2, top, side, side * 5 / 4);
+					result.cover = QRect((windowWidth - side) / 2, top, side, side * 5 / 4);
 					lyricsTop += result.cover.height() + gap;
 				}
 			}
@@ -7994,14 +7990,14 @@ protected:
 			result.lyrics = QRect(
 				lyricsLeft,
 				lyricsTop,
-				std::max(mainWidth - margin - lyricsLeft, 0),
+				std::max(windowWidth - margin - lyricsLeft, 0),
 				std::max(areaBottom - lyricsTop, 0));
 			if (showsQueue()) {
 				result.center = result.lyrics;
 				result.scrollTop = result.center.y();
 			}
 		} else {
-			const auto contentWidth = std::max(mainWidth - 2 * margin, 0);
+			const auto contentWidth = std::max(windowWidth - 2 * margin, 0);
 			result.center = QRect(margin, top, contentWidth, areaHeight);
 			result.scrollTop = result.center.y()
 				+ (_tab == Tab::Search ? searchHeaderHeight(contentWidth) : 0);
@@ -8177,7 +8173,8 @@ protected:
 		_view->setVisible(_tab == Tab::Now && !showsQueue());
 		_view->setGeometry(layout.lyrics);
 		_tabScroll->setVisible(_tab != Tab::Now || (showsQueue() && !_queuePanelOpen));
-		layoutQueuePanel(layout.queuePanel);
+		_queuePanelTarget = layout.queuePanel;
+		layoutQueuePanel();
 		const auto home = (_tab == Tab::Home);
 		const auto artistPage = home && _homeArtistOpen;
 		const auto scrollBehindBar = home && !artistPage;
@@ -8313,9 +8310,8 @@ protected:
 		}
 		if (!shown && _queuePanelOpen) {
 			setQueuePanelOpen(false);
-		} else {
-			relayout();
 		}
+		relayout();
 	}
 
 	[[nodiscard]] double navColumn(int index, int columns) const {
@@ -8324,31 +8320,31 @@ protected:
 		return index % columns + (columns - rowSize) / 2.;
 	}
 
-	[[nodiscard]] bool queuePanelDocked() const {
-		return width() >= style::ConvertScale(900);
-	}
-
-	void layoutQueuePanel(const QRect &target) {
+	void layoutQueuePanel() {
+		const auto &target = _queuePanelTarget;
 		const auto progress = _queueSlide.value(_queuePanelOpen ? 1. : 0.);
 		if (target.isEmpty() || (!_queuePanelOpen && progress <= 0.)) {
 			_queuePanel->hide();
 			return;
 		}
-		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto offset = int(base::SafeRound((width() - target.x()) * (1. - progress)));
 		const auto geometry = target.translated(offset, 0);
+		const auto resize = (_queuePanel->size() != target.size());
 		if (_queuePanel->geometry() != geometry) {
 			_queuePanel->setGeometry(geometry);
 			_queuePanel->update();
 		}
-		_queueSearch->resizeToWidth(std::max(target.width() - s(32), 1));
-		_queueSearch->moveToLeft(s(16), s(48));
-		const auto scrollTop = _queueSearch->geometry().bottom() + s(9);
-		_queueScroll->setGeometry(
-			s(8), scrollTop, std::max(target.width() - s(16), 0),
-			std::max(target.height() - scrollTop - s(12), 0));
-		if (_queueList->width() != _queueScroll->width()) {
-			_queueList->resizeToWidth(_queueScroll->width());
+		if (resize) {
+			const auto s = [](int v) { return style::ConvertScale(v); };
+			_queueSearch->resizeToWidth(std::max(target.width() - s(32), 1));
+			_queueSearch->moveToLeft(s(16), s(48));
+			const auto scrollTop = _queueSearch->geometry().bottom() + s(9);
+			_queueScroll->setGeometry(
+				s(8), scrollTop, std::max(target.width() - s(16), 0),
+				std::max(target.height() - scrollTop - s(12), 0));
+			if (_queueList->width() != _queueScroll->width()) {
+				_queueList->resizeToWidth(_queueScroll->width());
+			}
 		}
 		if (_queuePanel->isHidden()) {
 			_queuePanel->show();
@@ -8373,14 +8369,14 @@ protected:
 			_queueSlide.stop();
 		} else {
 			_queueSlide.start([this] {
-				if (queuePanelDocked()) {
-					relayout();
-				} else {
-					layoutQueuePanel(computeLayout().queuePanel);
-				}
+				layoutQueuePanel();
 			}, from, open ? 1. : 0., 240, anim::easeOutCubic);
 		}
-		relayout();
+		if (showsQueue()) {
+			_tabScroll->setVisible(!open);
+			update();
+		}
+		layoutQueuePanel();
 		if (open) {
 			refreshQueuePanel();
 		}
@@ -11037,6 +11033,7 @@ private:
 	std::unique_ptr<Ui::VerticalLayoutReorder> _queueReorder;
 	int _queueLayoutRevision = 0;
 	bool _queuePanelOpen = false;
+	QRect _queuePanelTarget;
 	Ui::Animations::Simple _queueSlide;
 	const not_null<Ui::RpWidget*> _playbackBar;
 	bool _hasPlaybackTrack = false;
