@@ -10099,6 +10099,8 @@ protected:
 					_homeLoaded = false;
 					rebuildTab();
 				})));
+			}
+			if (_homePages.empty()) {
 				section(tr("Избранное"), 2, liked);
 			}
 		} break;

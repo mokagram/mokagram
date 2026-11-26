@@ -4,6 +4,7 @@ mokaGram (26.11.26)
 - Keep the selected collectible's pattern and matching avatar ring in the color preview.
 - Restyle the Profile / Name switch as a themed pill.
 - Smooth the transition between Profile and Name in the color preview.
+- Show saved tracks on Music Home while recommendations load.
 
 mokaGram (24.11.26)
 
