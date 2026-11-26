@@ -42,7 +42,10 @@
 #include "ui/power_saving.h"
 #include "storage/cache/storage_cache_database.h"
 #include "base/call_delayed.h"
+#include <crl/crl_queue.h>
+#include <charconv>
 #include <deque>
+#include <limits>
 #include <map>
 #include <set>
 #include <QtGui/QGuiApplication>
@@ -52,6 +55,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QFile>
+#include <QtCore/QSaveFile>
 #include <QtCore/QTimer>
 #include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QNetworkReply>
@@ -1013,6 +1017,38 @@ void LoadDcCache() {
 	}
 }
 
+void WriteDcCache(
+		const QString &path,
+		const base::flat_map<uint64, int> &values) {
+	// Ключи и значения числовые. Собираем JSON за один проход без вставок
+	// в упорядоченный QJsonObject.
+	constexpr auto kIdSize = std::numeric_limits<uint64>::digits10 + 1;
+	constexpr auto kDcSize = std::numeric_limits<int>::digits10 + 2;
+	constexpr auto kEntrySize = kIdSize + kDcSize + sizeof("\"\":,") - 1;
+	auto bytes = QByteArray();
+	bytes.reserve(2 + qsizetype(values.size()) * kEntrySize);
+	bytes.append('{');
+	for (const auto &[id, dc] : values) {
+		char entry[kEntrySize];
+		auto end = entry;
+		*end++ = '"';
+		end = std::to_chars(end, entry + sizeof(entry), id).ptr;
+		*end++ = '"';
+		*end++ = ':';
+		end = std::to_chars(end, entry + sizeof(entry), dc).ptr;
+		*end++ = ',';
+		bytes.append(entry, end - entry);
+	}
+	if (!values.empty()) {
+		bytes.chop(1);
+	}
+	bytes.append('}');
+	auto file = QSaveFile(path);
+	if (file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size()) {
+		file.commit();
+	}
+}
+
 void SaveDcCache() {
 	auto &cache = UserDcCache();
 	if (cache.saveQueued) {
@@ -1023,14 +1059,11 @@ void SaveDcCache() {
 	base::call_delayed(3000, qApp, [] {
 		auto &cache = UserDcCache();
 		cache.saveQueued = false;
-		auto object = QJsonObject();
-		for (const auto &[id, dc] : cache.values) {
-			object.insert(QString::number(id), dc);
-		}
-		auto file = QFile(DcCachePath());
-		if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-			file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
-		}
+		// Снимки пишутся последовательно, чтобы старый не затёр новый.
+		static const auto worker = new crl::queue();
+		worker->async([path = DcCachePath(), values = cache.values] {
+			WriteDcCache(path, values);
+		});
 	});
 }
 
