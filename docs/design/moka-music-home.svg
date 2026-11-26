@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1156" role="img" aria-labelledby="title desc">
+  <title id="title">mokaGram Music: Material 3 Home</title>
+  <desc id="desc">Два макета: широкая тёмная лента с недавними треками и рекомендациями; узкая светлая лента во время загрузки. Обложки и названия демонстрационные.</desc>
+  <defs>
+    <clipPath id="shelf"><rect width="1000" height="256"/></clipPath>
+    <clipPath id="cover"><rect width="180" height="180" rx="12"/></clipPath>
+    <g id="recent"><rect width="318" height="64" rx="22"/></g>
+    <g id="tile"><rect width="200" height="256" rx="22"/></g>
+    <g id="art1" clip-path="url(#cover)">
+      <rect width="180" height="180" fill="#202433"/>
+      <circle cx="115" cy="63" r="45" fill="#f3a471"/>
+      <path d="M0 119 48 76l34 41 35-30 63 55v38H0Z" fill="#494262"/>
+      <path d="M0 140 51 119l45 28 42-21 42 18v36H0Z" fill="#8b5473"/>
+      <path d="M0 163h180M0 171h180" stroke="#da927a" opacity=".45"/>
+    </g>
+    <g id="art2" clip-path="url(#cover)">
+      <rect width="180" height="180" fill="#b8d5c6"/>
+      <path d="M-25 170 90 43l115 127M-25 144 90 17l115 127M-25 196 90 69l115 127" fill="none" stroke="#244c4e" stroke-width="14"/>
+      <circle cx="90" cy="90" r="17" fill="#e89961"/>
+    </g>
+    <g id="art3">
+      <circle cx="90" cy="90" r="90" fill="#cabce6"/>
+      <path d="M17 142a90 90 0 0 0 148-4l-24-28-32 10-36-25Z" fill="#52487c"/>
+      <circle cx="90" cy="75" r="35" fill="#736496"/>
+      <circle cx="103" cy="68" r="33" fill="#cabce6"/>
+    </g>
+    <g id="art4" clip-path="url(#cover)">
+      <rect width="180" height="180" fill="#412927"/>
+      <path d="M-18 126 153-10M0 163 198 5M42 179 204 51" stroke="#d07461" stroke-width="22"/>
+      <circle cx="92" cy="86" r="36" fill="#f3ce96"/>
+      <circle cx="92" cy="86" r="12" fill="#412927"/>
+    </g>
+    <g id="art5" clip-path="url(#cover)">
+      <rect width="180" height="180" fill="#223d60"/>
+      <circle cx="80" cy="94" r="64" fill="none" stroke="#658dc3" stroke-width="22"/>
+      <circle cx="103" cy="85" r="34" fill="#a8c6db"/>
+    </g>
+    <g id="skeleton">
+      <rect width="200" height="256" rx="22" fill="#eceff2"/>
+      <g fill="#dce1e6">
+        <rect x="10" y="10" width="180" height="180" rx="12"/>
+        <rect x="10" y="204" width="112" height="10" rx="5"/>
+        <rect x="10" y="228" width="70" height="8" rx="4"/>
+      </g>
+    </g>
+  </defs>
+  <g font-family="system-ui, sans-serif">
+    <rect width="1000" height="544" rx="24" fill="#1c1c1c"/>
+    <g transform="translate(260 18)" font-size="13" text-anchor="middle" fill="#c5c5cc">
+      <rect width="480" height="40" rx="20" fill="#323232"/>
+      <rect x="98" y="4" width="94" height="32" rx="16" fill="#2470c8"/>
+      <text y="25"><tspan x="51">Сейчас играет</tspan><tspan x="145" fill="#fff" font-weight="650">Главная</tspan><tspan x="239">Поиск</tspan><tspan x="333">Медиатека</tspan><tspan x="427">Плейлисты</tspan></text>
+    </g>
+    <text x="14" y="102" fill="#f5f5f5" font-size="20" font-weight="650">Недавно</text>
+    <g transform="translate(14 116)" font-size="14">
+      <use href="#recent" fill="#303946"/>
+      <use href="#art1" transform="translate(10 10) scale(.24444)"/>
+      <text x="66" y="28" fill="#f5f5f5" font-weight="650">После заката</text>
+      <text x="66" y="48" fill="#b9bec7">Маяк</text>
+      <rect x="264" y="13" width="38" height="38" rx="19" fill="#2470c8"/>
+      <rect x="278" y="25" width="3" height="14" rx="1" fill="#fff"/><rect x="285" y="25" width="3" height="14" rx="1" fill="#fff"/>
+    </g>
+    <g transform="translate(340 116)" font-size="14">
+      <use href="#recent" fill="#282828"/>
+      <use href="#art2" transform="translate(10 10) scale(.24444)"/>
+      <text x="66" y="28" fill="#f5f5f5" font-weight="650">Тёплый фронт</text>
+      <text x="66" y="48" fill="#aaaab1">Параллели</text>
+    </g>
+    <g transform="translate(666 116)" font-size="14">
+      <use href="#recent" fill="#282828"/>
+      <use href="#art4" transform="translate(10 10) scale(.24444)"/>
+      <text x="66" y="28" fill="#f5f5f5" font-weight="650">Северная линия</text>
+      <text x="66" y="48" fill="#aaaab1">Медленно</text>
+    </g>
+    <text x="14" y="228" fill="#f5f5f5" font-size="20" font-weight="650">Для вас</text>
+    <rect x="850" y="202" width="136" height="40" rx="20" fill="#282828"/>
+    <text x="918" y="227" fill="#f5f5f5" text-anchor="middle" font-size="14" font-weight="650">Показать все</text>
+    <g transform="translate(0 248)" clip-path="url(#shelf)" font-size="14">
+      <g transform="translate(14)"><use href="#tile" fill="#282828"/><use href="#art1" x="10" y="10"/><text x="10" y="218" fill="#f5f5f5" font-weight="650">После заката</text><text x="10" y="240" fill="#aaaab1">Маяк</text></g>
+      <g transform="translate(222)"><use href="#tile" fill="#282828"/><use href="#art2" x="10" y="10"/><text x="10" y="218" fill="#f5f5f5" font-weight="650">Линия прибоя</text><text x="10" y="240" fill="#aaaab1">2025 · Альбом</text></g>
+      <g transform="translate(430)"><use href="#tile" fill="#282828"/><use href="#art3" x="10" y="10"/><text x="10" y="218" fill="#f5f5f5" font-weight="650">Сон в июле</text><text x="10" y="240" fill="#aaaab1">Исполнитель</text></g>
+      <g transform="translate(638)"><use href="#tile" fill="#282828"/><use href="#art4" x="10" y="10"/><text x="10" y="218" fill="#f5f5f5" font-weight="650">Медленный свет</text><text x="10" y="240" fill="#aaaab1">Параллели</text></g>
+      <g transform="translate(846)"><use href="#tile" fill="#282828"/><use href="#art5" x="10" y="10"/></g>
+    </g>
+    <text x="14" y="530" fill="#aaaab1" font-size="13">Широкое окно · лента загружена</text>
+
+    <g transform="translate(0 568)">
+      <rect width="500" height="576" rx="24" fill="#f9f9fb"/>
+      <g transform="translate(14 18)" font-size="13" text-anchor="middle" fill="#41474e">
+        <rect width="472" height="40" rx="20" fill="#e2e7ec"/>
+        <rect x="96" y="4" width="93" height="32" rx="16" fill="#2470c8"/>
+        <text y="25"><tspan x="50">Сейчас играет</tspan><tspan x="142" fill="#fff" font-weight="650">Главная</tspan><tspan x="236">Поиск</tspan><tspan x="330">Медиатека</tspan><tspan x="424">Плейлисты</tspan></text>
+      </g>
+      <text x="14" y="102" fill="#191d22" font-size="20" font-weight="650">Недавно</text>
+      <g transform="translate(14 116)" font-size="14">
+        <rect width="472" height="64" rx="22" fill="#eceff2"/>
+        <use href="#art1" transform="translate(10 10) scale(.24444)"/>
+        <text x="66" y="28" fill="#191d22" font-weight="650">После заката</text>
+        <text x="66" y="48" fill="#555e68">Маяк</text>
+      </g>
+      <g transform="translate(14 188)" font-size="14">
+        <rect width="472" height="64" rx="22" fill="#eceff2"/>
+        <use href="#art2" transform="translate(10 10) scale(.24444)"/>
+        <text x="66" y="28" fill="#191d22" font-weight="650">Тёплый фронт</text>
+        <text x="66" y="48" fill="#555e68">Параллели</text>
+      </g>
+      <text x="14" y="288" fill="#555e68" font-size="14">Подбираю музыку под ваш вкус…</text>
+      <rect x="14" y="302" width="240" height="3" rx="1.5" fill="#dce1e6"/>
+      <rect x="14" y="302" width="78" height="3" rx="1.5" fill="#2470c8"/>
+      <svg x="0" y="320" width="500" height="256" overflow="hidden"><use href="#skeleton" x="14"/><use href="#skeleton" x="222"/><use href="#skeleton" x="430"/></svg>
+    </g>
+    <g transform="translate(534 603)" fill="#757575">
+      <text y="16" font-size="20" font-weight="650">Узкое окно · загрузка</text>
+      <text y="50" font-size="14">Недавнее остаётся доступным.</text>
+      <text y="74" font-size="14">Скелетоны повторяют размеры карточек.</text>
+      <text y="112" font-size="14">Обложки и названия демонстрационные.</text>
+    </g>
+  </g>
+</svg>

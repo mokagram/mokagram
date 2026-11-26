@@ -60,6 +60,7 @@
 - **«Плагины»** (`plugins/mokagram_plugin_install.cpp`): список карточек с переключателями, круглые кнопки шапки.
 - **Вход в SoundCloud** (`music/mokagram_soundcloud_login.cpp`): карточка со значком и строкой статуса, две пилюли, скрытая карточка ручного ввода.
 - **Музыка** (`music/mokagram_music_ui.cpp`): схема в [docs/design/moka-music.svg](docs/design/moka-music.svg), общий лист элементов в [docs/design/moka-identity.svg](docs/design/moka-identity.svg). Схемы составлены по коду и не заменяют проверку в клиенте.
+- **Главная музыки**: [моки Home](docs/design/moka-music-home.svg). Для треков, альбомов и исполнителей используются [заполненные карточки M3](https://m3.material.io/components/cards/guidelines). В [горизонтальной карусели](https://m3.material.io/components/carousel/guidelines) обложки остаются квадратными, а край следующей карточки показывает, что ряд можно прокрутить. «Показать все» открывает сетку; скелетоны сохраняют размеры карточек.
 
 ## Как собрать экран в стиле M3
 
