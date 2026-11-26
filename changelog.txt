@@ -6,6 +6,7 @@ mokaGram (26.11.26)
 - Smooth the transition between Profile and Name in the color preview.
 - Show saved tracks on Music Home while recommendations load.
 - Restyle Music Home with Material 3 cards, carousels and loading states.
+- Fade clipped Music carousel edges into the background wherever more cards can be scrolled into view.
 - Restyle music artist and album pages in Material 3, with consistent discography filters and a plain artist link.
 - Hide redundant type and count labels in single-track headers.
 - Show a complete For You batch without waiting for slow SoundCloud replies.

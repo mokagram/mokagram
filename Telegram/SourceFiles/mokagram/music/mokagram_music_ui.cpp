@@ -4009,6 +4009,21 @@ public:
 		if (!_expanded) {
 			_scroll = Ui::CreateChild<Ui::ScrollArea>(this, st::defaultScrollArea);
 			_content = _scroll->setOwnedWidget(object_ptr<Ui::RpWidget>(_scroll));
+			const auto makeEdge = [=](bool right) {
+				const auto edge = Ui::CreateChild<Ui::RpWidget>(this);
+				edge->setAttribute(Qt::WA_TransparentForMouseEvents);
+				edge->paintOn([=](QPainter &p) {
+					const auto outer = right ? edge->width() : 0;
+					const auto inner = right ? 0 : edge->width();
+					auto fade = QLinearGradient(outer, 0, inner, 0);
+					fade.setColorAt(0., st::boxBg->c);
+					fade.setColorAt(1., Qt::transparent);
+					p.fillRect(edge->rect(), fade);
+				});
+				return edge;
+			};
+			_leftEdge = makeEdge(false);
+			_rightEdge = makeEdge(true);
 			_scroll->setCustomWheelProcess([=](not_null<QWheelEvent*> event) {
 				// Keep a trackpad gesture on one axis, including its momentum.
 				auto delta = event->pixelDelta();
@@ -4036,7 +4051,7 @@ public:
 			});
 			_scroll->scrolls() | rpl::on_next([=] {
 				if (!_restoring && _offset) *_offset = _scroll->scrollLeft();
-				updateArrows();
+				updateScrollEdges();
 			}, lifetime());
 			const auto slide = [=](int delta) {
 				const auto from = _scroll->scrollLeft();
@@ -4121,20 +4136,34 @@ protected:
 			crl::on_main(this, [=] {
 				if (_offset) _scroll->scrollToX(*_offset);
 				_restoring = false;
-				updateArrows();
+				updateScrollEdges();
 			});
 		}
-		updateArrows();
+		updateScrollEdges();
 		return cardHeight + gap;
 	}
 
 private:
-	void updateArrows() {
-		if (!_scroll || !_previous || !_next) return;
-		const auto canBack = _scroll->scrollLeft() > 0;
-		const auto canForward = _scroll->scrollLeft() < _scroll->scrollLeftMax();
-		_previous->setVisible(canBack);
-		_next->setVisible(canForward);
+	void updateScrollEdges() {
+		if (!_previous || !_next) return;
+		const auto left = _scroll->scrollLeft();
+		const auto right = _scroll->scrollLeftMax() - left;
+		const auto width = _scroll->width();
+		const auto height = _scroll->height() - style::ConvertScale(kHomeCardGap);
+		const auto fade = std::min(style::ConvertScale(48), width / 2);
+		const auto updateEdge = [&](Ui::RpWidget *edge, int overflow, bool right) {
+			const auto extent = std::clamp(overflow, 0, fade);
+			if (extent > 0 && height > 0) {
+				edge->setGeometry(right ? width - extent : 0, 0, extent, height);
+				edge->show();
+			} else {
+				edge->hide();
+			}
+		};
+		updateEdge(_leftEdge, left, false);
+		updateEdge(_rightEdge, right, true);
+		_previous->setVisible(left > 0);
+		_next->setVisible(right > 0);
 	}
 
 	bool _expanded = false;
@@ -4144,6 +4173,8 @@ private:
 	std::shared_ptr<int> _offset;
 	Ui::ScrollArea *_scroll = nullptr;
 	Ui::RpWidget *_content = nullptr;
+	Ui::RpWidget *_leftEdge = nullptr;
+	Ui::RpWidget *_rightEdge = nullptr;
 	HomeCarouselArrow *_previous = nullptr;
 	HomeCarouselArrow *_next = nullptr;
 	Ui::Animations::Simple _slide;
