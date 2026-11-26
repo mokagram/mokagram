@@ -426,24 +426,21 @@ void SaveProfileLook(
 			accent.hslHueF(),
 			std::min<float64>(accent.hslSaturationF(), 0.64),
 			0.13);
-		const auto feather = style::ConvertScale(22);
+		const auto feather = style::ConvertScale(44);
 		const auto shadeTop = std::max(detailsTop - feather, 0);
 		const auto shadeBounds = QRect(0, shadeTop, width, width - shadeTop);
 		auto shade = QLinearGradient(
 			QPointF(0, shadeTop),
 			QPointF(0, width));
-		constexpr auto stops = 16;
-		const auto smooth = [](float64 progress) {
-			const auto value = std::clamp(progress, 0., 1.);
-			return value * value * (3. - 2. * value);
-		};
+		constexpr auto stops = 32;
+		const auto peak = -std::expm1(-12.);
 		for (auto i = 0; i <= stops; ++i) {
 			const auto progress = i / float64(stops);
-			const auto distance = progress * shadeBounds.height();
-			const auto ramp = smooth(distance / feather);
-			const auto base = smooth((distance - feather)
-				/ (shadeBounds.height() - feather));
-			veil.setAlpha(int(std::round(186. * ramp + 48. * base)));
+			const auto depth = progress * progress;
+			// Mokagram: keep the fade continuous above and below the name.
+			const auto opacity = 0.66 * (-std::expm1(-12. * depth) / peak)
+				+ 0.34 * depth;
+			veil.setAlpha(int(std::round(234. * opacity)));
 			shade.setColorAt(progress, veil);
 		}
 		p.fillRect(shadeBounds, shade);
