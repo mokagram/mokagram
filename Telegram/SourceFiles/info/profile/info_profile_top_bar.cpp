@@ -247,6 +247,21 @@ void BackdropIconButton::onStateChanged(
 	return static_cast<BackdropIconButton*>(button.get());
 }
 
+// Mokagram: a worn gift owns its pattern; keep the personal pattern for when
+// the gift is removed. Resolve the same document for loading and painting.
+[[nodiscard]] DocumentId ProfilePatternId(
+		bool preview,
+		DocumentId peerPattern,
+		std::optional<DocumentId> localPattern,
+		const Data::EmojiStatusCollectible *collectible) {
+	if (collectible && collectible->patternDocumentId) {
+		return collectible->patternDocumentId;
+	}
+	return (!preview && peerPattern)
+		? peerPattern
+		: localPattern.value_or(peerPattern);
+}
+
 struct PatternColors {
 	QColor patternColor;
 	bool useOverlayBlend = false;
@@ -491,6 +506,9 @@ TopBar::TopBar(
 }())
 , _backToggles(std::move(descriptor.backToggles)) {
 	setObjectName(u"profileTopBar"_q);
+	if (_source == Source::Preview) {
+		_localCollectible = _peer->emojiStatusId().collectible;
+	}
 	_peer->updateFull();
 	_communityEffect = (_source == Source::Community);
 	if (const auto broadcast = _peer->monoforumBroadcast()) {
@@ -839,13 +857,11 @@ void TopBar::updateCollectibleStatus() {
 	_cachedGradient = QImage();
 	_basePatternImage = QImage();
 	_lastUserpicRect = QRect();
-	const auto patternEmojiId = _localPatternEmojiId
-		? (_source != Source::Preview && _peer->profileBackgroundEmojiId()
-			? _peer->profileBackgroundEmojiId()
-			: *_localPatternEmojiId)
-		: collectible && collectible->patternDocumentId
-		? collectible->patternDocumentId
-		: _peer->profileBackgroundEmojiId();
+	const auto patternEmojiId = ProfilePatternId(
+		_source == Source::Preview,
+		_peer->profileBackgroundEmojiId(),
+		_localPatternEmojiId,
+		collectible.get());
 	if (patternEmojiId) {
 		const auto document = _peer->owner().document(patternEmojiId);
 		if (!_patternEmoji
@@ -2143,7 +2159,8 @@ std::optional<Data::ColorProfileSet> TopBar::effectiveColorProfile() const {
 
 auto TopBar::effectiveCollectible() const
 -> std::shared_ptr<Data::EmojiStatusCollectible> {
-	return _localCollectible
+	// Mokagram: clearing the gift in preview must not restore the worn gift.
+	return (_source == Source::Preview || _localCollectible)
 		? _localCollectible
 		: _localColorProfileIndex
 		? nullptr
@@ -3567,9 +3584,17 @@ void TopBar::paintAnimatedPattern(
 	}
 
 	if (_basePatternImage.isNull()) {
-		auto patternColors = CalculatePatternColors(
+		const auto collectible = effectiveCollectible();
+		const auto patternId = ProfilePatternId(
+			_source == Source::Preview,
+			_peer->profileBackgroundEmojiId(),
+			_localPatternEmojiId,
+			collectible.get());
+		const auto giftPattern = collectible
+			&& patternId == collectible->patternDocumentId;
+		const auto patternColors = CalculatePatternColors(
 			effectiveColorProfile(),
-			effectiveCollectible(),
+			giftPattern ? collectible : nullptr,
 			_edgeColor.current(),
 			Window::Theme::IsNightMode());
 		const auto ratio = style::DevicePixelRatio();
@@ -3589,16 +3614,8 @@ void TopBar::paintAnimatedPattern(
 		_patternEmoji->paint(painter, { .textColor = Qt::white });
 		painter.resetTransform();
 
-		const auto collectible = effectiveCollectible();
-		const auto patternId = (_source != Source::Preview
-				&& _peer->profileBackgroundEmojiId())
-			? _peer->profileBackgroundEmojiId()
-			: _localPatternEmojiId.value_or(
-			collectible && collectible->patternDocumentId
-				? collectible->patternDocumentId
-				: _peer->profileBackgroundEmojiId());
-		const auto colorized = _peer->owner().document(
-			patternId)->emojiUsesTextColor();
+		const auto colorized = giftPattern
+			|| _peer->owner().document(patternId)->emojiUsesTextColor();
 		if (colorized && patternColors.useOverlayBlend) {
 			painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
 			painter.fillRect(

@@ -2218,13 +2218,13 @@ void EditPeerProfileColorSection(
 		bool patternChanged = false;
 		rpl::variable<EmojiStatusId> wearable;
 		rpl::variable<uint64> showingGiftId;
-		rpl::variable<uint64> selectedGiftId;
 		std::shared_ptr<Data::UniqueGift> buyCollectible;
 		Ui::ColorSelector *selector = nullptr;
 	};
 	const auto state = button->lifetime().make_state<State>();
 	state->patternEmojiId = peer->profileBackgroundEmojiId();
 	state->wearable = peer->emojiStatusId();
+	preview->setPatternEmojiId(state->patternEmojiId.current());
 
 	const auto resetUnique = [=] {
 		preview->setLocalEmojiStatusId({});
@@ -2240,9 +2240,6 @@ void EditPeerProfileColorSection(
 		preview->setColorProfileIndex(index == kUnsetColorIndex
 			? std::nullopt
 			: std::make_optional(index));
-		preview->setPatternEmojiId(index == kUnsetColorIndex
-			? std::nullopt
-			: std::make_optional(state->patternEmojiId.current()));
 	};
 	setIndex(peer->emojiStatusId().collectible
 		? kUnsetColorIndex
@@ -2368,9 +2365,7 @@ void EditPeerProfileColorSection(
 			session,
 			std::move(showingGiftId),
 			[=](std::shared_ptr<Data::UniqueGift> selected) {
-				state->selectedGiftId = selected->id;
 				state->index = kUnsetColorIndex;
-				state->patternEmojiId = 0;
 				state->buyCollectible = (selected->peerColor
 					&& (selected->ownerId != session->userPeerId())
 					&& selected->starsForResale > 0)
@@ -2379,7 +2374,6 @@ void EditPeerProfileColorSection(
 				const auto statuses = &peer->owner().emojiStatuses();
 				state->wearable = statuses->fromUniqueGift(*selected);
 				preview->setColorProfileIndex(std::nullopt);
-				preview->setPatternEmojiId(selected->pattern.document->id);
 				preview->setLocalEmojiStatusId(state->wearable.current());
 				resetWrap->toggle(true, anim::type::normal);
 			},
@@ -2387,7 +2381,7 @@ void EditPeerProfileColorSection(
 				return value.collectible ? value.collectible->id : 0;
 			}),
 			true,
-			state->selectedGiftId.value(),
+			rpl::single(uint64(0)),
 			giftTabs.switchToNext);
 	}
 
