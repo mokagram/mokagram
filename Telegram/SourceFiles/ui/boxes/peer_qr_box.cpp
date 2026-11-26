@@ -386,7 +386,7 @@ void SaveProfileLook(
 	const auto handleHeight = handle.isEmpty()
 		? 0
 		: smallGap + kTrackArtist.lineHeight();
-	const auto detailsTop = cover.bottom() + 1 - inset
+	const auto detailsTop = cover.bottom() + 1 - style::ConvertScale(10)
 		- kTrackTitle.lineHeight() - handleHeight;
 	const auto titleEnd = detailsTop + kTrackTitle.lineHeight();
 	const auto bioTop = width + gap;
@@ -426,16 +426,27 @@ void SaveProfileLook(
 			accent.hslHueF(),
 			std::min<float64>(accent.hslSaturationF(), 0.64),
 			0.13);
-		auto shade = QLinearGradient(cover.topLeft(), cover.bottomLeft());
+		const auto feather = style::ConvertScale(22);
+		const auto shadeTop = std::max(detailsTop - feather, 0);
+		const auto shadeBounds = QRect(0, shadeTop, width, width - shadeTop);
+		auto shade = QLinearGradient(
+			QPointF(0, shadeTop),
+			QPointF(0, width));
 		constexpr auto stops = 16;
+		const auto smooth = [](float64 progress) {
+			const auto value = std::clamp(progress, 0., 1.);
+			return value * value * (3. - 2. * value);
+		};
 		for (auto i = 0; i <= stops; ++i) {
-			const auto y = i / float64(stops);
-			const auto depth = std::clamp((y - 0.10) / 0.82, 0., 1.);
-			const auto opacity = depth * depth * (3. - 2. * depth);
-			veil.setAlpha(int(std::round(240. * opacity)));
-			shade.setColorAt(y, veil);
+			const auto progress = i / float64(stops);
+			const auto distance = progress * shadeBounds.height();
+			const auto ramp = smooth(distance / feather);
+			const auto base = smooth((distance - feather)
+				/ (shadeBounds.height() - feather));
+			veil.setAlpha(int(std::round(186. * ramp + 48. * base)));
+			shade.setColorAt(progress, veil);
 		}
-		p.fillRect(cover, shade);
+		p.fillRect(shadeBounds, shade);
 	} else {
 		p.fillRect(cover, st::windowBgOver);
 		const auto avatarLeft = (width - avatar) / 2;
