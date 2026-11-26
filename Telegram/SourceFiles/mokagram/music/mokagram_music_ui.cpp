@@ -3070,7 +3070,9 @@ private:
 		auto subtitleRect = listTextRect(false);
 		p.setFont(_titleFont);
 		p.setPen((popular && isDisabled()) ? st::windowSubTextFg
-			: (playing && !detail) ? st::windowActiveTextFg : st::windowFg);
+			: (playing && !detail && _mode != RowMode::QueueCurrent)
+			? st::windowActiveTextFg
+			: st::windowFg);
 		p.drawText(
 			titleRect,
 			Qt::AlignVCenter | Qt::AlignLeft,
@@ -7412,10 +7414,9 @@ public:
 		});
 		_queuePanel->hide();
 		_queueTabBar = Ui::CreateChild<Ui::RpWidget>(_queuePanel);
-		const auto tabAccent = [] { return st::windowActiveTextFg->c; };
-		_queueTabs[0] = Ui::CreateChild<NavItem>(_queueTabBar, queueTitle, true, tabAccent);
+		_queueTabs[0] = Ui::CreateChild<NavItem>(_queueTabBar, queueTitle, true);
 		_queueTabs[1] = Ui::CreateChild<NavItem>(
-			_queueTabBar, PlaylistText("Недавно"), true, tabAccent);
+			_queueTabBar, PlaylistText("Недавно"), true);
 		_queueTabBar->paintOn([=](QPainter &p) {
 			const auto hq = PainterHighQualityEnabler(p);
 			const auto area = _queueTabBar->rect();
@@ -7423,11 +7424,11 @@ public:
 			const auto segment = std::max(area.width() - 2 * inset, 0) / 2.;
 			const auto at = _queueTabSlide.unitValue(_queueHistory ? 1. : 0.);
 			p.setPen(Qt::NoPen);
-			p.setBrush(TintedNavTrack(tabAccent()));
+			p.setBrush(st::boxBg);
 			p.drawRoundedRect(area, area.height() / 2., area.height() / 2.);
 			const auto active = QRectF(inset + segment * at, inset,
 				segment, area.height() - 2 * inset);
-			p.setBrush(tabAccent());
+			p.setBrush(anim::color(st::windowBgOver->c, st::windowFg->c, .08));
 			p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
 		});
 		for (auto i = 0; i != int(_queueTabs.size()); ++i) {
@@ -7442,11 +7443,17 @@ public:
 				_queueContent, object_ptr<Ui::FlatLabel>(_queueContent, std::move(text), style),
 				padding));
 		};
-		_queueNowLabel = addLabel(PlaylistText("Сейчас играет"), st::defaultSubsectionTitle,
-			QMargins(s(8), s(4), s(8), s(2)));
+		static const auto sectionStyle = [] {
+			auto result = st::defaultSubsectionTitle;
+			result.textFg = st::windowFg;
+			result.minWidth = 0;
+			return result;
+		}();
+		_queueNowLabel = addLabel(PlaylistText("Сейчас играет"), sectionStyle,
+			QMargins(s(8), s(2), s(8), s(2)));
 		_queueNow = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
-		_queueNextLabel = addLabel(PlaylistText("Далее в очереди"), st::defaultSubsectionTitle,
-			QMargins(s(8), s(12), s(8), s(2)));
+		_queueNextLabel = addLabel(PlaylistText("Далее в очереди"), sectionStyle,
+			QMargins(s(8), s(10), s(8), s(2)));
 		_queueList = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
 		_queueEmpty = addLabel({}, st::boxDividerLabel, QMargins(s(8), s(8), s(8), 0));
 		_queueReorder = std::make_unique<Ui::VerticalLayoutReorder>(_queueList, _queueScroll);
@@ -7472,38 +7479,31 @@ public:
 			});
 		}, lifetime());
 		const auto queueSearchLabel = QString::fromUtf8(Mokagram::Lang::Tr("Поиск в очереди"));
+		static const auto queueSearchStyle = [] {
+			auto result = st::defaultInputField;
+			const auto s = [](int value) { return style::ConvertScale(value); };
+			const auto height = s(44);
+			const auto line = std::max(result.style.lineHeight, result.style.font->height);
+			const auto top = std::max((height - line) / 2, 0);
+			result.textBg = result.textBgActive = st::boxBg;
+			result.textMargins = QMargins(s(14), top, s(14), std::max(height - line - top, 0));
+			result.placeholderFgActive = st::windowSubTextFg;
+			result.placeholderScale = 0.;
+			result.placeholderShift = 0;
+			result.placeholderFont = result.style.font;
+			result.borderRadius = s(14);
+			result.heightMin = height;
+			return result;
+		}();
 		_queueSearch = Ui::CreateChild<Ui::InputField>(
-			_queuePanel, st::defaultInputField, rpl::single(queueSearchLabel));
+			_queuePanel, queueSearchStyle, rpl::single(queueSearchLabel));
 		_queueSearch->setAccessibleName(queueSearchLabel);
 		_queueSearch->changes() | rpl::on_next([=] {
 			_queueScroll->scrollToY(0);
 			refreshQueuePanel();
 		}, lifetime());
 		_queuePanel->paintOn([=](QPainter &p) {
-			const auto hq = PainterHighQualityEnabler(p);
-			const auto area = _queuePanel->rect();
-			const auto shape = Ui::SquirclePath(QRectF(area), s(22));
-			const auto plain = _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
-			if (plain < 1.) {
-				p.save();
-				p.setClipPath(shape, Qt::IntersectClip);
-				paintBackgroundPart(p, area, _queuePanel->pos());
-				p.restore();
-			}
-			p.setOpacity(0.58 + 0.42 * plain);
-			if (_tab == Tab::Home && _homeArtistOpen) {
-				const auto base = st::windowBg->c;
-				const auto accent = homeDetailAccent();
-				auto gradient = QLinearGradient(0, 0, 0, area.height());
-				gradient.setColorAt(0., accent.isValid()
-					? anim::color(base, accent, 0.16)
-					: base);
-				gradient.setColorAt(0.65, base);
-				gradient.setColorAt(1., base);
-				p.fillPath(shape, gradient);
-			} else {
-				p.fillPath(shape, st::boxBg);
-			}
+			BoxParts::PaintCard(p, _queuePanel->rect());
 		});
 		_shuffle->resize(s(36), s(36));
 		_previous->resize(s(40), s(40));
@@ -8536,7 +8536,7 @@ protected:
 		}
 		if (resize) {
 			const auto s = [](int v) { return style::ConvertScale(v); };
-			const auto tabsTop = s(8);
+			const auto tabsTop = s(12);
 			const auto tabsHeight = s(40);
 			const auto side = s(16);
 			const auto tabWidth = std::max(target.width() - 2 * side, 0);
@@ -8547,7 +8547,7 @@ protected:
 			_queueTabs[0]->setGeometry(inset, 0, first, tabsHeight);
 			_queueTabs[1]->setGeometry(inset + first, 0, inner - first, tabsHeight);
 			_queueSearch->resizeToWidth(std::max(tabWidth, 1));
-			_queueSearch->moveToLeft(side, tabsTop + tabsHeight);
+			_queueSearch->moveToLeft(side, tabsTop + tabsHeight + s(8));
 			const auto scrollTop = _queueSearch->geometry().bottom() + s(9);
 			_queueScroll->setGeometry(
 				s(8), scrollTop, std::max(target.width() - s(16), 0),
