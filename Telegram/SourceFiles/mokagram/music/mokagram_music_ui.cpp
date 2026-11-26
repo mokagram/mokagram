@@ -7278,12 +7278,6 @@ public:
 				p.fillPath(shape, st::boxBg);
 			}
 			p.setOpacity(1.);
-			p.setFont(labelFont(19, true));
-			p.setPen(st::windowFg);
-			p.drawText(
-				QRect(s(16), 0, std::max(_queuePanel->width() - s(32), 0), s(48)),
-				Qt::AlignLeft | Qt::AlignVCenter,
-				queueTitle);
 			if (_queueList->count() == 0) {
 				const auto top = _queueScroll->y();
 				p.setFont(labelFont(15, false));
@@ -8337,7 +8331,7 @@ protected:
 		if (resize) {
 			const auto s = [](int v) { return style::ConvertScale(v); };
 			_queueSearch->resizeToWidth(std::max(target.width() - s(32), 1));
-			_queueSearch->moveToLeft(s(16), s(48));
+			_queueSearch->moveToLeft(s(16), s(12));
 			const auto scrollTop = _queueSearch->geometry().bottom() + s(9);
 			_queueScroll->setGeometry(
 				s(8), scrollTop, std::max(target.width() - s(16), 0),
