@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/lang/mokagram_lang.h"
 
 #include "mokagram/commands/mokagram_commands.h"
+#include "mokagram/streamer/mokagram_streamer.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "mokagram/ui/mokagram_glass.h"
 
 #include "settings/settings_common_session.h"
@@ -28,10 +30,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/username_box.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
+#include "core/ui_integration.h"
 #include "data/components/credits.h"
 #include "data/components/promo_suggestions.h"
 #include "data/data_chat_filters.h"
 #include "data/data_cloud_themes.h"
+#include "data/data_peer_values.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "info/info_memento.h"
@@ -110,10 +114,6 @@ using namespace Builder;
 
 constexpr auto kSugValidatePhone = "VALIDATE_PHONE_NUMBER"_cs;
 
-// Mokagram: шапка настроек по центру, место под ник и юз под аватаркой.
-constexpr auto kCoverExtra = 66;
-constexpr auto kCoverNameTop = 8 + 100 + 6;
-
 class Cover final : public Ui::FixedHeightWidget {
 public:
 	Cover(
@@ -127,13 +127,9 @@ public:
 	}
 
 private:
-	void setupChildGeometry();
 	void initViewers();
 	void updatePhoneText();
-	void refreshNameGeometry(int newWidth);
-	void refreshPhoneGeometry(int newWidth);
-	void refreshUsernameGeometry(int newWidth);
-	void refreshQrButtonGeometry(int newWidth);
+	void refreshGeometry(int newWidth);
 
 	const not_null<Window::SessionController*> _controller;
 	const not_null<UserData*> _user;
@@ -143,9 +139,10 @@ private:
 	object_ptr<Ui::UserpicButton> _userpic;
 	object_ptr<Ui::FlatLabel> _name = { nullptr };
 	object_ptr<Ui::FlatLabel> _phone = { nullptr };
-	QString _phoneText;
+	TextWithEntities _phoneText;
 	object_ptr<Ui::FlatLabel> _username = { nullptr };
 	object_ptr<Ui::IconButton> _qrButton = { nullptr };
+	object_ptr<Ui::IconButton> _screenshotButton = { nullptr };
 
 };
 
@@ -155,17 +152,23 @@ Cover::Cover(
 	not_null<UserData*> user)
 : FixedHeightWidget(
 	parent,
-	st::settingsPhotoTop
-		+ st::infoProfileCover.photo.size.height()
-		+ st::settingsPhotoBottom
-		+ kCoverExtra)
+	st::infoProfileCover.photo.size.height() + style::ConvertScale(32))
 , _controller(controller)
 , _user(user)
 , _badge(
 	this,
 	st::settingsCoverBadge,
 	&user->session(),
-	Info::Profile::BadgeContentForPeer(user),
+	rpl::combine(
+		Data::PeerPremiumValue(user),
+		Info::Profile::ShownEmojiStatusIdValue(user)
+	) | rpl::map([](bool premium, EmojiStatusId status) {
+		using Type = Info::Profile::BadgeType;
+		return Info::Profile::Badge::Content{
+			.badge = (premium || status) ? Type::Premium : Type::None,
+			.emojiStatusId = std::move(status),
+		};
+	}),
 	&_emojiStatusPanel,
 	[=] {
 		return controller->isGifPausedAtLeastFor(
@@ -185,17 +188,14 @@ Cover::Cover(
 , _username(this, st::infoProfileMegagroupCover.status) {
 	_user->updateFull();
 
-	// Mokagram: шапка настроек обычной скруглённой карточкой.
+	// Mokagram: keep account identity and sharing actions on one surface.
 	paintRequest(
 	) | rpl::on_next([=] {
 		auto p = QPainter(this);
-		p.setRenderHint(QPainter::Antialiasing);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBg);
-		p.drawRoundedRect(
-			QRectF(rect()).marginsRemoved(QMarginsF(10, 4, 10, 4)),
-			22.,
-			22.);
+		const auto side = style::ConvertScale(10);
+		const auto vertical = style::ConvertScale(4);
+		Mokagram::BoxParts::PaintCard(p,
+			rect().marginsRemoved(QMargins(side, vertical, side, vertical)));
 	}, lifetime());
 
 	_name->setSelectable(true);
@@ -221,7 +221,6 @@ Cover::Cover(
 	_phone->setContextMenuHook(hook);
 
 	initViewers();
-	setupChildGeometry();
 
 	_userpic->setVideoAllowed(true);
 	_userpic->switchChangePhotoOverlay(_user->isSelf(), [=](
@@ -249,7 +248,7 @@ Cover::Cover(
 			_badge.sizeTag());
 	});
 	_badge.updated() | rpl::on_next([=] {
-		refreshNameGeometry(width());
+		refreshGeometry(width());
 	}, _name->lifetime());
 
 	_qrButton.create(this, st::infoProfileLabeledButtonQr);
@@ -258,39 +257,33 @@ Cover::Cover(
 		Ui::DefaultShowFillPeerQrBoxCallback(show, _user);
 	});
 	_qrButton->show();
-	refreshNameGeometry(width());
-	refreshQrButtonGeometry(width());
+	_screenshotButton.create(this, st::infoProfileLabeledButtonQr);
+	_screenshotButton->setIconOverride(&st::menuIconCopy, &st::menuIconCopy);
+	_screenshotButton->setAccessibleName(
+		QString::fromUtf8(Mokagram::Lang::Tr("Скриншот профиля")));
+	_screenshotButton->setClickedCallback([=, show = controller->uiShow()] {
+		Ui::ShowProfileShareBox(show, _user);
+	});
+	_screenshotButton->show();
+	widthValue() | rpl::on_next([=](int newWidth) {
+		refreshGeometry(newWidth);
+	}, lifetime());
 }
 
 Cover::~Cover() = default;
-
-void Cover::setupChildGeometry() {
-	using namespace rpl::mappers;
-	widthValue(
-	) | rpl::on_next([=](int newWidth) {
-		_userpic->moveToLeft(
-			(newWidth - _userpic->width()) / 2,
-			st::settingsPhotoTop + 4,
-			newWidth);
-		refreshNameGeometry(newWidth);
-		refreshPhoneGeometry(newWidth);
-		refreshUsernameGeometry(newWidth);
-		refreshQrButtonGeometry(newWidth);
-	}, lifetime());
-}
 
 void Cover::initViewers() {
 	Info::Profile::NameValue(
 		_user
 	) | rpl::on_next([=](const QString &name) {
 		_name->setText(name);
-		refreshNameGeometry(width());
+		refreshGeometry(width());
 	}, lifetime());
 
 	Info::Profile::PhoneValue(
 		_user
 	) | rpl::on_next([=](const TextWithEntities &value) {
-		_phoneText = value.text;
+		_phoneText = value;
 		updatePhoneText();
 	}, lifetime());
 
@@ -302,10 +295,10 @@ void Cover::initViewers() {
 	Info::Profile::UsernameValue(
 		_user
 	) | rpl::on_next([=](const TextWithEntities &value) {
-		_username->setMarkedText(tr::link(value.text.isEmpty()
-			? tr::lng_settings_username_add(tr::now)
-			: value.text));
-		refreshUsernameGeometry(width());
+		_username->setMarkedText(Ui::Text::Link(value.text.isEmpty()
+			? tr::marked(tr::lng_settings_username_add(tr::now))
+			: value, 1), Core::TextContext({ .session = &_user->session() }));
+		refreshGeometry(width());
 	}, lifetime());
 
 	_username->overrideLinkClickHandler([=] {
@@ -316,8 +309,11 @@ void Cover::initViewers() {
 		if (username.isEmpty()) {
 			_controller->show(Box(UsernamesBox, _user));
 		} else {
-			QGuiApplication::clipboard()->setText(
-				_user->session().createInternalLinkFull(username));
+			if (!Mokagram::Streamer::SetClipboard(
+					Mokagram::Streamer::Field::Username,
+					_user->session().createInternalLinkFull(username))) {
+				return;
+			}
 			_controller->showToast({
 				.text = { tr::lng_username_copied(tr::now) },
 				.iconLottie = u"toast/voip_invite"_q,
@@ -327,53 +323,50 @@ void Cover::initViewers() {
 	});
 }
 
-void Cover::refreshNameGeometry(int newWidth) {
-	const auto nameTop = st::settingsPhotoTop + 4
-		+ _userpic->height() + 8;
-	const auto badgeWidth = _badge.widget() ? _badge.widget()->width() : 0;
-	const auto available = newWidth - 2 * st::infoProfileCover.rightSkip
-		- 2 * (badgeWidth ? (st::infoVerifiedCheckPosition.x() + badgeWidth) : 0);
-	_name->resizeToNaturalWidth(available);
-	_name->moveToLeft((newWidth - _name->width()) / 2, nameTop, newWidth);
-	_badge.move(
-		_name->x() + _name->width(),
-		nameTop,
-		nameTop + _name->height());
-	refreshPhoneGeometry(newWidth);
-	refreshUsernameGeometry(newWidth);
-}
-
 void Cover::updatePhoneText() {
-	if (_user->session().settings().phoneNumberHidden()) {
-		_phone->setMarkedText(
-			Ui::Text::Wrapped({ _phoneText }, EntityType::Spoiler));
-	} else {
-		_phone->setText(_phoneText);
+	const auto spoiler = _user->session().settings().phoneNumberHidden()
+		&& !Mokagram::Streamer::Active(Mokagram::Streamer::Field::Phone);
+	_phone->setMarkedText(spoiler
+		? Ui::Text::Wrapped(_phoneText, EntityType::Spoiler)
+		: _phoneText, Core::TextContext({ .session = &_user->session() }));
+	_phone->setVisible(!_phoneText.text.isEmpty());
+	refreshGeometry(width());
+}
+
+void Cover::refreshGeometry(int newWidth) {
+	const auto side = style::ConvertScale(22);
+	const auto gap = style::ConvertScale(12);
+	const auto labelGap = style::ConvertScale(4);
+	const auto buttonTop = style::ConvertScale(12);
+	const auto buttonRight = style::ConvertScale(16);
+	_userpic->moveToLeft(side, (height() - _userpic->height()) / 2, newWidth);
+	const auto left = side + _userpic->width() + gap;
+	auto end = newWidth - buttonRight;
+	if (_qrButton && _screenshotButton) {
+		_qrButton->moveToRight(buttonRight, buttonTop, newWidth);
+		const auto screenshotRight = buttonRight + _qrButton->width() + labelGap;
+		_screenshotButton->moveToRight(screenshotRight, buttonTop, newWidth);
+		end = newWidth - screenshotRight - _screenshotButton->width() - labelGap;
 	}
-	refreshPhoneGeometry(width());
-}
-
-void Cover::refreshPhoneGeometry(int newWidth) {
-	const auto top = _name->y() + _name->height() + 2;
-	_phone->resizeToNaturalWidth(newWidth - 2 * st::infoProfileCover.rightSkip);
-	_phone->moveToLeft((newWidth - _phone->width()) / 2, top, newWidth);
-}
-
-void Cover::refreshUsernameGeometry(int newWidth) {
-	const auto top = _phone->y() + _phone->height() + 2;
-	_username->resizeToNaturalWidth(
-		newWidth - 2 * st::infoProfileCover.rightSkip);
-	_username->moveToLeft((newWidth - _username->width()) / 2, top, newWidth);
-}
-
-void Cover::refreshQrButtonGeometry(int newWidth) {
-	if (!_qrButton) {
-		return;
+	const auto badgeWidth = _badge.widget()
+		? _badge.widget()->width() + st::settingsCoverBadge.position.x()
+		: 0;
+	const auto textWidth = std::max(1, end - left);
+	_name->resizeToNaturalWidth(std::max(1, textWidth - badgeWidth));
+	_username->resizeToNaturalWidth(textWidth);
+	_phone->resizeToNaturalWidth(textWidth);
+	const auto showPhone = !_phone->isHidden();
+	const auto total = _name->height() + labelGap + _username->height()
+		+ (showPhone ? labelGap + _phone->height() : 0);
+	const auto y = (height() - total) / 2;
+	_name->moveToLeft(left, y, newWidth);
+	_badge.move(left + _name->width(), y, y + _name->height());
+	const auto usernameY = y + _name->height() + labelGap;
+	_username->moveToLeft(left, usernameY, newWidth);
+	if (showPhone) {
+		_phone->moveToLeft(
+			left, usernameY + _username->height() + labelGap, newWidth);
 	}
-	const auto buttonTop = st::settingsPhotoTop + 4;
-	const auto buttonRight = st::infoProfileCover.rightSkip;
-	const auto inset = st::infoProfileLabeledButtonQrInset;
-	_qrButton->moveToRight(buttonRight - inset, buttonTop, newWidth);
 }
 
 // Mokagram: вкладка «Важное» со способами поддержать разработку.
