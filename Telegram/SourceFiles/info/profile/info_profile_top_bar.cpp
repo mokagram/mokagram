@@ -3489,6 +3489,15 @@ void TopBar::fillTopBarMenu(
 		return;
 	}
 
+	// Mokagram: use the same menu icon as the message screenshot action.
+	if (const auto user = peer ? peer->asUser() : nullptr; user && !user->isBot()) {
+		addAction(
+			QString::fromUtf8(Mokagram::Lang::Tr("Скриншот профиля")),
+			[=, show = controller->uiShow()] {
+				Ui::ShowProfileShareBox(show, user);
+			},
+			&st::menuIconCopy);
+	}
 	Window::FillDialogsEntryMenu(
 		controller,
 		Dialogs::EntryState{
@@ -3500,14 +3509,6 @@ void TopBar::fillTopBarMenu(
 			.section = Dialogs::EntryState::Section::Profile,
 		},
 		addAction);
-	if (const auto user = peer ? peer->asUser() : nullptr; user && !user->isBot()) {
-		addAction(
-			QString::fromUtf8(Mokagram::Lang::Tr("Скриншот профиля")),
-			[=, show = controller->uiShow()] {
-				Ui::ShowProfileShareBox(show, user);
-			},
-			nullptr);
-	}
 }
 
 void TopBar::updateVideoUserpic() {
