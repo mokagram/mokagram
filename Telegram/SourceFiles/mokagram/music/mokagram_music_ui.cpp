@@ -4306,8 +4306,8 @@ public:
 	, _album(std::move(album))
 	, _isArtist(isArtist)
 	, _tyankaAvatar(isArtist && TyankaHikka::IsArtist(_album.title))
-	, _kind(PlaylistText(isArtist ? "Исполнитель" : isTrack ? "Трек" : "Альбом"))
-	, _facts(!_isArtist && count > 0
+	, _kind(isTrack ? QString() : PlaylistText(isArtist ? "Исполнитель" : "Альбом"))
+	, _facts(!isTrack && !isArtist && count > 0
 		? PlaylistText("треков: %1").arg(count)
 		: QString())
 	, _showCover(std::move(showCover)) {
@@ -4462,7 +4462,7 @@ private:
 			? (result.compact ? 64 : 88)
 			: (result.compact ? 192 : 208)));
 		const auto titleHeight = s(result.compact ? 40 : 48);
-		const auto kindHeight = s(20);
+		const auto kindHeight = _kind.isEmpty() ? 0 : s(20);
 		if (_isArtist) {
 			const auto row = std::max(artSide, kindHeight + titleHeight);
 			const auto textLeft = left + artSide + s(16);
