@@ -103,6 +103,7 @@
 #include "ui/power_saving.h"
 #include "ui/text/format_song_document_name.h"
 #include "ui/text/format_values.h"
+#include "ui/text/text_custom_emoji.h"
 #include "ui/toast/toast.h"
 #include "ui/vertical_list.h"
 #include "styles/style_chat.h"
@@ -2093,7 +2094,7 @@ private:
 
 };
 
-void PlayAll(const std::vector<Track> &tracks, bool skipUnavailable = false) {
+void PlayAll(std::vector<Track> tracks, bool skipUnavailable = false) {
 	auto &queue = QueueState();
 	if (tracks.empty()) {
 		return;
@@ -2101,18 +2102,50 @@ void PlayAll(const std::vector<Track> &tracks, bool skipUnavailable = false) {
 	queue.custom = false;
 	queue.radio.reset();
 	queue.pendingRadio.reset();
-	queue.tracks = tracks;
+	queue.tracks = std::move(tracks);
 	queue.stream = StreamEnabled();
 	queue.refilling = false;
 	queue.waiting = false;
 	++queue.streamEpoch;
 	queue.autoIds.clear();
 	if (queue.stream) {
-		for (const auto &t : tracks) {
+		for (const auto &t : queue.tracks) {
 			queue.autoIds.insert(t.id);
 		}
 	}
 	PlayIndex(0, skipUnavailable);
+}
+
+void PlayHomeAlbum(
+		not_null<Window::SessionController*> controller,
+		const Album &album,
+		Fn<void()> done = nullptr) {
+	BindController(controller);
+	const auto token = ++QueueState().pendingToken;
+	AlbumTracks(album.id, crl::guard(controller, [=](std::vector<Track> tracks, QString error) {
+		if (done) {
+			done();
+		}
+		if (token != QueueState().pendingToken) {
+			return;
+		}
+		if (!error.isEmpty()) {
+			controller->showToast(error);
+			return;
+		}
+		std::erase_if(tracks, [](const Track &track) { return !CanPlayTrack(track); });
+		if (tracks.empty()) {
+			controller->showToast(QString::fromUtf8(Lang::Tr("В альбоме нет доступных треков")));
+			return;
+		}
+		for (auto &track : tracks) {
+			if (track.artworkUrl.isEmpty()) {
+				track.artworkUrl = album.artworkUrl;
+			}
+		}
+		RecordRecentAlbum(album);
+		PlayAll(std::move(tracks), true);
+	}));
 }
 
 bool ToggleTrackLike(
@@ -2279,7 +2312,6 @@ struct HomeTrackPlaybackState {
 void PaintHomeCardAction(
 		QPainter &p,
 		const QRect &button,
-		bool album,
 		double shown = 1.,
 		bool playing = false,
 		bool current = false) {
@@ -2298,12 +2330,7 @@ void PaintHomeCardAction(
 	p.drawEllipse(button);
 	const auto center = button.center();
 	const auto glyph = current ? st::windowFgActive->c : st::windowFg->c;
-	if (album) {
-		p.setPen(QPen(glyph, s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-		p.setBrush(Qt::NoBrush);
-		p.drawPolyline(QPolygon({ center + QPoint(-s(3), -s(6)),
-			center + QPoint(s(3), 0), center + QPoint(-s(3), s(6)) }));
-	} else if (playing) {
+	if (playing) {
 		p.setBrush(glyph);
 		p.drawRoundedRect(QRect(
 			center.x() - s(4), center.y() - s(6), s(3), s(12)), s(1), s(1));
@@ -3131,7 +3158,6 @@ private:
 			PaintHomeCardAction(
 				p,
 				HomeActionRect(art),
-				false,
 				(hasFocus() || playback.current) ? 1. : _hoverFade.value(),
 				_homePlaybackControls && playback.playing,
 				current);
@@ -3642,6 +3668,62 @@ private:
 	Unexpected("Release kind.");
 }
 
+class HomeAlbumPlayButton final : public QToolButton {
+public:
+	explicit HomeAlbumPlayButton(QWidget *parent) : QToolButton(parent) {
+		setCursor(Qt::PointingHandCursor);
+		setFocusPolicy(Qt::TabFocus);
+		setAttribute(Qt::WA_NoMousePropagation);
+		setText(PlaylistText("Слушать"));
+		setToolTip(PlaylistText("Воспроизвести"));
+	}
+
+	bool loading() const {
+		return _loading;
+	}
+
+	void setLoading(bool loading) {
+		_loading = loading;
+		setToolTip(PlaylistText(loading ? "Загружаю альбом…" : "Воспроизвести"));
+		update();
+	}
+
+protected:
+	void paintEvent(QPaintEvent *) override {
+		if (!_icon && !_loading) {
+			_icon = Settings::AltIconEmoji(u"▶️"_q, [=] { update(); }, style::ConvertScale(22));
+		}
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto focus = style::ConvertScale(2);
+		p.setPen(hasFocus() ? QPen(st::windowActiveTextFg->c, focus) : QPen(Qt::NoPen));
+		p.setBrush(isDown()
+			? st::windowBgRipple
+			: underMouse() ? st::windowBgOver : st::windowBg);
+		const auto inset = hasFocus() ? focus / 2. : 0.;
+		p.drawEllipse(QRectF(rect()).adjusted(inset, inset, -inset, -inset));
+		if (!_loading && _icon && _icon->ready()) {
+			const auto offset = (width() - _icon->width()) / 2;
+			_icon->paint(p, {
+				.textColor = st::windowFg->c,
+				.now = crl::now(),
+				.position = QPoint(offset, offset),
+				.paused = true,
+			});
+		} else {
+			auto font = st::semiboldFont->f;
+			font.setPixelSize(style::ConvertScale(_loading ? 16 : 9));
+			p.setFont(font);
+			p.setPen(st::windowFg);
+			p.drawText(rect(), Qt::AlignCenter, _loading ? u"…"_q : text());
+		}
+	}
+
+private:
+	std::unique_ptr<Ui::Text::CustomEmoji> _icon;
+	bool _loading = false;
+};
+
 class HomeAlbumCard final : public Ui::AbstractButton {
 public:
 	void onStateChanged(State was, StateChangeSource source) override {
@@ -3652,6 +3734,19 @@ public:
 	HomeAlbumCard(QWidget *parent, not_null<Window::SessionController*> controller, Album album, Fn<void()> open)
 	: AbstractButton(parent)
 	, _album(std::move(album)) {
+		if (!_album.id.isEmpty()) {
+			_play = Ui::CreateChild<HomeAlbumPlayButton>(this);
+			_play->setAccessibleName(PlaylistText("Воспроизвести") + u": "_q + _album.title);
+			Settings::RowIconsUpdated() | rpl::on_next([=] { _play->update(); }, lifetime());
+			connect(_play, &QToolButton::clicked, this, [=] {
+				if (!_play->loading()) {
+					_play->setLoading(true);
+					PlayHomeAlbum(controller, _album, crl::guard(_play, [button = _play] {
+						button->setLoading(false);
+					}));
+				}
+			});
+		}
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
 		setAccessibleName(HomeReleaseKindText(_album.releaseKind) + u" · "_q + _album.title
@@ -3665,6 +3760,15 @@ public:
 	}
 
 protected:
+	void resizeEvent(QResizeEvent *event) override {
+		AbstractButton::resizeEvent(event);
+		if (_play) {
+			const auto action = HomeActionRect(HomeCardArtRect(width()));
+			_play->setGeometry(action);
+			_play->setVisible(action.width() >= style::ConvertScale(24));
+		}
+	}
+
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
@@ -3672,8 +3776,6 @@ protected:
 		const auto art = HomeCardArtRect(width());
 		PaintHomeSurface(p, rect(), _hoverFade.value(), isDown(), hasFocus());
 		PaintHomeCover(p, art, _art);
-		PaintHomeCardAction(
-			p, HomeActionRect(art), true, hasFocus() ? 1. : _hoverFade.value());
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowFg);
 		p.drawText(QRect(art.left(), art.bottom() + s(8), art.width(), s(22)),
@@ -3691,6 +3793,7 @@ protected:
 private:
 	Album _album;
 	QImage _art;
+	HomeAlbumPlayButton *_play = nullptr;
 
 	HoverFade _hoverFade;
 
@@ -3786,7 +3889,7 @@ protected:
 		const auto art = QRect(inset, (height() - side) / 2, side, side);
 		PaintHomeCover(p, art, _art);
 		const auto action = actionRect();
-		PaintHomeCardAction(p, action, false,
+		PaintHomeCardAction(p, action,
 			(hasFocus() || _current) ? 1. : _hoverFade.value(), _playing, _current);
 		const auto left = art.left() + art.width() + s(12);
 		const auto available = std::max(action.left() - s(8) - left, 0);
@@ -3965,16 +4068,7 @@ public:
 			const auto item = recent[i];
 			if (item.isAlbum) {
 				_items.push_back(Ui::CreateChild<HomeRecentTile>(this, controller, item,
-					[=] { open(item.album); }, [=] {
-					AlbumTracks(item.album.id, crl::guard(controller, [=](std::vector<Track> tracks, QString error) {
-						if (!error.isEmpty()) {
-							controller->showToast(error);
-							return;
-						}
-						std::erase_if(tracks, [](const Track &track) { return !CanPlayTrack(track); });
-						PlayAll(tracks, true);
-					}));
-				}));
+					[=] { open(item.album); }, [=] { PlayHomeAlbum(controller, item.album); }));
 			} else {
 				const auto index = trackIndex++;
 				_items.push_back(Ui::CreateChild<HomeRecentTile>(this, controller, item,
