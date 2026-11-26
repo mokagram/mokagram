@@ -4982,7 +4982,7 @@ public:
 		if (!PowerSaving::On(PowerSaving::kAnimations)) {
 			_started = crl::now();
 			_animation.init([=](crl::time) {
-				update();
+				update(progressBarRect());
 				return true;
 			});
 			_animation.start();
@@ -5005,32 +5005,41 @@ protected:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto gap = s(12);
 		const auto available = std::max(width() - 2 * gap, 1);
+		const auto &dirty = e->region();
+		const auto text = QRect(gap, 0, available, s(24));
+		if (dirty.intersects(text)) {
+			p.setFont(st::normalFont);
+			p.setPen(st::windowSubTextFg);
+			p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft, _text);
+		}
+		const auto bar = progressBarRect();
+		p.setPen(Qt::NoPen);
+		if (dirty.intersects(bar)) {
+			p.setBrush(QColor(0x36, 0x36, 0x36));
+			p.drawRoundedRect(bar, s(2), s(2));
+			// Сегмент въезжает слева и уезжает вправо за край полоски, поэтому на
+			// стыке цикла нет скачка в начало.
+			const auto segment = bar.width() * 0.3;
+			const auto phase = _started ? std::fmod((crl::now() - _started) / 1400., 1.) : 0.;
+			const auto x = bar.left() - segment + (bar.width() + segment) * phase;
+			p.save();
+			auto clip = QPainterPath();
+			clip.addRoundedRect(bar, s(2), s(2));
+			p.setClipPath(clip);
+			p.setBrush(st::windowActiveTextFg);
+			p.drawRoundedRect(QRectF(x, bar.top(), segment, bar.height()), s(2), s(2));
+			p.restore();
+		}
+		const auto cardsTop = s(56);
+		if (e->rect().bottom() < cardsTop) {
+			return;
+		}
 		const auto columns = std::clamp((available + gap) / (s(180) + gap), 1, 6);
 		const auto cardWidth = (available - (columns - 1) * gap) / columns;
 		const auto cardHeight = cardWidth + s(56);
-		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
-		p.drawText(QRect(gap, 0, available, s(24)),
-			Qt::AlignVCenter | Qt::AlignLeft, _text);
-		const auto bar = QRectF(gap, s(32), std::min(available, s(240)), s(3));
-		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(0x36, 0x36, 0x36));
-		p.drawRoundedRect(bar, s(2), s(2));
-		// Сегмент въезжает слева и уезжает вправо за край полоски, поэтому на
-		// стыке цикла нет скачка в начало.
-		const auto segment = bar.width() * 0.3;
-		const auto phase = _started ? std::fmod((crl::now() - _started) / 1400., 1.) : 0.;
-		const auto x = bar.left() - segment + (bar.width() + segment) * phase;
-		p.save();
-		auto clip = QPainterPath();
-		clip.addRoundedRect(bar, s(2), s(2));
-		p.setClipPath(clip);
-		p.setBrush(st::windowActiveTextFg);
-		p.drawRoundedRect(QRectF(x, bar.top(), segment, bar.height()), s(2), s(2));
-		p.restore();
 		for (auto i = 0; i != 6; ++i) {
 			const auto left = gap + (i % columns) * (cardWidth + gap);
-			const auto top = s(56) + (i / columns) * (cardHeight + gap);
+			const auto top = cardsTop + (i / columns) * (cardHeight + gap);
 			p.setBrush(QColor(0x24, 0x24, 0x24));
 			p.drawRoundedRect(QRect(left, top, cardWidth, cardHeight), s(8), s(8));
 			p.setBrush(QColor(0x32, 0x32, 0x32));
@@ -5042,6 +5051,13 @@ protected:
 	}
 
 private:
+	QRect progressBarRect() const {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		const auto gap = s(12);
+		const auto available = std::max(width() - 2 * gap, 1);
+		return QRect(gap, s(32), std::min(available, s(240)), s(3));
+	}
+
 	QString _text;
 	Ui::Animations::Basic _animation;
 	crl::time _started = 0;
