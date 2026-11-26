@@ -708,12 +708,13 @@ infoProfileTabsStrip: ProfileTabsStrip {
 	tabPadding: margins(16px, 0px, 16px, 0px);
 	activeSkip: 4px;
 	style: semiboldTextStyle;
+	// Mokagram: тональная плашка выбора, как во вкладках очереди.
 	fg: windowSubTextFg;
-	fgActive: lightButtonFg;
-	bg: windowBg;
-	bgActive: lightButtonBgOver;
+	fgActive: windowFg;
+	bg: boxBg;
+	bgActive: windowBgOver;
 	ripple: RippleAnimation(defaultRippleAnimation) {
-		color: lightButtonBgRipple;
+		color: windowBgRipple;
 	}
 	duration: 200;
 }
