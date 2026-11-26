@@ -77,6 +77,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_credits_graphics.h"
 #include "settings/sections/settings_premium.h"
 #include "storage/storage_media_prepare.h"
+#include "ui/boxes/peer_qr_box.h"
 #include "ui/boxes/show_or_premium_box.h"
 #include "ui/color_contrast.h"
 #include "ui/controls/stars_rating.h"
@@ -124,170 +125,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QClipboard>
 #include <QtGui/QDragMoveEvent>
 #include <QtGui/QGuiApplication>
-#include <QtCore/QDateTime>
-#include <QtCore/QDir>
-#include <QtCore/QSaveFile>
-#include <QtCore/QStandardPaths>
 
 namespace Info::Profile {
 
 constexpr auto kHeaderInset = 0;
 namespace {
-
-[[nodiscard]] QString ProfileShotText(const char *text) {
-	return QString::fromUtf8(Mokagram::Lang::Tr(text));
-}
-
-// Mokagram: render a shareable portrait from public profile fields.
-[[nodiscard]] QImage RenderProfileShot(
-		not_null<UserData*> user,
-		QColor center,
-		QColor edge,
-		const QImage &pattern) {
-	// Logical export coordinates, independent of desktop scaling.
-	constexpr auto width = 480;
-	constexpr auto exportScale = 3;
-	constexpr auto inset = 46;
-	constexpr auto avatarSize = 120;
-	constexpr auto textWidth = width - 2 * inset;
-	const auto username = user->username();
-	const auto bio = user->about().trimmed();
-	auto nameFont = QFont();
-	nameFont.setPixelSize(38);
-	nameFont.setWeight(QFont::DemiBold);
-	auto handleFont = QFont();
-	handleFont.setPixelSize(19);
-	auto bioFont = QFont();
-	bioFont.setPixelSize(21);
-	constexpr auto wrap = Qt::AlignHCenter | Qt::TextWordWrap
-		| Qt::TextWrapAnywhere;
-	const auto bioHeight = bio.isEmpty() ? 0 : QFontMetrics(bioFont)
-		.boundingRect(QRect(0, 0, textWidth, 0), wrap, bio)
-		.height();
-	const auto contentBottom = username.isEmpty() ? 254 : 285;
-	const auto height = std::max(
-		480,
-		contentBottom + (bioHeight ? 52 + bioHeight : 0) + 70);
-	auto image = QImage(
-		QSize(width, height) * exportScale,
-		QImage::Format_ARGB32_Premultiplied);
-	auto p = QPainter(&image);
-	auto hq = PainterHighQualityEnabler(p);
-	p.scale(exportScale, exportScale);
-
-	auto gradient = QRadialGradient(QPointF(width / 2., 80.), width * 0.86);
-	gradient.setColorAt(0., Ui::BlendColors(center, QColor(30, 30, 34), 0.38));
-	gradient.setColorAt(1., Ui::BlendColors(edge, QColor(20, 20, 24), 0.72));
-	p.fillRect(QRect(0, 0, width, height), QColor(20, 20, 24));
-	p.fillRect(QRect(0, 0, width, height), gradient);
-	if (!pattern.isNull()) {
-		p.save();
-		for (auto row = 0; row != 5; ++row) {
-			p.setOpacity(0.16 - row * 0.026);
-			for (auto column = 0; column != 7; ++column) {
-				p.drawImage(
-					QRect(5 + column * 77 - (row % 2) * 38,
-						12 + row * 58, 27, 27),
-					pattern);
-			}
-		}
-		p.restore();
-	}
-
-	const auto avatar = QRect((width - avatarSize) / 2, 69, avatarSize, avatarSize);
-	p.setPen(QPen(QColor(255, 255, 255, 55), 2));
-	p.setBrush(Qt::NoBrush);
-	p.drawEllipse(avatar.adjusted(-6, -6, 6, 6));
-	auto view = user->createUserpicView();
-	user->paintUserpic(p, view, avatar.x(), avatar.y(), avatar.width(), true);
-
-	p.setPen(Qt::white);
-	p.setFont(nameFont);
-	p.drawText(
-		QRect(inset, 206, textWidth, 49),
-		Qt::AlignCenter,
-		QFontMetrics(nameFont).elidedText(user->name(), Qt::ElideRight, textWidth));
-	if (!username.isEmpty()) {
-		p.setFont(handleFont);
-		p.setPen(QColor(255, 255, 255, 190));
-		p.drawText(
-			QRect(inset, 256, textWidth, 29),
-			Qt::AlignCenter,
-			QFontMetrics(handleFont).elidedText(
-				u"@"_q + username, Qt::ElideRight, textWidth));
-	}
-	if (!bio.isEmpty()) {
-		const auto top = contentBottom + 44;
-		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(0, 0, 0, 50));
-		p.drawRoundedRect(
-			QRect(inset - 20, top - 15, textWidth + 40, bioHeight + 32),
-			22,
-			22);
-		p.setPen(QColor(255, 255, 255, 232));
-		p.setFont(bioFont);
-		p.drawText(QRect(inset, top, textWidth, bioHeight + 2), wrap, bio);
-	}
-	p.end();
-	return image;
-}
-
-void ShowProfileShot(
-		not_null<Window::SessionController*> controller,
-		QImage image) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(rpl::single(ProfileShotText("Скриншот профиля")));
-		box->setWidth(style::ConvertScale(456));
-		const auto layout = box->verticalLayout();
-		const auto inset = style::ConvertScale(20);
-		auto preview = object_ptr<Ui::RpWidget>(layout);
-		const auto aspect = double(image.height()) / image.width();
-		const auto height = std::min(
-			int(style::ConvertScale(416) * aspect),
-			style::ConvertScale(480));
-		preview->resize(0, height);
-		const auto widget = layout->add(
-			std::move(preview),
-			QMargins(inset, style::ConvertScale(8), inset, inset));
-		widget->paintRequest() | rpl::on_next([=] {
-			auto p = QPainter(widget);
-			auto hq = PainterHighQualityEnabler(p);
-			const auto size = image.size().scaled(widget->size(), Qt::KeepAspectRatio);
-			const auto bounds = QRect(
-				QPoint((widget->width() - size.width()) / 2, 0),
-				size);
-			auto clip = QPainterPath();
-			const auto radius = style::ConvertScale(Mokagram::BoxParts::kCardRadius);
-			clip.addRoundedRect(bounds, radius, radius);
-			p.setClipPath(clip);
-			p.drawImage(bounds, image);
-		}, widget->lifetime());
-
-		box->addButton(rpl::single(ProfileShotText("Копировать")), [=] {
-			QGuiApplication::clipboard()->setImage(image);
-			controller->showToast(ProfileShotText("Картинка скопирована"));
-		});
-		box->addButton(rpl::single(ProfileShotText("Сохранить")), [=] {
-			auto directory = QStandardPaths::writableLocation(
-				QStandardPaths::PicturesLocation);
-			if (directory.isEmpty()) {
-				directory = QDir::homePath();
-			}
-			const auto name = u"mokagram_profile_"_q
-				+ QDateTime::currentDateTime().toString(u"yyyyMMdd_HHmmss_zzz"_q)
-				+ u".png"_q;
-			const auto path = QDir(directory).filePath(name);
-			auto file = QSaveFile(path);
-			const auto saved = QDir().mkpath(directory)
-				&& file.open(QIODevice::WriteOnly)
-				&& image.save(&file, "PNG")
-				&& file.commit();
-			controller->showToast(saved
-				? ProfileShotText("Сохранено: ") + path
-				: ProfileShotText("Не получилось сохранить"));
-		});
-	}));
-}
 
 class Userpic final
 	: public Ui::AbstractButton
@@ -3660,26 +3502,10 @@ void TopBar::fillTopBarMenu(
 		addAction);
 	if (const auto user = peer ? peer->asUser() : nullptr; user && !user->isBot()) {
 		addAction(
-			ProfileShotText("Скриншот профиля"),
-			crl::guard(this, [=] {
-				const auto collectible = effectiveCollectible();
-				const auto colors = effectiveColorProfile();
-				const auto center = collectible
-					? collectible->centerColor
-					: (colors && colors->bg.size() > 1)
-					? colors->bg[1]
-					: QColor(64, 79, 110);
-				const auto edge = collectible
-					? collectible->edgeColor
-					: (colors && !colors->bg.empty())
-					? colors->bg[0]
-					: QColor(28, 33, 47);
-				ShowProfileShot(controller, RenderProfileShot(
-					user,
-					center,
-					edge,
-					_basePatternImage));
-			}),
+			QString::fromUtf8(Mokagram::Lang::Tr("Скриншот профиля")),
+			[=, show = controller->uiShow()] {
+				Ui::ShowProfileShareBox(show, user);
+			},
 			nullptr);
 	}
 }

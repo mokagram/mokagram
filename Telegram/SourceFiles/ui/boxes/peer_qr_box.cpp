@@ -12,7 +12,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/weak_qptr.h"
 #include "boxes/share_box.h"
 #include "core/application.h"
+#include "data/data_file_origin.h"
 #include "data/data_peer.h"
+#include "data/data_photo_media.h"
+#include "data/data_session.h"
 #include "info/profile/info_profile_free_codes.h"
 #include "info/profile/info_profile_qr_emoji.h"
 #include "info/profile/info_profile_qr_gifts.h"
@@ -20,7 +23,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_share_theme.h"
 #include "info/profile/info_profile_values.h"
 #include "lang/lang_keys.h"
+#include "main/main_session.h"
+#include "mokagram/lang/mokagram_lang.h"
+#include "mokagram/music/mokagram_player_style.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "settings/settings_common.h"
+#include "ui/empty_userpic.h"
+#include "ui/image/image.h"
 #include "ui/effects/peer_qr_colors_panel.h"
 #include "ui/effects/peer_qr_gifts_panel.h"
 #include "ui/effects/peer_qr_panel.h"
@@ -45,7 +54,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_menu_icons.h"
 
 #include <QtCore/QDateTime>
+#include <QtCore/QDir>
 #include <QtCore/QMimeData>
+#include <QtCore/QSaveFile>
+#include <QtCore/QStandardPaths>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QtEvents>
 
@@ -131,6 +143,7 @@ struct ImageSnapshot {
 	QColor ink;
 	std::vector<QImage> stills;
 	QPointF offset;
+	qint64 profileCardKey = 0;
 };
 
 struct BoxState {
@@ -150,7 +163,120 @@ struct BoxState {
 	FreeCodesState free;
 	AppearanceState appearance;
 	bool rendering = false;
+	bool profileExport = false;
+	QImage profileCard;
 };
+
+[[nodiscard]] QString ProfileExportText(const char *text) {
+	return QString::fromUtf8(Mokagram::Lang::Tr(text));
+}
+
+// Mokagram: the identity card uses the player's type roles and spacing.
+[[nodiscard]] QImage ProfileExportCard(
+		not_null<PeerData*> peer,
+		PeerUserpicView &view,
+		const QImage *photo,
+		int width) {
+	using namespace Mokagram::Music::PlayerStyle;
+	const auto inset = style::ConvertScale(kSpace24);
+	const auto gap = style::ConvertScale(kSpace16);
+	const auto smallGap = style::ConvertScale(kSpace4);
+	const auto avatar = style::ConvertScale(96);
+	const auto title = kTrackTitle.font();
+	const auto subtitle = kTrackArtist.font();
+	const auto bioFont = kCompactArtist.font();
+	const auto bio = peer->about().trimmed();
+	const auto handle = peer->username().isEmpty()
+		? QString()
+		: u"@"_q + peer->username();
+	const auto textWidth = width - 2 * inset;
+	constexpr auto wrap = Qt::TextWordWrap | Qt::TextWrapAnywhere;
+	const auto bioHeight = bio.isEmpty() ? 0 : QFontMetrics(bioFont->f)
+		.boundingRect(QRect(0, 0, textWidth, 0), wrap, bio).height();
+	const auto cover = QRect(0, 0, width, width);
+	const auto handleHeight = handle.isEmpty()
+		? 0
+		: smallGap + kTrackArtist.lineHeight();
+	const auto detailsTop = cover.bottom() + 1 - inset
+		- kTrackTitle.lineHeight() - handleHeight;
+	const auto titleEnd = detailsTop + kTrackTitle.lineHeight();
+	const auto bioTop = width + gap;
+	const auto height = bioHeight ? bioTop + bioHeight + gap : width;
+	constexpr auto ratio = 3;
+	auto result = QImage(QSize(width, height) * ratio,
+		QImage::Format_ARGB32_Premultiplied);
+	result.setDevicePixelRatio(ratio);
+	result.fill(Qt::transparent);
+	auto p = QPainter(&result);
+	auto hq = PainterHighQualityEnabler(p);
+	Mokagram::BoxParts::PaintCard(p, QRect(0, 0, width, height));
+	p.save();
+	auto clip = QPainterPath();
+	const auto radius = style::ConvertScale(Mokagram::BoxParts::kCardRadius);
+	clip.addRoundedRect(QRectF(0, 0, width, height), radius, radius);
+	p.setClipPath(clip);
+	if (photo) {
+		const auto side = std::min(photo->width(), photo->height());
+		const auto source = QRect(
+			(photo->width() - side) / 2,
+			(photo->height() - side) / 2,
+			side,
+			side);
+		p.drawImage(cover, *photo, source);
+		auto shade = QLinearGradient(cover.topLeft(), cover.bottomLeft());
+		shade.setColorAt(0.5, QColor(0, 0, 0, 0));
+		shade.setColorAt(0.70, QColor(0, 0, 0, 164));
+		shade.setColorAt(1., QColor(0, 0, 0, 238));
+		p.fillRect(cover, shade);
+	} else {
+		p.fillRect(cover, st::windowBgOver);
+		const auto avatarLeft = (width - avatar) / 2;
+		const auto avatarTop = (detailsTop - avatar) / 2;
+		p.save();
+		p.scale(1. / ratio, 1. / ratio);
+		peer->paintUserpic(p, view, avatarLeft * ratio, avatarTop * ratio,
+			avatar * ratio, true);
+		p.restore();
+	}
+	p.setFont(title->f);
+	p.setPen(photo ? QColor(Qt::white) : st::windowFg->c);
+	p.drawText(QRect(inset, detailsTop, textWidth, kTrackTitle.lineHeight()),
+		Qt::AlignVCenter | Qt::AlignLeading,
+		QFontMetrics(title->f).elidedText(peer->name(), Qt::ElideRight, textWidth));
+	if (!handle.isEmpty()) {
+		p.setFont(subtitle->f);
+		p.setPen(photo ? QColor(255, 255, 255, 215) : st::windowSubTextFg->c);
+		p.drawText(QRect(inset, titleEnd + smallGap, textWidth,
+			kTrackArtist.lineHeight()), Qt::AlignVCenter | Qt::AlignLeading,
+			QFontMetrics(subtitle->f).elidedText(handle, Qt::ElideRight, textWidth));
+	}
+	p.restore();
+	if (bioHeight) {
+		p.setFont(bioFont->f);
+		p.setPen(st::windowSubTextFg->c);
+		p.drawText(QRect(inset, bioTop, textWidth, bioHeight), wrap, bio);
+	}
+	p.end();
+	return result;
+}
+
+void SaveProfileExport(not_null<GenericBox*> box, const QImage &image) {
+	auto directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+	if (directory.isEmpty()) {
+		directory = QDir::homePath();
+	}
+	const auto path = QDir(directory).filePath(u"mokagram_profile_"_q
+		+ QDateTime::currentDateTime().toString(u"yyyyMMdd_HHmmss_zzz"_q)
+		+ u".png"_q);
+	auto file = QSaveFile(path);
+	const auto saved = QDir().mkpath(directory)
+		&& file.open(QIODevice::WriteOnly)
+		&& image.save(&file, "PNG")
+		&& file.commit();
+	box->uiShow()->showToast(saved
+		? ProfileExportText("Сохранено: ") + path
+		: ProfileExportText("Не получилось сохранить"));
+}
 
 class PeerQrButton final : public IconButton {
 public:
@@ -545,7 +671,9 @@ void ShowExpiringToast(
 [[nodiscard]] bool RefuseImage(
 		not_null<QWidget*> parent,
 		not_null<BoxState*> state) {
-	if (state->free.requesting) {
+	if (state->profileExport) {
+		return false;
+	} else if (state->free.requesting) {
 		return true;
 	} else if (state->link.isEmpty()) {
 		ShowFreeToast(parent, state, {
@@ -596,13 +724,14 @@ void TrackShareBox(
 		not_null<PeerQrSurface*> surface,
 		not_null<BoxState*> state,
 		const ImageSnapshot &snapshot) {
-	return !snapshot.link.isEmpty()
+	return (state->profileExport || !snapshot.link.isEmpty())
 		&& snapshot.link == state->link
 		&& snapshot.kind == state->kind
 		&& snapshot.mode == state->free.mode
 		&& snapshot.generation == state->free.generation
 		&& snapshot.expiry.expires == EffectiveExpiry(state).expires
-		&& snapshot.appearance == surface->appearance();
+		&& snapshot.appearance == surface->appearance()
+		&& snapshot.profileCardKey == state->profileCard.cacheKey();
 }
 
 void RenderCardImage(
@@ -627,6 +756,7 @@ void RenderCardImage(
 		.ink = args.colors.ink,
 		.stills = args.emoji.stills,
 		.offset = args.layerOffset,
+		.profileCardKey = state->profileCard.cacheKey(),
 	};
 	snapshot.stills.push_back(args.gift.model);
 	snapshot.stills.push_back(args.gift.symbol);
@@ -1292,7 +1422,8 @@ void SetupGiftsPanel(
 		not_null<PeerData*> peer,
 		Window::SessionController *controller,
 		not_null<PeerQrButton*> button,
-		Fn<void(not_null<PeerQrPanel*>)> openPanel) {
+		Fn<void(not_null<PeerQrPanel*>)> openPanel,
+		bool profileExport) {
 	const auto container = AddPanel(surface);
 	const auto gifts = CreateChild<PeerQrGiftsPanel>(
 		container,
@@ -1314,8 +1445,9 @@ void SetupGiftsPanel(
 	}, gifts->lifetime());
 
 	const auto refresh = box->lifetime().make_state<Fn<void()>>();
-	Info::Profile::QrThemeCanSaveValue(
-		peer
+	(profileExport
+		? rpl::single(true)
+		: Info::Profile::QrThemeCanSaveValue(peer)
 	) | rpl::filter([](bool can) {
 		return can;
 	}) | rpl::take(1) | rpl::on_next([=] {
@@ -1405,7 +1537,9 @@ void SetupAppearance(
 			appearance->picker->setShown(false);
 		}
 		panel->toggle(false, anim::type::normal);
-		SaveAppearance(box, surface, appearance, peer);
+		if (!state->profileExport) {
+			SaveAppearance(box, surface, appearance, peer);
+		}
 	};
 	colorsButton->setClickedCallback([=] {
 		openPanel(container);
@@ -1438,7 +1572,8 @@ void SetupAppearance(
 			withEmoji ? 2 : 1,
 			st::peerQrGift,
 			tr::lng_qr_box_gifts(tr::now)),
-		openPanel);
+		openPanel,
+		state->profileExport);
 	surface->setCovered([=] { return CoveredByPanels(appearance); });
 
 	// the controls fade above the panels' glass, never under it
@@ -1465,7 +1600,10 @@ void SetupAppearance(
 		}
 	}, box->lifetime());
 
-	Info::Profile::QrThemeCanSaveValue(peer) | rpl::on_next([=](bool can) {
+	(state->profileExport
+		? rpl::single(true)
+		: Info::Profile::QrThemeCanSaveValue(peer)
+	) | rpl::on_next([=](bool can) {
 		appearance->canSave = can;
 		if (!can) {
 			closePanel();
@@ -1507,31 +1645,68 @@ void SetupAppearance(
 		}, box->lifetime());
 	}
 
-	box->boxClosing() | rpl::on_next([=] {
-		SaveAppearance(box, surface, appearance, peer);
-	}, box->lifetime());
+	if (!state->profileExport) {
+		box->boxClosing() | rpl::on_next([=] {
+			SaveAppearance(box, surface, appearance, peer);
+		}, box->lifetime());
+	}
 }
 
 } // namespace
 
-void FillPeerQrBox(
+static void FillPeerQrBoxImpl(
 		not_null<Ui::GenericBox*> box,
 		PeerData *peer,
 		std::optional<QString> customLink,
 		rpl::producer<QString> about,
-		rpl::producer<QString> title) {
+		rpl::producer<QString> title,
+		bool profileExport) {
 	box->setStyle(st::peerQrBox);
+	if (profileExport) {
+		Mokagram::BoxParts::RoundLayer(box);
+	}
 	box->setWidth(st::peerQrBoxWidth);
 	box->setNoContentMargin(true);
 	box->setCustomCornersFilling(RectPart::FullTop | RectPart::FullBottom);
 	box->verticalLayout()->resizeToWidth(st::peerQrBoxWidth);
 
 	const auto peerBox = peer && !customLink;
-	const auto ownBox = peerBox && peer->isSelf();
+	const auto ownBox = peerBox && peer->isSelf() && !profileExport;
 	const auto state = box->lifetime().make_state<BoxState>();
+	state->profileExport = profileExport;
+	state->appearance.canSave = profileExport;
 	const auto surface = box->addRow(
 		object_ptr<PeerQrSurface>(box, PeerQrDefaultAppearance()),
 		style::margins());
+	if (profileExport) {
+		const auto view = box->lifetime().make_state<PeerUserpicView>(
+			peer->createUserpicView());
+		const auto photoId = peer->userpicPhotoId();
+		const auto full = (photoId && !peer->userpicPhotoUnknown())
+			? peer->owner().photo(photoId)->createMediaView()
+			: std::shared_ptr<Data::PhotoMedia>();
+		if (full) {
+			full->wanted(Data::PhotoSize::Large, peer->userpicPhotoOrigin());
+		}
+		const auto photoKey = box->lifetime().make_state<qint64>(-1);
+		const auto refreshCard = [=] {
+			const auto loaded = full ? full->image(Data::PhotoSize::Large) : nullptr;
+			const auto original = loaded ? loaded->original() : QImage();
+			const auto photo = original.isNull()
+				? peer->userpicCloudImage(*view)
+				: &original;
+			const auto key = photo ? photo->cacheKey() : 0;
+			if (*photoKey != key) {
+				*photoKey = key;
+				state->profileCard = ProfileExportCard(
+					peer, *view, photo, st::peerQrCardWidth);
+				surface->setProfileCard(state->profileCard);
+			}
+		};
+		refreshCard();
+		peer->session().downloaderTaskFinished(
+		) | rpl::on_next(refreshCard, box->lifetime());
+	}
 	surface->touchPresses(
 	) | rpl::on_next([=](not_null<QTouchEvent*> e) {
 		// stops a kinetic scroll left running by an earlier touch
@@ -1609,7 +1784,7 @@ void FillPeerQrBox(
 			surface->setGiftSource(std::move(source));
 		}, box->lifetime());
 		SetupAppearance(box, surface, state, peer, controller, copy, share);
-		if (!ownBox) {
+		if (!ownBox && !profileExport) {
 			Info::Profile::UsernameValue(
 				peer,
 				true
@@ -1647,7 +1822,7 @@ void FillPeerQrBox(
 			}
 			state->temporaryOnly = contact;
 		}, box->lifetime());
-	} else {
+	} else if (!profileExport) {
 		QrLinkValue(
 			peer,
 			customLink
@@ -1672,10 +1847,12 @@ void FillPeerQrBox(
 			(width - cardWidth) / 2,
 			skip + close->height() + st::peerQrCardSkip,
 			cardWidth,
-			PeerQrCardHeight(cardWidth, peerBox));
+			profileExport
+				? state->profileCard.height() * cardWidth / state->profileCard.width()
+				: PeerQrCardHeight(cardWidth, peerBox));
 		auto bottom = card.y() + card.height();
 		auto pillTop = float64(bottom + st::peerQrPillSkip);
-		if (peerBox) {
+		if (peerBox && !profileExport) {
 			bottom += st::peerQrPillSkip + st::peerQrPillHeight;
 		}
 		if (aboutLabel && !aboutLabel->isHidden()) {
@@ -1811,14 +1988,16 @@ void FillPeerQrBox(
 			const auto show = box->uiShow();
 			QGuiApplication::clipboard()->setMimeData(mime.release());
 			show->showToast({
-				.text = { tr::lng_group_invite_qr_copied(tr::now) },
+				.text = { profileExport
+					? ProfileExportText("Картинка скопирована")
+					: tr::lng_group_invite_qr_copied(tr::now) },
 				.iconLottie = u"toast/copy"_q,
 				.iconLottieSize = st::toastLottieIconSize,
 			});
 		});
 	});
 	if (share) {
-		share->setClickedCallback([=] {
+		const auto shareImage = [=](bool save) {
 			if (RefuseImage(surface, state)) {
 				return;
 			}
@@ -1826,6 +2005,10 @@ void FillPeerQrBox(
 						QImage image,
 						const ImageSnapshot &snapshot) {
 				if (dropRendered(snapshot)) {
+					return;
+				}
+				if (save) {
+					SaveProfileExport(box, image);
 					return;
 				}
 				if (const auto strong = weakController.get()) {
@@ -1844,6 +2027,20 @@ void FillPeerQrBox(
 					}
 				}
 			});
+		};
+		share->setClickedCallback([=] {
+			if (!profileExport) {
+				shareImage(false);
+				return;
+			}
+			const auto menu = Ui::CreateChild<Ui::PopupMenu>(share);
+			menu->addAction(
+				tr::lng_group_invite_context_share(tr::now),
+				[=] { shareImage(false); });
+			menu->addAction(
+				ProfileExportText("Сохранить"),
+				[=] { shareImage(true); });
+			menu->popup(share->mapToGlobal(QPoint(0, share->height())));
 		});
 	}
 	box->lifetime().add([=] {
@@ -1866,13 +2063,34 @@ void FillPeerQrBox(
 			ApplyServedTheme(surface, &appearance, *pending, anim::type::normal);
 		}
 		const auto strong = weakController.get();
-		if (share && strong) {
+		if (share && strong && !profileExport) {
 			strong->checkHighlightControl(
 				u"self-qr-code/share"_q,
 				share,
 				{ .rippleShape = true, .scroll = false });
 		}
 	}, box->lifetime());
+}
+
+void FillPeerQrBox(
+		not_null<Ui::GenericBox*> box,
+		PeerData *peer,
+		std::optional<QString> customLink,
+		rpl::producer<QString> about,
+		rpl::producer<QString> title) {
+	FillPeerQrBoxImpl(
+		box, peer, std::move(customLink), std::move(about), std::move(title), false);
+}
+
+void ShowProfileShareBox(
+		std::shared_ptr<Ui::Show> show,
+		not_null<PeerData*> peer) {
+	show->show(Box(FillPeerQrBoxImpl,
+		peer.get(),
+		std::nullopt,
+		nullptr,
+		rpl::single(ProfileExportText("Скриншот профиля")),
+		true));
 }
 
 void DefaultShowFillPeerQrBoxCallback(

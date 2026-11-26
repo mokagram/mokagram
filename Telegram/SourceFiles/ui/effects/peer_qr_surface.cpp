@@ -282,6 +282,15 @@ struct BackgroundRequest {
 	};
 }
 
+[[nodiscard]] PeerQrColors ProfileEditorColors() {
+	return {
+		.ink = st::windowActiveTextFg->c,
+		.foreground = st::windowFg->c,
+		.control = st::windowBg->c,
+		.glass = st::boxBg->c,
+	};
+}
+
 [[nodiscard]] bool SameBackdrop(PeerQrAppearance a, PeerQrAppearance b) {
 	a.emoji.clear();
 	b.emoji.clear();
@@ -1017,10 +1026,14 @@ QImage RenderPeerQrImage(PeerQrImageArgs args) {
 		.lines = std::move(args.usernameLines),
 	};
 	const auto margin = QSize(2 * args.margin, 2 * args.margin);
-	const auto size = layout.size + margin;
+	const auto cardSize = args.profileCard.isNull()
+		? layout.size
+		: QSize(args.cardWidth,
+			args.profileCard.height() * args.cardWidth / args.profileCard.width());
+	const auto size = cardSize + margin;
 	const auto card = QRectF(
 		QPointF(args.margin, args.margin),
-		QSizeF(layout.size));
+		QSizeF(cardSize));
 	const auto &appearance = args.appearance;
 	auto result = ComposeBackground({
 		.size = size,
@@ -1047,8 +1060,13 @@ QImage RenderPeerQrImage(PeerQrImageArgs args) {
 			card.center() + args.layerOffset,
 			card,
 			args.gift);
-		p.translate(args.margin, args.margin);
-		PaintCard(p, layout, content, CardFrame());
+		if (!args.profileCard.isNull()) {
+			p.setRenderHint(QPainter::SmoothPixmapTransform);
+			p.drawImage(card, args.profileCard);
+		} else {
+			p.translate(args.margin, args.margin);
+			PaintCard(p, layout, content, CardFrame());
+		}
 	}
 	return result;
 }
@@ -1269,7 +1287,9 @@ void PeerQrSurface::setAppearance(
 		_entryPending = _entryPending || wave;
 		checkAnimation();
 	}
-	_colors = ComputePeerQrColors(_appearance);
+	_colors = _profileCard.isNull()
+		? ComputePeerQrColors(_appearance)
+		: ProfileEditorColors();
 	composeNow();
 	if (isEmoji) {
 		_field->setTextColor(_colors.foreground);
@@ -1418,7 +1438,15 @@ PeerQrImageArgs PeerQrSurface::prepareImage() const {
 		.layerOffset = _layer.offset()
 			* (kImageScale * 100. / style::Scale()),
 		.layerBand = metric(st::peerQrLayerBand),
+		.profileCard = _profileCard,
 	};
+}
+
+void PeerQrSurface::setProfileCard(QImage card) {
+	_profileCard = std::move(card);
+	_colors = ProfileEditorColors();
+	setShownColors(_colors);
+	update();
 }
 
 void PeerQrSurface::addControl(
@@ -1455,6 +1483,11 @@ void PeerQrSurface::paintEvent(QPaintEvent *e) {
 	}
 	paintLayers(p, now, controls.shown);
 	paintFadingUnderlays(p, now, controls);
+	if (!_profileCard.isNull()) {
+		p.setRenderHint(QPainter::SmoothPixmapTransform);
+		p.drawImage(cardRect(), _profileCard);
+		return;
+	}
 	const auto still = anim::Disabled();
 	const auto elapsed = (_startedAt > 0) ? (now - _startedAt) : 0;
 	auto frame = still

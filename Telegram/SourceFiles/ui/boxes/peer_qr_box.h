@@ -18,6 +18,10 @@ void DefaultShowFillPeerQrBoxCallback(
 	std::shared_ptr<Ui::Show> show,
 	PeerData *peer);
 
+void ShowProfileShareBox(
+	std::shared_ptr<Ui::Show> show,
+	not_null<PeerData*> peer);
+
 void FillPeerQrBox(
 	not_null<Ui::GenericBox*> box,
 	PeerData *peer,

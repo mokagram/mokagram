@@ -59,6 +59,7 @@ struct PeerQrImageArgs {
 	PeerQrGiftRest gift;
 	QPointF layerOffset;
 	float64 layerBand = 0.;
+	QImage profileCard;
 };
 
 [[nodiscard]] QImage RenderPeerQrImage(PeerQrImageArgs args);
@@ -73,6 +74,7 @@ public:
 		anim::type animated = anim::type::instant);
 	void setUsername(const QString &username);
 	void setCountdown(const QString &countdown);
+	void setProfileCard(QImage card);
 	void setCardGeometry(QRect card, QRectF centerReach);
 	void setCardPlacement(QPointF topLeft, float64 scale);
 	void setAppearance(PeerQrAppearance appearance, anim::type animated);
@@ -199,6 +201,7 @@ private:
 	Background _background;
 	QString _link;
 	QString _username;
+	QImage _profileCard;
 	QRect _cardGeometry;
 	QRectF _cardReach;
 	std::optional<CardPlacement> _cardPlacement;
