@@ -585,7 +585,7 @@ index f0ba4d9..9a1cf5b 100644
  	void updateBarState();
  	void overscrollSpringFinish();
 diff --git i/ui/widgets/fields/input_field.cpp w/ui/widgets/fields/input_field.cpp
-index cf7b90d..779ec96 100644
+index 10e12f3..b7f144b 100644
 --- i/ui/widgets/fields/input_field.cpp
 +++ w/ui/widgets/fields/input_field.cpp
 @@ -1990,6 +1990,15 @@ InputField::InputField(
@@ -631,8 +631,28 @@ index cf7b90d..779ec96 100644
  	p.setBrush(anim::brush(_st.textBg, _st.textBgActive, focusedDegree));
  
  	PainterHighQualityEnabler hq(p);
+@@ -3007,10 +3020,15 @@ void InputField::paintEvent(QPaintEvent *e) {
+ 		p.save();
+ 		p.setClipRect(r);
+ 
+-		auto placeholderTop = anim::interpolate(0, _st.placeholderShift, placeholderShiftDegree);
+-		auto placeholderLeft = anim::interpolate(0, _st.placeholderShiftLeft, placeholderShiftDegree);
+-
+-		QRect r(rect().marginsRemoved(margins));
++		QRectF r(rect().marginsRemoved(margins));
++		const auto restingTop = (_st.borderRadius > 0 && (_st.border || _st.borderActive))
++			? height() / 2. - _placeholderPath.boundingRect().center().y() - r.top()
++			: 0.;
++		const auto placeholderTop = anim::interpolate(
++			restingTop,
++			float64(_st.placeholderShift),
++			placeholderShiftDegree);
++		const auto placeholderLeft = anim::interpolate(0, _st.placeholderShiftLeft, placeholderShiftDegree);
+ 		r.translate(placeholderLeft, placeholderTop);
+ 		if (style::RightToLeft()) r.moveLeft(width() - r.left() - r.width());
+ 
 diff --git i/ui/widgets/fields/masked_input_field.cpp w/ui/widgets/fields/masked_input_field.cpp
-index ef96309..a082ef9 100644
+index 544adf0..c89486f 100644
 --- i/ui/widgets/fields/masked_input_field.cpp
 +++ w/ui/widgets/fields/masked_input_field.cpp
 @@ -141,6 +141,14 @@ int MaskedInputField::borderAnimationStart() const {
@@ -682,7 +702,7 @@ index ef96309..a082ef9 100644
  	auto borderShownDegree = _a_borderShown.value(1.);
  	auto borderOpacity = _a_borderOpacity.value(_borderVisible ? 1. : 0.);
  	if (_st.borderActive && (borderOpacity > 0.)) {
-@@ -173,6 +198,8 @@ void MaskedInputField::paintEvent(QPaintEvent *e) {
+@@ -173,16 +198,23 @@ void MaskedInputField::paintEvent(QPaintEvent *e) {
  		}
  	}
  
@@ -691,6 +711,25 @@ index ef96309..a082ef9 100644
  	p.setClipRect(r);
  	if (_st.placeholderScale > 0. && !_placeholderPath.isEmpty()) {
  		auto placeholderShiftDegree = _a_placeholderShifted.value(_placeholderShifted ? 1. : 0.);
+ 		p.save();
+ 		p.setClipRect(r);
+ 
+-		auto placeholderTop = anim::interpolate(0, _st.placeholderShift, placeholderShiftDegree);
+-		auto placeholderLeft = anim::interpolate(0, _st.placeholderShiftLeft, placeholderShiftDegree);
+-
+-		QRect r(rect().marginsRemoved(_textMargins + _st.placeholderMargins));
++		QRectF r(rect().marginsRemoved(_textMargins + _st.placeholderMargins));
++		const auto restingTop = (_st.borderRadius > 0 && (_st.border || _st.borderActive))
++			? height() / 2. - _placeholderPath.boundingRect().center().y() - r.top()
++			: 0.;
++		const auto placeholderTop = anim::interpolate(
++			restingTop,
++			float64(_st.placeholderShift),
++			placeholderShiftDegree);
++		const auto placeholderLeft = anim::interpolate(0, _st.placeholderShiftLeft, placeholderShiftDegree);
+ 		r.translate(placeholderLeft, placeholderTop);
+ 		if (style::RightToLeft()) r.moveLeft(width() - r.left() - r.width());
+ 
 diff --git i/ui/widgets/labels.cpp w/ui/widgets/labels.cpp
 index aeed599..b3e777b 100644
 --- i/ui/widgets/labels.cpp
