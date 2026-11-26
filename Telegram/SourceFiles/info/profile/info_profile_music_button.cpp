@@ -178,7 +178,15 @@ void MusicButton::paintEvent(QPaintEvent *e) {
 	}
 	auto p = QPainter(this);
 	p.setOpacity(_opacity);
-	PaintPillBackground(p, rect(), _colors);
+	// Mokagram: keep the profile pattern from showing through the music pill.
+	auto colors = _colors;
+	if (!_overrideBg) {
+		colors.fill = Ui::BlendColors(
+			st::boxDividerBg->c,
+			st::boxBg->c,
+			colors.fill.alphaF());
+	}
+	PaintPillBackground(p, rect(), colors);
 	validateCache();
 	p.drawImage(0, 0, _cache);
 }
