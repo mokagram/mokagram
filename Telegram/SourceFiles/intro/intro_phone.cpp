@@ -33,6 +33,15 @@ namespace Intro {
 namespace details {
 namespace {
 
+// Mokagram: phone fields have no floating label, so center the input line.
+[[nodiscard]] style::InputField CenteredPhoneField(style::InputField field) {
+	field.textMargins.setTop(0);
+	field.textMargins.setBottom(0);
+	field.textAlign = (field.textAlign & ~Qt::AlignVertical_Mask)
+		| Qt::AlignVCenter;
+	return field;
+}
+
 [[nodiscard]] bool AllowPhoneAttempt(const QString &phone) {
 	const auto digits = ranges::count_if(
 		phone,
@@ -43,6 +52,16 @@ namespace {
 [[nodiscard]] QString DigitsOnly(QString value) {
 	static const auto RegExp = QRegularExpression("[^0-9]");
 	return value.replace(RegExp, QString());
+}
+
+[[nodiscard]] const style::InputField &CenteredCountryCodeStyle() {
+	static const auto result = CenteredPhoneField(st::introCountryCode);
+	return result;
+}
+
+[[nodiscard]] const style::InputField &CenteredPhoneStyle() {
+	static const auto result = CenteredPhoneField(st::introPhone);
+	return result;
 }
 
 } // namespace
@@ -56,10 +75,10 @@ PhoneWidget::PhoneWidget(
 	this,
 	getData()->controller->uiShow(),
 	st::introCountry)
-, _code(this, st::introCountryCode)
+, _code(this, CenteredCountryCodeStyle())
 , _phone(
 	this,
-	st::introPhone,
+	CenteredPhoneStyle(),
 	[](const QString &s) { return Countries::Groups(s); })
 , _checkRequestTimer([=] { checkRequest(); }) {
 	_code->setAccessibleName(tr::lng_country_code(tr::now));

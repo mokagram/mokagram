@@ -58,15 +58,19 @@ void CountryInput::paintEvent(QPaintEvent *e) {
 		width()
 			- st::introCountryIcon.width()
 			- st::introCountryIconPosition.x(),
-		st::introCountryIconPosition.y(),
+		(height() - st::introCountryIcon.height()) / 2,
 		width());
 
 	p.setFont(_st.style.font);
 	p.setPen(_st.textFg);
 	p.drawText(
-		rect().marginsRemoved(_st.textMargins + QMargins(round ? 13 : 0, 0, 0, 0)),
+		rect().marginsRemoved(QMargins(
+			_st.textMargins.left() + (round ? style::ConvertScale(13) : 0),
+			0,
+			_st.textMargins.right(),
+			0)),
 		_text,
-		_st.textAlign);
+		(_st.textAlign & ~Qt::AlignVertical_Mask) | Qt::AlignVCenter);
 }
 
 void CountryInput::mouseMoveEvent(QMouseEvent *e) {

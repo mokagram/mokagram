@@ -128,7 +128,7 @@ void PhonePartInput::paintAdditionalPlaceholder(QPainter &p) {
 			if (tw < phRect.width()) {
 				phRect.setLeft(phRect.left() + tw);
 				placeholderAdditionalPrepare(p);
-				p.drawText(phRect, ph, style::al_topleft);
+				p.drawText(phRect, ph, Qt::AlignLeft | Qt::AlignVCenter);
 			}
 		}
 	}
