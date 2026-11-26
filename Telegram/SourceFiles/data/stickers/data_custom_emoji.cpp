@@ -41,6 +41,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "styles/style_chat.h"
 
+#include <map>
+
 namespace Data {
 namespace {
 
@@ -502,9 +504,10 @@ std::unique_ptr<Ui::Text::CustomEmoji> CustomEmojiManager::create(
 		LoaderFactory factory) {
 	// Mokagram: у снимка сообщений свои крупные экземпляры, чтобы не мешать
 	// обычным (у них другой размер кадра).
-	static auto shotInstances = decltype(_instances)();
-	auto &instances = (Ui::CustomEmoji::ShotScale() > 1)
-		? shotInstances[SizeIndex(tag)]
+	static auto shotInstances = std::map<int, decltype(_instances)>();
+	const auto shotScale = Ui::CustomEmoji::ShotScale();
+	auto &instances = (shotScale > 1)
+		? shotInstances[shotScale][SizeIndex(tag)]
 		: _instances[SizeIndex(tag)];
 	auto i = instances.find(documentId);
 	if (i == end(instances)) {

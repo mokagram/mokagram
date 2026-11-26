@@ -16,7 +16,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_photo_media.h"
 #include "data/data_session.h"
-#include "data/data_user.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_free_codes.h"
@@ -50,13 +49,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/popup_menu.h"
 #include "ui/painter.h"
 #include "ui/text/text.h"
+#include "ui/text/custom_emoji_instance.h"
 #include "ui/text/text_custom_emoji.h"
 #include "ui/ui_utility.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat_helpers.h"
-#include "styles/style_info.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 
@@ -77,6 +76,7 @@ namespace {
 constexpr auto kToastDuration = crl::time(2800);
 constexpr auto kShareCutoff = crl::time(3000);
 constexpr auto kMaxEmojiPicks = 6;
+constexpr auto kProfileImageRatio = 4;
 
 enum class FreeMode {
 	Fee,
@@ -179,10 +179,48 @@ struct BoxState {
 };
 
 struct ProfileTitleMarks {
-	bool verified = false;
-	bool premium = false;
+	std::unique_ptr<Text::CustomEmoji> support;
 	std::unique_ptr<Text::CustomEmoji> status;
+	QImage supportFrame;
+	QImage statusFrame;
 };
+
+struct ProfileEmojiResolution {
+	ProfileEmojiResolution()
+	: previous(std::exchange(CustomEmoji::ShotScale(), kProfileImageRatio)) {
+	}
+	~ProfileEmojiResolution() {
+		CustomEmoji::ShotScale() = previous;
+	}
+	const int previous;
+};
+
+void PaintProfileMark(
+		QPainter &p,
+		not_null<Text::CustomEmoji*> emoji,
+		QPoint position,
+		QColor color) {
+	emoji->paint(p, {
+		.textColor = color,
+		.now = crl::now(),
+		.position = position,
+		.paused = true,
+		.internal = { .forceFirstFrame = true },
+	});
+}
+
+[[nodiscard]] QImage ProfileMarkFrame(not_null<Text::CustomEmoji*> emoji) {
+	const auto scale = ProfileEmojiResolution();
+	const auto side = emoji->width();
+	auto frame = QImage(QSize(side, side) * kProfileImageRatio,
+		QImage::Format_ARGB32_Premultiplied);
+	frame.setDevicePixelRatio(kProfileImageRatio);
+	frame.fill(Qt::transparent);
+	auto p = QPainter(&frame);
+	PaintProfileMark(p, emoji, QPoint(), Qt::white);
+	p.end();
+	return frame;
+}
 
 [[nodiscard]] QString ProfileExportText(const char *text) {
 	return QString::fromUtf8(Mokagram::Lang::Tr(text));
@@ -304,7 +342,8 @@ void SaveProfileLook(
 	const auto titleEnd = detailsTop + kTrackTitle.lineHeight();
 	const auto bioTop = width + gap;
 	const auto height = bioHeight ? bioTop + bioHeight + gap : width;
-	constexpr auto ratio = 4;
+	constexpr auto ratio = kProfileImageRatio;
+	const auto emojiResolution = ProfileEmojiResolution();
 	auto result = QImage(QSize(width, height) * ratio,
 		QImage::Format_ARGB32_Premultiplied);
 	result.setDevicePixelRatio(ratio);
@@ -317,9 +356,13 @@ void SaveProfileLook(
 	const auto radius = style::ConvertScale(Mokagram::BoxParts::kCardRadius);
 	clip.addRoundedRect(QRectF(0, 0, width, height), radius, radius);
 	p.setClipPath(clip);
+	const auto lightBackdrop = backdrop.lightnessF() >= 0.5;
 	if (bioHeight && backdrop.isValid()) {
-		p.fillRect(QRect(0, width, width, height - width),
-			anim::color(st::windowBg->c, backdrop, 0.26));
+		const auto footer = QColor::fromHslF(
+			backdrop.hslHueF(),
+			std::min<float64>(backdrop.hslSaturationF(), 0.58),
+			lightBackdrop ? 0.84 : 0.24);
+		p.fillRect(QRect(0, width, width, height - width), footer);
 	}
 	if (photo) {
 		const auto side = std::min(photo->width(), photo->height());
@@ -348,36 +391,24 @@ void SaveProfileLook(
 	nameStyle.font = title;
 	auto name = Text::String();
 	name.setText(nameStyle, peer->name());
-	const auto &badge = st::infoPeerBadge;
-	const auto verifiedWidth = marks.verified ? badge.verified.width() : 0;
-	const auto statusWidth = marks.status
-		? marks.status->width()
-		: marks.premium ? badge.premium.width() : 0;
+	const auto supportWidth = marks.support ? marks.support->width() : 0;
+	const auto statusWidth = marks.status ? marks.status->width() : 0;
 	const auto available = textWidth
-		- (verifiedWidth ? verifiedWidth + smallGap : 0)
+		- (supportWidth ? supportWidth + smallGap : 0)
 		- (statusWidth ? statusWidth + smallGap : 0);
 	const auto titleColor = photo ? QColor(Qt::white) : st::windowFg->c;
 	const auto middle = detailsTop + kTrackTitle.lineHeight() / 2;
+	const auto paintMark = [&](Text::CustomEmoji *emoji, int x, int size) {
+		if (emoji) {
+			PaintProfileMark(p, emoji, QPoint(x, middle - size / 2), titleColor);
+		}
+	};
+	paintMark(marks.support.get(), inset, supportWidth);
+	const auto nameX = inset + (supportWidth ? supportWidth + smallGap : 0);
 	p.setPen(titleColor);
-	name.drawElided(p, inset, middle - title->height / 2, available);
-	auto markX = inset + std::min(name.maxWidth(), available) + smallGap;
-	if (marks.verified) {
-		const auto y = middle - badge.verified.height() / 2;
-		badge.verified.paint(p, markX, y, width);
-		badge.verifiedCheck.paint(p, markX, y, width);
-		markX += verifiedWidth + smallGap;
-	}
-	if (marks.status) {
-		marks.status->paint(p, {
-			.textColor = titleColor,
-			.now = crl::now(),
-			.position = QPoint(markX, middle - statusWidth / 2),
-			.paused = true,
-			.internal = { .forceFirstFrame = true },
-		});
-	} else if (marks.premium) {
-		badge.premium.paint(p, markX, middle - badge.premium.height() / 2, width);
-	}
+	name.drawElided(p, nameX, middle - title->height / 2, available);
+	paintMark(marks.status.get(),
+		nameX + std::min(name.maxWidth(), available) + smallGap, statusWidth);
 	if (!handle.isEmpty()) {
 		p.setFont(subtitle->f);
 		p.setPen(photo ? QColor(255, 255, 255, 215) : st::windowSubTextFg->c);
@@ -389,7 +420,7 @@ void SaveProfileLook(
 	if (bioHeight) {
 		p.setFont(bioFont->f);
 		p.setPen(backdrop.isValid()
-			? anim::color(st::windowSubTextFg->c, st::windowFg->c, 0.36)
+			? (lightBackdrop ? QColor(37, 31, 35) : QColor(239, 233, 237))
 			: st::windowSubTextFg->c);
 		p.drawText(QRect(inset, bioTop, textWidth, bioHeight), wrap, bio);
 	}
@@ -1846,7 +1877,6 @@ static void FillPeerQrBoxImpl(
 		}
 		const auto photoKey = box->lifetime().make_state<qint64>(-1);
 		const auto marks = box->lifetime().make_state<ProfileTitleMarks>();
-		const auto statusReady = box->lifetime().make_state<bool>(false);
 		const auto backdrop = box->lifetime().make_state<QColor>();
 		const auto refreshCard = [=](bool force) {
 			const auto loaded = full ? full->image(Data::PhotoSize::Large) : nullptr;
@@ -1872,28 +1902,38 @@ static void FillPeerQrBoxImpl(
 		peer->session().downloaderTaskFinished(
 		) | rpl::on_next([=] { refreshCard(false); }, box->lifetime());
 		rpl::combine(
-			Info::Profile::VerifiedContentForPeer(peer),
+			Info::Profile::BotVerifyBadgeForPeer(peer),
 			Info::Profile::ShownEmojiStatusIdValue(peer)
 		) | rpl::on_next([=](
-				Info::Profile::Badge::Content verified,
+				Info::Profile::Badge::Content support,
 				EmojiStatusId status) {
-			marks->verified = (verified.badge == Info::Profile::BadgeType::Verified);
-			const auto user = peer->asUser();
-			marks->premium = user && user->isPremium();
-			*statusReady = false;
-			marks->status = status
-				? peer->owner().customEmojiManager().create(
-					Data::EmojiStatusCustomId(status),
+			const auto create = [=](EmojiStatusId id, auto member, auto frame) {
+				marks->*frame = QImage();
+				if (!id) {
+					(marks->*member).reset();
+					return;
+				}
+				const auto scale = ProfileEmojiResolution();
+				marks->*member = peer->owner().customEmojiManager().create(
+					Data::EmojiStatusCustomId(id),
 					crl::guard(box, [=] {
 						PostponeCall(box, [=] {
-							if (marks->status && marks->status->ready() && !*statusReady) {
-								*statusReady = true;
-								refreshCard(true);
+							const auto &emoji = marks->*member;
+							if (emoji && emoji->ready()) {
+								auto image = ProfileMarkFrame(emoji.get());
+								if (image != marks->*frame) {
+									marks->*frame = std::move(image);
+									refreshCard(true);
+								}
 							}
 						});
 					}),
-					Data::CustomEmojiSizeTag::Large)
-				: nullptr;
+					Data::CustomEmojiSizeTag::Large);
+			};
+			create(support.emojiStatusId,
+				&ProfileTitleMarks::support, &ProfileTitleMarks::supportFrame);
+			create(status,
+				&ProfileTitleMarks::status, &ProfileTitleMarks::statusFrame);
 			refreshCard(true);
 		}, box->lifetime());
 	}
