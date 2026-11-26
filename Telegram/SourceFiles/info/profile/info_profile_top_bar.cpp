@@ -3489,14 +3489,14 @@ void TopBar::fillTopBarMenu(
 		return;
 	}
 
-	// Mokagram: reuse the camera asset from the profile actions.
+	// Mokagram: match the outline icons in the profile menu.
 	if (const auto user = peer ? peer->asUser() : nullptr; user && !user->isBot()) {
 		addAction(
 			QString::fromUtf8(Mokagram::Lang::Tr("Скриншот профиля")),
 			[=, show = controller->uiShow()] {
 				Ui::ShowProfileShareBox(show, user);
 			},
-			&st::infoProfileTopBarActionSetPhoto);
+			&st::menuIconPhotoSuggest);
 	}
 	Window::FillDialogsEntryMenu(
 		controller,

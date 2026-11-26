@@ -100,7 +100,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "styles/style_chat_helpers.h"
 #include "styles/style_info.h"
-#include "styles/style_info_profile_top_bar.h"
 #include "styles/style_layers.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings_box.h"
@@ -259,7 +258,7 @@ Cover::Cover(
 	});
 	_qrButton->show();
 	_screenshotButton.create(this, st::infoProfileLabeledButtonQr);
-	const auto camera = &st::infoProfileTopBarActionSetPhoto;
+	const auto camera = &st::menuIconPhotoSuggest;
 	_screenshotButton->setIconOverride(camera, camera);
 	const auto updateScreenshotColor = [=] {
 		_screenshotButton->setIconColorOverride(st::windowActiveTextFg->c);
