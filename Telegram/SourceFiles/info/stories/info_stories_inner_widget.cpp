@@ -319,11 +319,13 @@ void InnerWidget::createProfileTop() {
 		nullptr,
 		{ v::null });
 
-	blocks.addSeparator();
+	// Mokagram: use the same rounded card as the profile details.
+	auto actions = object_ptr<Ui::VerticalLayout>(_top);
 	// Layout insertion shows even wrappers whose initial toggle is off.
-	blocks.add(makeGiftsButton())->finishAnimating();
-	blocks.add(makeArchiveButton())->finishAnimating();
-	blocks.add(makeRecentButton())->finishAnimating();
+	actions->add(makeGiftsButton())->finishAnimating();
+	actions->add(makeArchiveButton())->finishAnimating();
+	actions->add(makeRecentButton())->finishAnimating();
+	Profile::AddProfileCard(blocks, { .widget = std::move(actions) });
 	Ui::AddSkip(_top, skip);
 
 	finalizeTop(false);

@@ -1,3 +1,7 @@
+mokaGram (26.11.26)
+
+- Group gifts and story shortcuts in a rounded profile card.
+
 mokaGram (24.11.26)
 
 - Improve music player responsiveness on macOS without reducing animation quality.
