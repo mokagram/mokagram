@@ -103,7 +103,6 @@
 #include "ui/power_saving.h"
 #include "ui/text/format_song_document_name.h"
 #include "ui/text/format_values.h"
-#include "ui/text/text_custom_emoji.h"
 #include "ui/toast/toast.h"
 #include "ui/vertical_list.h"
 #include "styles/style_chat.h"
@@ -2309,6 +2308,18 @@ struct HomeTrackPlaybackState {
 	};
 }
 
+void PaintHomePlayGlyph(QPainter &p, QPoint center, QColor color) {
+	const auto s = [](int v) { return style::ConvertScale(v); };
+	const QPoint points[] = {
+		center + QPoint(-s(4), -s(7)),
+		center + QPoint(s(7), 0),
+		center + QPoint(-s(4), s(7)),
+	};
+	p.setPen(Qt::NoPen);
+	p.setBrush(color);
+	p.drawPolygon(points, 3);
+}
+
 void PaintHomeCardAction(
 		QPainter &p,
 		const QRect &button,
@@ -2337,9 +2348,7 @@ void PaintHomeCardAction(
 		p.drawRoundedRect(QRect(
 			center.x() + s(1), center.y() - s(6), s(3), s(12)), s(1), s(1));
 	} else {
-		p.setBrush(glyph);
-		p.drawPolygon(QPolygon({ center + QPoint(-s(4), -s(7)),
-			center + QPoint(s(7), 0), center + QPoint(-s(4), s(7)) }));
+		PaintHomePlayGlyph(p, center, glyph);
 	}
 	p.restore();
 }
@@ -3674,7 +3683,6 @@ public:
 		setCursor(Qt::PointingHandCursor);
 		setFocusPolicy(Qt::TabFocus);
 		setAttribute(Qt::WA_NoMousePropagation);
-		setText(PlaylistText("Слушать"));
 		setToolTip(PlaylistText("Воспроизвести"));
 	}
 
@@ -3690,37 +3698,27 @@ public:
 
 protected:
 	void paintEvent(QPaintEvent *) override {
-		if (!_icon && !_loading) {
-			_icon = Settings::AltIconEmoji(u"▶️"_q, [=] { update(); }, style::ConvertScale(22));
-		}
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto focus = style::ConvertScale(2);
 		p.setPen(hasFocus() ? QPen(st::windowActiveTextFg->c, focus) : QPen(Qt::NoPen));
 		p.setBrush(isDown()
 			? st::windowBgRipple
-			: underMouse() ? st::windowBgOver : st::windowBg);
+			: st::windowBg);
 		const auto inset = hasFocus() ? focus / 2. : 0.;
 		p.drawEllipse(QRectF(rect()).adjusted(inset, inset, -inset, -inset));
-		if (!_loading && _icon && _icon->ready()) {
-			const auto offset = (width() - _icon->width()) / 2;
-			_icon->paint(p, {
-				.textColor = st::windowFg->c,
-				.now = crl::now(),
-				.position = QPoint(offset, offset),
-				.paused = true,
-			});
+		if (!_loading) {
+			PaintHomePlayGlyph(p, rect().center(), st::windowFg->c);
 		} else {
 			auto font = st::semiboldFont->f;
-			font.setPixelSize(style::ConvertScale(_loading ? 16 : 9));
+			font.setPixelSize(style::ConvertScale(16));
 			p.setFont(font);
 			p.setPen(st::windowFg);
-			p.drawText(rect(), Qt::AlignCenter, _loading ? u"…"_q : text());
+			p.drawText(rect(), Qt::AlignCenter, u"…"_q);
 		}
 	}
 
 private:
-	std::unique_ptr<Ui::Text::CustomEmoji> _icon;
 	bool _loading = false;
 };
 
@@ -3737,7 +3735,6 @@ public:
 		if (!_album.id.isEmpty()) {
 			_play = Ui::CreateChild<HomeAlbumPlayButton>(this);
 			_play->setAccessibleName(PlaylistText("Воспроизвести") + u": "_q + _album.title);
-			Settings::RowIconsUpdated() | rpl::on_next([=] { _play->update(); }, lifetime());
 			connect(_play, &QToolButton::clicked, this, [=] {
 				if (!_play->loading()) {
 					_play->setLoading(true);
