@@ -10,6 +10,7 @@
 #include "media/player/media_player_instance.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/music/mokagram_music_ui.h"
+#include "mokagram/music/mokagram_player_style.h"
 #include "mokagram/music/mokagram_soundcloud.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings.h"
@@ -759,9 +760,10 @@ void LyricsView::contextMenuEvent(QContextMenuEvent *e) {
 }
 
 QPointF LyricsView::lineOrigin(double top) const {
-	return _big
-		? QPointF(0., top + style::ConvertScale(13))
-		: QPointF(style::ConvertScale(24), top + style::ConvertScale(12));
+	using namespace PlayerStyle;
+	return QPointF(
+		_big ? 0 : style::ConvertScale(kSpace24),
+		top + style::ConvertScale(kSpace12));
 }
 
 // Номер строки под точкой по вертикали (-1 нет), считается так же, как рисуется.
@@ -956,16 +958,12 @@ void LyricsView::tick() {
 [[nodiscard]] int LyricsView::textWidth() const {
 	const auto gutter = Settings::Bool(u"lyrics.comments"_q) && _comments->validTrack()
 		? style::ConvertScale(108) : 0;
-	return std::max(1, width() - (_big ? 0 : style::ConvertScale(48)) - gutter);
+	const auto inset = _big ? 0 : style::ConvertScale(PlayerStyle::kSpace24);
+	return std::max(1, width() - 2 * inset - gutter);
 }
 
 [[nodiscard]] QFont LyricsView::lineFont() const {
-	auto font = st::semiboldFont->f;
-	font.setPixelSize(style::ConvertScale(_big ? 36 : 24));
-	if (_big) {
-		font.setWeight(QFont::DemiBold);
-	}
-	return font;
+	return (_big ? PlayerStyle::kLyrics : PlayerStyle::kCompactLyrics).font()->f;
 }
 
 [[nodiscard]] const LyricsView::LineLayout &LyricsView::layoutOf(int index) {
@@ -977,31 +975,33 @@ void LyricsView::tick() {
 	if (layout.main) {
 		return layout;
 	}
+	using namespace PlayerStyle;
 	const auto width = textWidth();
-	const auto build = [&](const QString &text, const QFont &font) {
-		auto result = std::make_unique<QTextLayout>(text, font);
+	const auto build = [&](const QString &text, TextStyle style) {
+		auto result = std::make_unique<QTextLayout>(text, style.font());
 		auto option = QTextOption(_big ? Qt::AlignLeft : Qt::AlignHCenter);
-		option.setWrapMode(QTextOption::WordWrap);
+		option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
 		result->setTextOption(option);
 		result->beginLayout();
+		const auto leading = style.lineHeight();
 		auto y = 0.;
 		for (auto line = result->createLine(); line.isValid(); line = result->createLine()) {
 			line.setLineWidth(width);
 			line.setPosition(QPointF(0., y));
-			y += line.height();
+			y += std::max(line.height(), double(leading));
 		}
 		result->endLayout();
 		return result;
 	};
 	const auto &line = _lyrics.lines[index];
-	layout.main = build(line.text.isEmpty() ? u" "_q : line.text, lineFont());
+	layout.main = build(
+		line.text.isEmpty() ? u" "_q : line.text,
+		_big ? kLyrics : kCompactLyrics);
 	const auto subtitle = (_subtitleMode == 1)
 		? line.translation
 		: (_subtitleMode == 2) ? line.romanization : QString();
 	if (!subtitle.isEmpty()) {
-		auto font = st::normalFont->f;
-		font.setPixelSize(style::ConvertScale(_big ? 18 : 14));
-		layout.subtitle = build(subtitle, font);
+		layout.subtitle = build(subtitle, _big ? kLyricsSubtitle : kCompactArtist);
 	}
 	return layout;
 }
@@ -1013,9 +1013,9 @@ void LyricsView::tick() {
 	if (_heights[index] < 0) {
 		const auto &layout = layoutOf(index);
 		const auto secondary = layout.subtitle
-			? style::ConvertScale(4) + layout.subtitle->boundingRect().height() : 0.;
+			? style::ConvertScale(PlayerStyle::kSpace4) + layout.subtitle->boundingRect().height() : 0.;
 		_heights[index] = int(std::ceil(layout.main->boundingRect().height() + secondary))
-			+ style::ConvertScale(_big ? 26 : 24);
+			+ 2 * style::ConvertScale(PlayerStyle::kSpace12);
 	}
 	return _heights[index];
 }
@@ -1228,7 +1228,7 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 				p.setPen(shade);
 				layout.subtitle->draw(&p, origin + QPointF(
 					0.,
-					layout.main->boundingRect().height() + style::ConvertScale(4)));
+					layout.main->boundingRect().height() + style::ConvertScale(PlayerStyle::kSpace4)));
 			}
 		}
 		top += lineHeight;

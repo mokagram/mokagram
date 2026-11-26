@@ -19,6 +19,7 @@
 #include "mokagram/music/mokagram_music_library.h"
 #include "mokagram/music/mokagram_lyrics.h"
 #include "mokagram/music/mokagram_lyrics_ui.h"
+#include "mokagram/music/mokagram_player_style.h"
 #include "mokagram/music/mokagram_motion.h"
 #include "mokagram/perf/mokagram_perf.h"
 #include "media/clip/media_clip_reader.h"
@@ -6846,8 +6847,7 @@ private:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		auto font = st::semiboldFont->f;
-		font.setPixelSize(s(15));
+		const auto font = PlayerStyle::kControlLabel.font();
 		p.setFont(font);
 		auto inactive = isOver()
 			? st::windowFg->c
@@ -6871,12 +6871,12 @@ private:
 			active,
 			_fade.value(_active ? 1. : 0.)));
 		const auto centered = _centered || background.isValid();
-		const auto inset = std::min(s(centered ? 6 : 16), width() / 2);
+		const auto inset = std::min(s(centered ? PlayerStyle::kSpace4 : PlayerStyle::kSpace16), width() / 2);
 		const auto inner = rect().adjusted(inset, 0, -inset, 0);
 		p.drawText(
 			inner,
 			(centered ? Qt::AlignHCenter : Qt::AlignLeft) | Qt::AlignVCenter,
-			QFontMetrics(font).elidedText(_text, Qt::ElideRight, inner.width()));
+			font->elided(_text, inner.width()));
 		if (hasFocus()) {
 			p.setPen(QPen(background.isValid() ? inactive : st::windowFg->c, s(1)));
 			p.setBrush(Qt::NoBrush);
@@ -7508,7 +7508,7 @@ public:
 		_queueTabBar->paintOn([=](QPainter &p) {
 			const auto hq = PainterHighQualityEnabler(p);
 			const auto area = _queueTabBar->rect();
-			const auto inset = s(4);
+			const auto inset = s(PlayerStyle::kSpace4);
 			const auto segment = std::max(area.width() - 2 * inset, 0) / 2.;
 			const auto at = _queueTabSlide.unitValue(_queueHistory ? 1. : 0.);
 			p.setPen(Qt::NoPen);
@@ -7538,12 +7538,15 @@ public:
 			return result;
 		}();
 		_queueNowLabel = addLabel(PlaylistText("Сейчас играет"), sectionStyle,
-			QMargins(s(8), s(2), s(8), s(2)));
+			QMargins(s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace2),
+				s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace2)));
 		_queueNow = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
 		_queueNextLabel = addLabel(PlaylistText("Далее в очереди"), sectionStyle,
-			QMargins(s(8), s(10), s(8), s(2)));
+			QMargins(s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace12),
+				s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace2)));
 		_queueList = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
-		_queueEmpty = addLabel({}, st::boxDividerLabel, QMargins(s(8), s(8), s(8), 0));
+		const auto queueRowPad = s(PlayerStyle::kSpace8);
+		_queueEmpty = addLabel({}, st::boxDividerLabel, QMargins(queueRowPad, queueRowPad, queueRowPad, 0));
 		_queueReorder = std::make_unique<Ui::VerticalLayoutReorder>(_queueList, _queueScroll);
 		_queueReorder->updates() | rpl::on_next([=](Ui::VerticalLayoutReorder::Single change) {
 			using State = Ui::VerticalLayoutReorder::State;
@@ -7574,7 +7577,8 @@ public:
 			const auto line = std::max(result.style.lineHeight, result.style.font->height);
 			const auto top = std::max((height - line) / 2, 0);
 			result.textBg = result.textBgActive = st::boxBg;
-			result.textMargins = QMargins(s(14), top, s(14), std::max(height - line - top, 0));
+			const auto side = s(PlayerStyle::kSpace16);
+			result.textMargins = QMargins(side, top, side, std::max(height - line - top, 0));
 			result.placeholderFgActive = st::windowSubTextFg;
 			result.placeholderScale = 0.;
 			result.placeholderShift = 0;
@@ -8135,17 +8139,6 @@ protected:
 		setHover(InfoHover::None);
 	}
 	enum class InfoHover { None, Title, Artist, Cover, BarCover, BarTitle, BarArtist };
-	[[nodiscard]] QFont titleFont() const {
-		auto result = st::semiboldFont->f;
-		result.setPixelSize(style::ConvertScale(22));
-		result.setWeight(QFont::Bold);
-		return result;
-	}
-	[[nodiscard]] QFont artistFont() const {
-		auto result = st::normalFont->f;
-		result.setPixelSize(style::ConvertScale(15));
-		return result;
-	}
 	void setHover(InfoHover hover) {
 		if (_hover != hover) {
 			_hover = hover;
@@ -8193,9 +8186,10 @@ protected:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		auto result = Layout();
 		const auto windowWidth = width();
-		const auto margin = s(windowWidth < s(560) ? 8 : 16);
-		const auto gap = s(12);
-		const auto pad = s(16);
+		using namespace PlayerStyle;
+		const auto margin = s(windowWidth < s(560) ? kSpace8 : kSpace16);
+		const auto gap = s(kSpace12);
+		const auto pad = s(kSpace16);
 		const auto now = (_tab == Tab::Now);
 		const auto queueWidth = std::min(
 			std::max(windowWidth - 2 * margin, 0),
@@ -8218,9 +8212,10 @@ protected:
 
 		// Сверху ряд вкладок по центру основной области, справа кнопка «свернуть».
 		const auto homeDetail = (_tab == Tab::Home && _homeAlbumOpen);
-		const auto back = QRect(s(24) + _filter->width(), margin, s(96), s(40));
-		const auto reserve = margin + _collapse->width() + s(8);
-		const auto leftReserve = homeDetail ? back.x() + back.width() + s(8) : reserve;
+		const auto headerGap = s(kSpace8);
+		const auto back = QRect(margin + _filter->width() + headerGap, margin, s(96), s(40));
+		const auto reserve = margin + _collapse->width() + headerGap;
+		const auto leftReserve = homeDetail ? back.x() + back.width() + headerGap : reserve;
 		const auto tabsBelow = homeDetail && (windowWidth - leftReserve - reserve < s(240));
 		const auto navLeft = tabsBelow ? margin : leftReserve;
 		const auto navRight = tabsBelow ? margin : reserve;
@@ -8250,12 +8245,12 @@ protected:
 				const auto colWidth = std::clamp(int(windowWidth * 0.29), s(190), s(460));
 				const auto side = std::max(std::min({
 					colWidth - 2 * pad,
-					std::max(areaHeight - s(16), 0) * 4 / 5,
+					std::max(areaHeight - pad, 0) * 4 / 5,
 					s(420) }), 0);
 				const auto coverHeight = side * 5 / 4;
 				const auto y = top + std::max((areaHeight - coverHeight) / 2, 0);
 				result.cover = QRect(margin + (colWidth - side) / 2, y, side, coverHeight);
-				lyricsLeft = margin + colWidth + s(32);
+				lyricsLeft = margin + colWidth + s(kSpace32);
 			} else {
 				// В узком окне обложка над текстом, если по высоте хватает места для обоих.
 				const auto coverHeight = std::min(areaHeight * 2 / 5, s(360));
@@ -8267,12 +8262,14 @@ protected:
 			}
 			if (!result.cover.isEmpty()) {
 				const auto cover = result.cover;
-				const auto infoInset = std::min(s(24), cover.width() / 4);
+				const auto infoInset = std::min(s(kSpace24), cover.width() / 4);
+				const auto infoHeight = kTrackTitle.lineHeight()
+					+ s(kSpace2) + kTrackArtist.lineHeight();
 				result.info = QRect(
 					cover.x() + infoInset,
-					cover.y() + std::max(cover.height() - s(76), 0),
+					cover.y() + std::max(cover.height() - infoHeight - s(kSpace24), 0),
 					cover.width() - 2 * infoInset,
-					std::min(s(56), cover.height()));
+					std::min(infoHeight, cover.height()));
 			}
 			result.lyrics = QRect(
 				lyricsLeft,
@@ -8302,8 +8299,10 @@ protected:
 			: result.compact
 			? barInset + s(kBarCover) + pad / 2
 			: std::clamp(int(bar.width() * 0.3), s(280), s(380));
-		const auto rightWidth = pad + _queueToggle->width() + s(2) + _heart->width() + pad
-			+ (result.compact ? 0 : volumeWidth + s(12));
+		const auto actionGap = s(kSpace2);
+		const auto volumeGap = s(kSpace12);
+		const auto rightWidth = pad + _queueToggle->width() + actionGap + _heart->width() + pad
+			+ (result.compact ? 0 : volumeWidth + volumeGap);
 		const auto sideWidth = std::max(leftWidth, rightWidth);
 		const auto centerWidth = std::max(bar.width() - (result.ultra ? rightWidth + pad : 2 * sideWidth), 0);
 		const auto centerLeft = result.ultra
@@ -8315,33 +8314,34 @@ protected:
 			+ (bar.height() - _play->height() - _seek->height()) / 2;
 		const auto seekTop = result.controlsTop + _play->height();
 		const auto rowWidth = std::max(std::min(
-			result.ultra ? bar.width() - 2 * pad : centerWidth - s(16), s(568)), 0);
+			result.ultra ? bar.width() - 2 * pad : centerWidth - pad, s(568)), 0);
 		const auto rowLeft = result.ultra
 			? bar.x() + (bar.width() - rowWidth) / 2
 			: centerLeft + (centerWidth - rowWidth) / 2;
 		const auto timeWidth = s(44);
-		result.timeNow = QRect(rowLeft, seekTop, timeWidth - s(6), _seek->height());
+		const auto timeGap = s(kSpace4);
+		result.timeNow = QRect(rowLeft, seekTop, timeWidth - timeGap, _seek->height());
 		result.seek = QRect(
 			rowLeft + timeWidth,
 			seekTop,
 			std::max(rowWidth - 2 * timeWidth, 0),
 			_seek->height());
 		result.timeTotal = QRect(
-			rowLeft + rowWidth - timeWidth + s(6),
+			rowLeft + rowWidth - timeWidth + timeGap,
 			seekTop,
-			timeWidth - s(6),
+			timeWidth - timeGap,
 			_seek->height());
 		result.queue = QPoint(
 			bar.x() + bar.width() - barInset - _queueToggle->width(),
 			result.ultra ? result.controlsTop + (_play->height() - _queueToggle->height()) / 2
 				: bar.y() + (bar.height() - _queueToggle->height()) / 2);
 		result.heart = QPoint(
-			result.queue.x() - s(2) - _heart->width(),
+			result.queue.x() - actionGap - _heart->width(),
 			result.ultra ? result.controlsTop + (_play->height() - _heart->height()) / 2
 				: bar.y() + (bar.height() - _heart->height()) / 2);
 		if (!result.compact) {
 			result.volume = QRect(
-				result.heart.x() - s(12) - volumeWidth,
+				result.heart.x() - volumeGap - volumeWidth,
 				bar.y() + (bar.height() - _volume->height()) / 2,
 				volumeWidth,
 				_volume->height());
@@ -8352,23 +8352,37 @@ protected:
 				bar.y() + barInset,
 				s(kBarCover),
 				s(kBarCover));
+			const auto infoLeft = result.barCover.x() + result.barCover.width() + s(kSpace16);
 			result.barInfo = QRect(
-				result.barCover.x() + s(kBarCover) + s(14),
+				infoLeft,
 				result.barCover.y(),
-				std::max(leftWidth - barInset - s(kBarCover) - s(14) - pad / 2, 0),
+				std::max(bar.x() + leftWidth - infoLeft - s(kSpace8), 0),
 				s(kBarCover));
 		}
 		return result;
 	}
-	[[nodiscard]] int infoAvailable(const Layout &layout) const {
-		return layout.info.width();
+	struct MetadataLines {
+		QRect title;
+		QRect artist;
+	};
+
+	[[nodiscard]] static MetadataLines metadataLines(QRect area, bool compact) {
+		using namespace PlayerStyle;
+		const auto titleHeight = (compact ? kCompactTitle : kTrackTitle).lineHeight();
+		const auto artistHeight = (compact ? kCompactArtist : kTrackArtist).lineHeight();
+		const auto gap = style::ConvertScale(kSpace2);
+		const auto top = area.y()
+			+ std::max((area.height() - titleHeight - gap - artistHeight) / 2, 0);
+		return {
+			QRect(area.x(), top, area.width(), titleHeight),
+			QRect(area.x(), top + titleHeight + gap, area.width(), artistHeight),
+		};
 	}
 	[[nodiscard]] QRect barInfoRect(const Layout &layout) const {
-		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto shown = _coverMorph.animating()
 			? 1. - _coverTransition.expanded()
 			: _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
-		const auto shift = int((s(kBarCover) + s(14)) * (1. - shown));
+		const auto shift = int((layout.barInfo.x() - layout.barCover.x()) * (1. - shown));
 		return layout.barInfo.adjusted(-shift, 0, 0, 0);
 	}
 	// Где под курсором название или исполнитель (по ширине самого текста, не всей строки).
@@ -8378,20 +8392,14 @@ protected:
 		if (_coverMorph.animating() && _coverTransition.rect().contains(point)) {
 			return InfoHover::Cover;
 		}
-		const auto available = infoAvailable(layout);
-		const auto textWidth = [&](const QFont &font, const QString &text) {
-			return std::min(QFontMetrics(font).horizontalAdvance(text), available);
+		using namespace PlayerStyle;
+		const auto hitRect = [](QRect line, TextStyle style, const QString &text) {
+			line.setWidth(std::min(line.width(), style.font()->width(text)));
+			return line;
 		};
-		const auto title = QRect(
-			layout.info.x(),
-			layout.info.y(),
-			textWidth(titleFont(), _title),
-			s(30));
-		const auto artist = QRect(
-			layout.info.x(),
-			layout.info.y() + s(32),
-			textWidth(artistFont(), _artist),
-			s(22));
+		const auto lines = metadataLines(layout.info, false);
+		const auto title = hitRect(lines.title, kTrackTitle, _title);
+		const auto artist = hitRect(lines.artist, kTrackArtist, _artist);
 		if (_tab != Tab::Now
 			&& !layout.ultra
 			&& width() >= s(760)
@@ -8400,13 +8408,8 @@ protected:
 		}
 		if (!layout.ultra && !layout.compact && layout.barInfo.width() > 0) {
 			const auto info = barInfoRect(layout);
-			auto font = st::normalFont->f;
-			font.setPixelSize(s(14));
-			const auto artistWidth = std::min(
-				QFontMetrics(font).horizontalAdvance(_artist),
-				info.width());
-			const auto artistRect = QRect(
-				info.x(), info.y() + s(38), artistWidth, s(20));
+			const auto artistRect = hitRect(
+				metadataLines(info, true).artist, kCompactArtist, _artist);
 			if (artistRect.contains(point) && !_artist.trimmed().isEmpty()) {
 				return InfoHover::BarArtist;
 			} else if (info.contains(point) && !_title.trimmed().isEmpty()) {
@@ -8431,7 +8434,7 @@ protected:
 		const auto barOrigin = layout.bar.topLeft();
 		layoutPlaybackBar(layout);
 		_collapse->move(layout.collapse);
-		_filter->move(style::ConvertScale(16), layout.collapse.y());
+		_filter->move(width() - layout.collapse.x() - _collapse->width(), layout.collapse.y());
 		if (_homeBackOverlay && (!layout.homeBack.isEmpty() || e->size() != e->oldSize())) {
 			stopHomeBackExit();
 		}
@@ -8547,7 +8550,8 @@ protected:
 			widths += button->width();
 			++count;
 		}
-		const auto gap = std::clamp((layout.controlsWidth - widths) / (count - 1), s(2), s(18));
+		const auto gap = std::clamp((layout.controlsWidth - widths) / (count - 1),
+			s(PlayerStyle::kSpace2), s(PlayerStyle::kSpace16));
 		const auto top = layout.controlsTop - barOrigin.y();
 		auto x = layout.controlsLeft - barOrigin.x()
 			+ (layout.controlsWidth - widths - gap * (count - 1)) / 2;
@@ -8624,22 +8628,24 @@ protected:
 		}
 		if (resize) {
 			const auto s = [](int v) { return style::ConvertScale(v); };
-			const auto tabsTop = s(12);
+			using namespace PlayerStyle;
+			const auto tabsTop = s(kSpace12);
 			const auto tabsHeight = s(40);
-			const auto side = s(16);
+			const auto side = s(kSpace16);
 			const auto tabWidth = std::max(target.width() - 2 * side, 0);
 			_queueTabBar->setGeometry(side, tabsTop, tabWidth, tabsHeight);
-			const auto inset = s(4);
+			const auto inset = s(kSpace4);
 			const auto inner = std::max(tabWidth - 2 * inset, 0);
 			const auto first = inner / 2;
 			_queueTabs[0]->setGeometry(inset, 0, first, tabsHeight);
 			_queueTabs[1]->setGeometry(inset + first, 0, inner - first, tabsHeight);
 			_queueSearch->resizeToWidth(std::max(tabWidth, 1));
-			_queueSearch->moveToLeft(side, tabsTop + tabsHeight + s(8));
-			const auto scrollTop = _queueSearch->geometry().bottom() + s(9);
+			const auto gap = s(kSpace8);
+			_queueSearch->moveToLeft(side, tabsTop + tabsHeight + gap, target.width());
+			const auto scrollTop = _queueSearch->y() + _queueSearch->height() + gap;
 			_queueScroll->setGeometry(
-				s(8), scrollTop, std::max(target.width() - s(16), 0),
-				std::max(target.height() - scrollTop - s(12), 0));
+				gap, scrollTop, std::max(target.width() - 2 * gap, 0),
+				std::max(target.height() - scrollTop - s(kSpace12), 0));
 			if (_queueContent->width() != _queueScroll->width()) {
 				_queueContent->resizeToWidth(_queueScroll->width());
 			}
@@ -10748,7 +10754,7 @@ protected:
 		if ((_tab != Tab::Now || (showsQueue() && !_queuePanelOpen))
 			&& !(_tab == Tab::Home && _homeAlbumOpen)) {
 			if (!_tabNote.isEmpty()) {
-				p.setFont(labelFont(15, false));
+				p.setFont(PlayerStyle::kTrackArtist.font());
 				p.setPen(st::windowSubTextFg);
 				const auto noteWidth = std::max(layout.center.width() - s(20), 0);
 				p.drawText(
@@ -10758,7 +10764,7 @@ protected:
 			}
 			if (_tab == Tab::Search && _searchEmptySticker) {
 				const auto sticker = _searchEmptySticker->geometry();
-				p.setFont(labelFont(15, false));
+				p.setFont(PlayerStyle::kTrackArtist.font());
 				p.setPen(st::windowSubTextFg);
 				p.drawText(QRect(layout.center.x() + s(10), sticker.bottom() + s(12),
 					std::max(layout.center.width() - s(20), 0), s(44)),
@@ -10857,7 +10863,8 @@ protected:
 		}
 
 		// Название и исполнитель; под курсором подчёркнуты и ведут на их страницы.
-		const auto available = infoAvailable(layout);
+		using namespace PlayerStyle;
+		const auto lines = metadataLines(layout.info, false);
 		const auto drawInfo = [&](
 				const QString &title,
 				const QString &artist,
@@ -10866,34 +10873,27 @@ protected:
 			if (opacity <= 0. || layout.cover.isEmpty()) {
 				return;
 			}
-			auto font = titleFont();
-			font.setUnderline(current && _hover == InfoHover::Title);
+			auto font = kTrackTitle.font()->underline(current && _hover == InfoHover::Title);
 			p.setFont(font);
 			p.setPen(QColor(255, 255, 255, int(255 * opacity)));
 			p.drawText(
-				QRect(layout.info.x(), layout.info.y(), available, s(30)),
+				lines.title,
 				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(font).elidedText(title, Qt::ElideRight, available));
+				font->elided(title, lines.title.width()));
 			const auto artistHover = current && _hover == InfoHover::Artist;
-			font = artistFont();
-			font.setUnderline(artistHover);
+			font = kTrackArtist.font()->underline(artistHover);
 			p.setFont(font);
 			p.setPen(QColor(255, 255, 255, int((artistHover ? 255 : 210) * opacity)));
 			p.drawText(
-				QRect(layout.info.x(), layout.info.y() + s(32), available, s(22)),
+				lines.artist,
 				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(font).elidedText(artist, Qt::ElideRight, available));
+				font->elided(artist, lines.artist.width()));
 		};
 		drawInfo(_wasTitle, _wasArtist, 1. - fade, false);
 		drawInfo(_title, _artist, fade, true);
 		p.restore();
 	}
 
-	[[nodiscard]] static QFont labelFont(int size, bool bold) {
-		auto font = (bold ? st::semiboldFont : st::normalFont)->f;
-		font.setPixelSize(style::ConvertScale(size));
-		return font;
-	}
 
 	void paintPlaybackBarBackground(QPainter &p, const Layout &layout) const {
 		p.setPen(Qt::NoPen);
@@ -10910,7 +10910,7 @@ protected:
 	}
 
 	void paintPlaybackBarDetails(QPainter &p, const Layout &layout) const {
-		const auto s = [](int v) { return style::ConvertScale(v); };
+		using namespace PlayerStyle;
 		// На «Сейчас играет» обложки в капсуле нет: там большая.
 		const auto fade = _infoFade.unitValue(1.);
 		if (!layout.ultra && _tab != Tab::Now) {
@@ -10932,29 +10932,26 @@ protected:
 		if (!layout.ultra && !layout.compact && layout.barInfo.width() > 0) {
 			// Без маленькой обложки текст сдвигается влево на её место.
 			const auto info = barInfoRect(layout);
-			const auto infoLeft = info.x();
-			const auto infoWidth = info.width();
-			auto font = labelFont(16, true);
-			font.setUnderline(_hover == InfoHover::BarTitle);
+			const auto lines = metadataLines(info, true);
+			auto font = kCompactTitle.font()->underline(_hover == InfoHover::BarTitle);
 			p.setFont(font);
 			p.setPen(Qt::white);
 			p.drawText(
-				QRect(infoLeft, layout.barInfo.y() + s(13), infoWidth, s(24)),
+				lines.title,
 				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(font).elidedText(_title, Qt::ElideRight, infoWidth));
-			font = labelFont(14, false);
-			font.setUnderline(_hover == InfoHover::BarArtist);
+				font->elided(_title, lines.title.width()));
+			font = kCompactArtist.font()->underline(_hover == InfoHover::BarArtist);
 			p.setFont(font);
 			p.setPen(QColor(255, 255, 255,
 				_hover == InfoHover::BarArtist ? 255 : 170));
 			p.drawText(
-				QRect(infoLeft, layout.barInfo.y() + s(38), infoWidth, s(20)),
+				lines.artist,
 				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(font).elidedText(_artist, Qt::ElideRight, infoWidth));
+				font->elided(_artist, lines.artist.width()));
 		}
 
 		// Время по сторонам полосы перемотки.
-		p.setFont(labelFont(12, false));
+		p.setFont(kTimeLabel.font());
 		p.setPen(QColor(255, 255, 255, 140));
 		p.drawText(layout.timeNow, Qt::AlignRight | Qt::AlignVCenter, _timeNow);
 		p.drawText(layout.timeTotal, Qt::AlignLeft | Qt::AlignVCenter, _timeTotal);
@@ -12814,11 +12811,16 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			QPixmap last;
 		};
 		const auto fade = box->lifetime().make_state<InfoFade>();
+		using namespace PlayerStyle;
+		const auto s = [](int value) { return style::ConvertScale(value); };
+		const auto pad = s(kSpace16);
+		const auto inset = s(kSpace24);
+		const auto actionSize = s(40);
 
 		const auto header = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(16, 16, 16, 0));
-		header->resize(header->width(), 40);
+			QMargins(pad, pad, pad, 0));
+		header->resize(header->width(), s(40));
 		const auto close = Mokagram::Plugins::MakeHeaderButton(
 			header,
 			true,
@@ -12848,15 +12850,29 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		// Обложка, название, исполнитель.
 		const auto info = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(0, 8, 0, 0));
+			QMargins(0, s(kSpace8), 0, 0));
 		const auto coverRect = [=] {
-			const auto side = std::min(info->width() - 48, 240);
-			return QRect((info->width() - side) / 2, 8, side, side);
+			const auto side = std::clamp(info->width() - 2 * inset, 0, s(240));
+			return QRect((info->width() - side) / 2, s(kSpace8), side, side);
+		};
+		const auto titleTop = [=] {
+			const auto cover = coverRect();
+			return cover.y() + cover.height() + inset;
+		};
+		const auto actionTop = [=] {
+			const auto textHeight = kTrackTitle.lineHeight() + s(kSpace2) + kTrackArtist.lineHeight();
+			return titleTop() + (textHeight - actionSize) / 2;
+		};
+		const auto metadataWidth = [=](const AudioMsgId &id) {
+			const auto actions = OwnsTrack(id) ? 4 : 2;
+			return std::max(info->width() - 2 * inset - actions * actionSize - s(kSpace8), 0);
 		};
 		info->widthValue(
 		) | rpl::on_next([=](int width) {
-			info->resize(width, coverRect().height()
-				+ st::mokagramMusicPlayerInfoTextHeight + 12);
+			const auto bottom = titleTop() + kTrackTitle.lineHeight()
+				+ s(kSpace2) + kTrackArtist.lineHeight() + pad;
+			info->resize(width, std::max(bottom, coverRect().height()
+				+ st::mokagramMusicPlayerInfoTextHeight + s(kSpace12)));
 		}, info->lifetime());
 		const auto paintInfo = [=](QPainter &p) {
 			auto hq = PainterHighQualityEnabler(p);
@@ -12882,17 +12898,14 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 				st::menuIconSoundOn.paintInCenter(p, art);
 			}
 			const auto track = PlayingTrack();
-			auto big = st::semiboldFont->f;
-			big.setPixelSize(20);
+			const auto big = PlayerStyle::kTrackTitle.font();
 			p.setFont(big);
 			p.setPen(st::windowFg);
-			const auto textWidth = info->width() - 48 - 48
-				- (OwnsTrack(current) ? 120 : 0);
-			const auto metrics = QFontMetrics(big);
+			const auto textWidth = metadataWidth(current);
 			p.drawText(
-				QRect(24, art.bottom() + 28, textWidth, 30),
+				QRect(inset, titleTop(), textWidth, kTrackTitle.lineHeight()),
 				Qt::AlignLeft | Qt::AlignVCenter,
-				metrics.elidedText(track.title, Qt::ElideRight, textWidth));
+				big->elided(track.title, textWidth));
 		};
 		info->paintOn([=](QPainter &p) {
 			if (fade->animation.animating() && !fade->was.isNull()) {
@@ -12918,10 +12931,8 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		artistButton->setToolTip(artistHint);
 		artistButton->setAccessibleName(artistHint);
 		artistButton->paintOn([=](QPainter &p) {
-			auto font = st::normalFont->f;
-			font.setPixelSize(16);
 			const auto active = artistButton->isOver() || artistButton->isDown();
-			font.setUnderline(active);
+			const auto font = PlayerStyle::kTrackArtist.font()->underline(active);
 			p.setFont(font);
 			p.setPen(active
 				? st::windowFg
@@ -12929,25 +12940,18 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			p.drawText(
 				artistButton->rect(),
 				Qt::AlignLeft | Qt::AlignVCenter,
-				QFontMetrics(font).elidedText(
-					PlayingTrack().artist,
-					Qt::ElideRight,
-					artistButton->width()));
+				font->elided(PlayingTrack().artist, artistButton->width()));
 		});
 		const auto updateArtistButton = [=] {
 			const auto current = instance->current(AudioMsgId::Type::Song);
-			const auto textWidth = info->width() - 48 - 48
-				- (OwnsTrack(current) ? 120 : 0);
-			auto font = st::normalFont->f;
-			font.setPixelSize(16);
-			const auto artistWidth = std::min(
-				textWidth,
-				QFontMetrics(font).horizontalAdvance(PlayingTrack().artist) + 2);
+			const auto textWidth = metadataWidth(current);
+			const auto font = kTrackArtist.font();
+			const auto artistWidth = std::min(textWidth, font->width(PlayingTrack().artist));
 			artistButton->setGeometry(
-				24,
-				coverRect().bottom() + 56,
+				inset,
+				titleTop() + kTrackTitle.lineHeight() + s(kSpace2),
 				artistWidth,
-				28);
+				kTrackArtist.lineHeight());
 			const auto hasArtist = !PlayingTrack().artist.trimmed().isEmpty();
 			artistButton->setDisabled(!hasArtist);
 			artistButton->setPointerCursor(hasArtist);
@@ -12966,19 +12970,19 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			ShowMusicBox(controller, artist);
 		});
 
-		const auto heart = Ui::CreateChild<RoundGlyph>(info, Glyph::Add, 40);
+		const auto heart = Ui::CreateChild<RoundGlyph>(info, Glyph::Add, actionSize);
 		info->widthValue(
 		) | rpl::on_next([=](int width) {
-			heart->move(width - 24 - 40 - 40, coverRect().bottom() + 34);
+			heart->move(width - inset - 2 * actionSize, actionTop());
 		}, heart->lifetime());
-		const auto more = Ui::CreateChild<RoundGlyph>(info, Glyph::More, 40);
-		const auto block = Ui::CreateChild<RoundGlyph>(info, Glyph::Block, 40);
+		const auto more = Ui::CreateChild<RoundGlyph>(info, Glyph::More, actionSize);
+		const auto block = Ui::CreateChild<RoundGlyph>(info, Glyph::Block, actionSize);
 		more->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Больше такого")));
 		block->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Не нравится автор")));
 		info->widthValue(
 		) | rpl::on_next([=](int width) {
-			more->move(width - 24 - 40 - 40 - 40, coverRect().bottom() + 34);
-			block->move(width - 24 - 40 - 40 - 80, coverRect().bottom() + 34);
+			more->move(width - inset - 3 * actionSize, actionTop());
+			block->move(width - inset - 4 * actionSize, actionTop());
 		}, more->lifetime());
 		more->setClickedCallback([=] { MoreLikeThis(); });
 		block->setClickedCallback([=] { DislikeArtist(); });
@@ -12986,14 +12990,14 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		// Перемотка и время.
 		const auto seek = content->add(
 			object_ptr<SeekBar>(content),
-			QMargins(16, 8, 16, 0));
+			QMargins(pad, s(kSpace8), pad, 0));
 		const auto times = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(24, 0, 24, 0));
-		times->resize(times->width(), 20);
+			QMargins(inset, 0, inset, 0));
+		times->resize(times->width(), PlayerStyle::kTimeLabel.lineHeight());
 		const auto position = std::make_shared<std::pair<QString, QString>>();
 		times->paintOn([=](QPainter &p) {
-			p.setFont(st::normalFont);
+			p.setFont(PlayerStyle::kTimeLabel.font());
 			p.setPen(st::windowSubTextFg);
 			p.drawText(times->rect(), Qt::AlignLeft | Qt::AlignVCenter, position->first);
 			p.drawText(times->rect(), Qt::AlignRight | Qt::AlignVCenter, position->second);
@@ -13002,7 +13006,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		// Кнопки.
 		const auto controls = content->add(
 			object_ptr<Ui::RpWidget>(content),
-			QMargins(16, 12, 16, 12));
+			QMargins(pad, s(kSpace12), pad, s(kSpace12)));
 		controls->resize(controls->width(), 80);
 		const auto previous = Ui::CreateChild<RoundGlyph>(controls, Glyph::Previous, 44);
 		const auto play = Ui::CreateChild<RoundGlyph>(controls, Glyph::Play, 72);
@@ -13048,7 +13052,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		) | rpl::on_next([=] { repeat->update(); }, repeat->lifetime());
 
 		const auto share = Ui::CreateChild<Ui::AbstractButton>(info);
-		share->resize(40, 40);
+		share->resize(actionSize, actionSize);
 		share->setPointerCursor(true);
 		const auto shareHint = QString::fromUtf8(Mokagram::Lang::Tr("Переслать"));
 		share->setToolTip(shareHint);
@@ -13064,7 +13068,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		});
 		info->widthValue(
 		) | rpl::on_next([=](int width) {
-			share->move(width - 24 - share->width(), coverRect().bottom() + 34);
+			share->move(width - inset - share->width(), actionTop());
 		}, share->lifetime());
 		share->setClickedCallback([=] {
 			const auto track = PlayingTrack();
@@ -13184,14 +13188,14 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 				content,
 				QString::fromUtf8(Mokagram::Lang::Tr("Очередь")),
 				st::defaultSubsectionTitle),
-			QMargins(24, 24, 24, 8));
+			QMargins(inset, inset, inset, s(kSpace8)));
 		const auto queueList = content->add(object_ptr<Ui::VerticalLayout>(content));
 		const auto empty = content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
 				QString::fromUtf8(Mokagram::Lang::Tr("Очередь пуста. Найдите музыку и выберите «Играть следующим» или «В конец очереди» в меню трека.")),
 				st::boxLabel),
-			QMargins(24, 4, 24, 8));
+			QMargins(inset, s(kSpace4), inset, s(kSpace8)));
 		const auto rebuild = [=] {
 			queueList->clear();
 			const auto &queue = QueueState();
