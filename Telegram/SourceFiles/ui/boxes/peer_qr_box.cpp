@@ -16,6 +16,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_photo_media.h"
 #include "data/data_session.h"
+#include "data/data_user.h"
+#include "data/stickers/data_custom_emoji.h"
+#include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_free_codes.h"
 #include "info/profile/info_profile_qr_emoji.h"
 #include "info/profile/info_profile_qr_gifts.h"
@@ -26,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/music/mokagram_player_style.h"
+#include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/ui/mokagram_box_parts.h"
 #include "settings/settings_common.h"
 #include "ui/empty_userpic.h"
@@ -45,16 +49,22 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/labels.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/painter.h"
+#include "ui/text/text.h"
+#include "ui/text/text_custom_emoji.h"
 #include "ui/ui_utility.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat_helpers.h"
+#include "styles/style_info.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 #include <QtCore/QMimeData>
 #include <QtCore/QSaveFile>
 #include <QtCore/QStandardPaths>
@@ -117,6 +127,7 @@ struct AppearanceState {
 	std::optional<PeerQrSwatch> chosen;
 	std::optional<PeerQrThemeKey> saving;
 	std::optional<PeerQrSwatch> pending;
+	Fn<void(QColor)> recolorProfileCard;
 	bool canSave = false;
 	bool panelShown = false;
 	bool shown = false;
@@ -167,8 +178,97 @@ struct BoxState {
 	QImage profileCard;
 };
 
+struct ProfileTitleMarks {
+	bool verified = false;
+	bool premium = false;
+	std::unique_ptr<Text::CustomEmoji> status;
+};
+
 [[nodiscard]] QString ProfileExportText(const char *text) {
 	return QString::fromUtf8(Mokagram::Lang::Tr(text));
+}
+
+[[nodiscard]] QString ProfileLookKey(not_null<PeerData*> peer) {
+	return QString::number(peer->session().userPeerId().value)
+		+ u":"_q + QString::number(peer->id.value);
+}
+
+[[nodiscard]] QJsonObject ProfileLooks() {
+	static const auto registered = [] {
+		Mokagram::Settings::Register({
+			.key = u"profile_export.looks"_q,
+			.kind = Mokagram::Settings::Kind::String,
+			.defaultValue = QString(),
+			.hidden = true,
+		});
+		return true;
+	}();
+	(void)registered;
+	return QJsonDocument::fromJson(Mokagram::Settings::String(
+		u"profile_export.looks"_q).toUtf8()).object();
+}
+
+[[nodiscard]] std::optional<PeerQrSwatch> LoadProfileLook(
+		not_null<PeerData*> peer) {
+	const auto stored = ProfileLooks().value(ProfileLookKey(peer)).toObject();
+	auto look = PeerQrSwatch();
+	auto &appearance = look.appearance;
+	appearance.center = QColor(stored.value(u"center"_q).toString());
+	appearance.edge = QColor(stored.value(u"edge"_q).toString());
+	if (!appearance.center.isValid() || !appearance.edge.isValid()) {
+		return std::nullopt;
+	}
+	for (const auto &value : stored.value(u"emoji"_q).toArray()) {
+		if (appearance.emoji.size() == kMaxEmojiPicks) {
+			break;
+		}
+		if (const auto emoji = value.toString(); !emoji.isEmpty()) {
+			appearance.emoji.push_back(emoji);
+		}
+	}
+	look.key.emoji = appearance.emoji;
+	look.key.id = stored.value(u"palette"_q).toInt();
+	const auto gift = stored.value(u"gift"_q).toObject();
+	appearance.gift = {
+		.id = gift.value(u"id"_q).toString().toULongLong(),
+		.model = gift.value(u"model"_q).toString(),
+		.pattern = gift.value(u"pattern"_q).toString(),
+		.patternColor = QColor(gift.value(u"color"_q).toString()),
+	};
+	look.key.gift = appearance.gift.id;
+	look.key.type = appearance.gift
+		? PeerQrThemeKey::Type::Gift
+		: (look.key.id ? PeerQrThemeKey::Type::Backdrop
+			: PeerQrThemeKey::Type::Default);
+	return look;
+}
+
+void SaveProfileLook(
+		not_null<PeerData*> peer,
+		const std::optional<PeerQrSwatch> &look) {
+	if (!look) {
+		return;
+	}
+	auto looks = ProfileLooks();
+	auto emojis = QJsonArray();
+	for (const auto &emoji : look->appearance.emoji) {
+		emojis.append(emoji);
+	}
+	const auto &gift = look->appearance.gift;
+	looks.insert(ProfileLookKey(peer), QJsonObject{
+		{ u"palette"_q, look->key.id },
+		{ u"center"_q, look->appearance.center.name(QColor::HexArgb) },
+		{ u"edge"_q, look->appearance.edge.name(QColor::HexArgb) },
+		{ u"emoji"_q, emojis },
+		{ u"gift"_q, QJsonObject{
+			{ u"id"_q, QString::number(gift.id) },
+			{ u"model"_q, gift.model },
+			{ u"pattern"_q, gift.pattern },
+			{ u"color"_q, gift.patternColor.name(QColor::HexArgb) },
+		} },
+	});
+	Mokagram::Settings::SetString(u"profile_export.looks"_q,
+		QString::fromUtf8(QJsonDocument(looks).toJson(QJsonDocument::Compact)));
 }
 
 // Mokagram: the identity card uses the player's type roles and spacing.
@@ -176,6 +276,8 @@ struct BoxState {
 		not_null<PeerData*> peer,
 		PeerUserpicView &view,
 		const QImage *photo,
+		const ProfileTitleMarks &marks,
+		QColor backdrop,
 		int width) {
 	using namespace Mokagram::Music::PlayerStyle;
 	const auto inset = style::ConvertScale(kSpace24);
@@ -202,12 +304,12 @@ struct BoxState {
 	const auto titleEnd = detailsTop + kTrackTitle.lineHeight();
 	const auto bioTop = width + gap;
 	const auto height = bioHeight ? bioTop + bioHeight + gap : width;
-	constexpr auto ratio = 3;
+	constexpr auto ratio = 4;
 	auto result = QImage(QSize(width, height) * ratio,
 		QImage::Format_ARGB32_Premultiplied);
 	result.setDevicePixelRatio(ratio);
 	result.fill(Qt::transparent);
-	auto p = QPainter(&result);
+	auto p = Painter(&result);
 	auto hq = PainterHighQualityEnabler(p);
 	Mokagram::BoxParts::PaintCard(p, QRect(0, 0, width, height));
 	p.save();
@@ -215,6 +317,10 @@ struct BoxState {
 	const auto radius = style::ConvertScale(Mokagram::BoxParts::kCardRadius);
 	clip.addRoundedRect(QRectF(0, 0, width, height), radius, radius);
 	p.setClipPath(clip);
+	if (bioHeight && backdrop.isValid()) {
+		p.fillRect(QRect(0, width, width, height - width),
+			anim::color(st::windowBg->c, backdrop, 0.26));
+	}
 	if (photo) {
 		const auto side = std::min(photo->width(), photo->height());
 		const auto source = QRect(
@@ -238,11 +344,40 @@ struct BoxState {
 			avatar * ratio, true);
 		p.restore();
 	}
-	p.setFont(title->f);
-	p.setPen(photo ? QColor(Qt::white) : st::windowFg->c);
-	p.drawText(QRect(inset, detailsTop, textWidth, kTrackTitle.lineHeight()),
-		Qt::AlignVCenter | Qt::AlignLeading,
-		QFontMetrics(title->f).elidedText(peer->name(), Qt::ElideRight, textWidth));
+	auto nameStyle = st::defaultTextStyle;
+	nameStyle.font = title;
+	auto name = Text::String();
+	name.setText(nameStyle, peer->name());
+	const auto &badge = st::infoPeerBadge;
+	const auto verifiedWidth = marks.verified ? badge.verified.width() : 0;
+	const auto statusWidth = marks.status
+		? marks.status->width()
+		: marks.premium ? badge.premium.width() : 0;
+	const auto available = textWidth
+		- (verifiedWidth ? verifiedWidth + smallGap : 0)
+		- (statusWidth ? statusWidth + smallGap : 0);
+	const auto titleColor = photo ? QColor(Qt::white) : st::windowFg->c;
+	const auto middle = detailsTop + kTrackTitle.lineHeight() / 2;
+	p.setPen(titleColor);
+	name.drawElided(p, inset, middle - title->height / 2, available);
+	auto markX = inset + std::min(name.maxWidth(), available) + smallGap;
+	if (marks.verified) {
+		const auto y = middle - badge.verified.height() / 2;
+		badge.verified.paint(p, markX, y, width);
+		badge.verifiedCheck.paint(p, markX, y, width);
+		markX += verifiedWidth + smallGap;
+	}
+	if (marks.status) {
+		marks.status->paint(p, {
+			.textColor = titleColor,
+			.now = crl::now(),
+			.position = QPoint(markX, middle - statusWidth / 2),
+			.paused = true,
+			.internal = { .forceFirstFrame = true },
+		});
+	} else if (marks.premium) {
+		badge.premium.paint(p, markX, middle - badge.premium.height() / 2, width);
+	}
 	if (!handle.isEmpty()) {
 		p.setFont(subtitle->f);
 		p.setPen(photo ? QColor(255, 255, 255, 215) : st::windowSubTextFg->c);
@@ -253,7 +388,9 @@ struct BoxState {
 	p.restore();
 	if (bioHeight) {
 		p.setFont(bioFont->f);
-		p.setPen(st::windowSubTextFg->c);
+		p.setPen(backdrop.isValid()
+			? anim::color(st::windowSubTextFg->c, st::windowFg->c, 0.36)
+			: st::windowSubTextFg->c);
 		p.drawText(QRect(inset, bioTop, textWidth, bioHeight), wrap, bio);
 	}
 	p.end();
@@ -1055,7 +1192,8 @@ void SetupFreeCodes(
 [[nodiscard]] OpenLayout ComputeOpenLayout(
 		QSize outer,
 		QSize card,
-		int panelHeight) {
+		int panelHeight,
+		std::optional<int> profileTop) {
 	const auto margin = st::peerQrPanelMargin;
 	const auto width = outer.width() - 2 * margin;
 	const auto panel = QRect(
@@ -1066,14 +1204,17 @@ void SetupFreeCodes(
 	const auto pillTop = panel.y()
 		- st::peerQrPanelSkip
 		- st::peerQrPillHeight;
-	const auto bottom = pillTop - st::peerQrPillSkip;
+	const auto bottom = profileTop
+		? panel.y() - style::ConvertScale(12)
+		: pillTop - st::peerQrPillSkip;
 	const auto edge = st::peerQrButtonSkip;
 	const auto &close = st::peerQrClose;
 	const auto scaleFor = [&](int top) {
 		return std::clamp((bottom - top) / float64(card.height()), 0., 1.);
 	};
-	auto scale = scaleFor(edge);
-	if ((outer.width() + card.width() * scale) / 2. + st::peerQrPanelSkip
+	auto scale = scaleFor(profileTop.value_or(edge));
+	if (!profileTop
+		&& (outer.width() + card.width() * scale) / 2. + st::peerQrPanelSkip
 		> outer.width() - edge - close.width) {
 		scale = scaleFor(edge + close.height + st::peerQrPanelSkip);
 	}
@@ -1081,7 +1222,9 @@ void SetupFreeCodes(
 		.panel = panel,
 		.card = QPointF(
 			(outer.width() - card.width() * scale) / 2.,
-			bottom - card.height() * scale),
+			profileTop
+				? std::max(float64(*profileTop), bottom - card.height() * scale)
+				: bottom - card.height() * scale),
 		.scale = scale,
 		.pillTop = pillTop,
 	};
@@ -1197,6 +1340,9 @@ void ShowSwatch(
 			? PeerQrDefaultAppearance()
 			: swatch.appearance),
 		animated);
+	if (appearance->recolorProfileCard) {
+		appearance->recolorProfileCard(surface->appearance().center);
+	}
 	const auto &key = swatch.key;
 	auto selected = std::optional<PeerQrThemeKey>();
 	auto selectedGift = std::optional<PeerQrThemeKey>();
@@ -1583,6 +1729,12 @@ void SetupAppearance(
 		share->raise();
 	}
 
+	if (state->profileExport) {
+		if (const auto stored = LoadProfileLook(peer)) {
+			appearance->chosen = *stored;
+			ApplyServedTheme(surface, appearance, *stored, anim::type::instant);
+		}
+	}
 	Info::Profile::QrServedThemeValue(
 		peer
 	) | rpl::on_next([=](Info::Profile::QrServedTheme &&theme) {
@@ -1645,7 +1797,11 @@ void SetupAppearance(
 		}, box->lifetime());
 	}
 
-	if (!state->profileExport) {
+	if (state->profileExport) {
+		box->boxClosing() | rpl::on_next([=] {
+			SaveProfileLook(peer, appearance->chosen);
+		}, box->lifetime());
+	} else {
 		box->boxClosing() | rpl::on_next([=] {
 			SaveAppearance(box, surface, appearance, peer);
 		}, box->lifetime());
@@ -1689,23 +1845,57 @@ static void FillPeerQrBoxImpl(
 			full->wanted(Data::PhotoSize::Large, peer->userpicPhotoOrigin());
 		}
 		const auto photoKey = box->lifetime().make_state<qint64>(-1);
-		const auto refreshCard = [=] {
+		const auto marks = box->lifetime().make_state<ProfileTitleMarks>();
+		const auto statusReady = box->lifetime().make_state<bool>(false);
+		const auto backdrop = box->lifetime().make_state<QColor>();
+		const auto refreshCard = [=](bool force) {
 			const auto loaded = full ? full->image(Data::PhotoSize::Large) : nullptr;
 			const auto original = loaded ? loaded->original() : QImage();
 			const auto photo = original.isNull()
 				? peer->userpicCloudImage(*view)
 				: &original;
 			const auto key = photo ? photo->cacheKey() : 0;
-			if (*photoKey != key) {
+			if (force || *photoKey != key) {
 				*photoKey = key;
 				state->profileCard = ProfileExportCard(
-					peer, *view, photo, st::peerQrCardWidth);
+					peer, *view, photo, *marks, *backdrop, st::peerQrCardWidth);
 				surface->setProfileCard(state->profileCard);
 			}
 		};
-		refreshCard();
+		state->appearance.recolorProfileCard = [=](QColor color) {
+			if (*backdrop != color) {
+				*backdrop = color;
+				refreshCard(true);
+			}
+		};
+		refreshCard(false);
 		peer->session().downloaderTaskFinished(
-		) | rpl::on_next(refreshCard, box->lifetime());
+		) | rpl::on_next([=] { refreshCard(false); }, box->lifetime());
+		rpl::combine(
+			Info::Profile::VerifiedContentForPeer(peer),
+			Info::Profile::ShownEmojiStatusIdValue(peer)
+		) | rpl::on_next([=](
+				Info::Profile::Badge::Content verified,
+				EmojiStatusId status) {
+			marks->verified = (verified.badge == Info::Profile::BadgeType::Verified);
+			const auto user = peer->asUser();
+			marks->premium = user && user->isPremium();
+			*statusReady = false;
+			marks->status = status
+				? peer->owner().customEmojiManager().create(
+					Data::EmojiStatusCustomId(status),
+					crl::guard(box, [=] {
+						PostponeCall(box, [=] {
+							if (marks->status && marks->status->ready() && !*statusReady) {
+								*statusReady = true;
+								refreshCard(true);
+							}
+						});
+					}),
+					Data::CustomEmojiSizeTag::Large)
+				: nullptr;
+			refreshCard(true);
+		}, box->lifetime());
 	}
 	surface->touchPresses(
 	) | rpl::on_next([=](not_null<QTouchEvent*> e) {
@@ -1885,16 +2075,21 @@ static void FillPeerQrBoxImpl(
 			const auto &appearance = state->appearance;
 			const auto outer = QSize(width, height);
 			const auto panelWidth = width - 2 * st::peerQrPanelMargin;
+			const auto top = profileExport
+				? std::make_optional(card.top())
+				: std::nullopt;
 			const auto table = ComputeOpenLayout(
 				outer,
 				card.size(),
-				PeerQrColorsPanel::HeightForWidth(panelWidth));
+				PeerQrColorsPanel::HeightForWidth(panelWidth),
+				top);
 			const auto gifts = appearance.gifts;
 			const auto giftsOpen = gifts
 				? ComputeOpenLayout(
 					outer,
 					card.size(),
-					gifts->openHeight(panelWidth))
+					gifts->openHeight(panelWidth),
+					top)
 				: table;
 			reach = ExtendCardReach(reach, table, card.size());
 			reach = ExtendCardReach(reach, giftsOpen, card.size());

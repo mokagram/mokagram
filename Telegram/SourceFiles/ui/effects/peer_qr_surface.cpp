@@ -956,6 +956,7 @@ struct PeerQrSurface::Card {
 	CardContent content;
 	std::optional<QrSwap> swap;
 	QImage qrMask;
+	QImage profilePreview;
 };
 
 struct PeerQrSurface::Countdown {
@@ -1444,6 +1445,7 @@ PeerQrImageArgs PeerQrSurface::prepareImage() const {
 
 void PeerQrSurface::setProfileCard(QImage card) {
 	_profileCard = std::move(card);
+	_card->profilePreview = QImage();
 	_colors = ProfileEditorColors();
 	setShownColors(_colors);
 	update();
@@ -1484,8 +1486,34 @@ void PeerQrSurface::paintEvent(QPaintEvent *e) {
 	paintLayers(p, now, controls.shown);
 	paintFadingUnderlays(p, now, controls);
 	if (!_profileCard.isNull()) {
-		p.setRenderHint(QPainter::SmoothPixmapTransform);
-		p.drawImage(cardRect(), _profileCard);
+		if (!_startedAt && !anim::Disabled()) {
+			return;
+		}
+		auto bounds = cardRect();
+		if (_blooming && !anim::Disabled()) {
+			const auto progress = std::clamp(
+				double(now - _startedAt) / kFlyInDuration, 0., 1.);
+			const auto eased = anim::easeOutCubic(1., progress);
+			const auto center = bounds.center();
+			bounds.setSize(bounds.size() * (0.90 + 0.10 * eased));
+			bounds.moveCenter(center);
+			p.setOpacity(eased);
+		}
+		const auto ratio = p.device()->devicePixelRatioF();
+		const auto pixels = (bounds.size() * ratio).toSize();
+		if (!pixels.isEmpty()) {
+			auto &preview = _card->profilePreview;
+			if (preview.size() != pixels || preview.devicePixelRatio() != ratio) {
+				preview = _profileCard.scaled(
+					pixels,
+					Qt::IgnoreAspectRatio,
+					Qt::SmoothTransformation);
+				preview.setDevicePixelRatio(ratio);
+			}
+			p.drawImage(QPointF(
+				std::round(bounds.left() * ratio) / ratio,
+				std::round(bounds.top() * ratio) / ratio), preview);
+		}
 		return;
 	}
 	const auto still = anim::Disabled();
