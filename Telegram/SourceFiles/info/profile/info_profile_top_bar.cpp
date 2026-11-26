@@ -3489,14 +3489,14 @@ void TopBar::fillTopBarMenu(
 		return;
 	}
 
-	// Mokagram: use the same menu icon as the message screenshot action.
+	// Mokagram: reuse the camera asset from the profile actions.
 	if (const auto user = peer ? peer->asUser() : nullptr; user && !user->isBot()) {
 		addAction(
 			QString::fromUtf8(Mokagram::Lang::Tr("Скриншот профиля")),
 			[=, show = controller->uiShow()] {
 				Ui::ShowProfileShareBox(show, user);
 			},
-			&st::menuIconCopy);
+			&st::infoProfileTopBarActionSetPhoto);
 	}
 	Window::FillDialogsEntryMenu(
 		controller,

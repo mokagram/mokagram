@@ -100,6 +100,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "styles/style_chat_helpers.h"
 #include "styles/style_info.h"
+#include "styles/style_info_profile_top_bar.h"
 #include "styles/style_layers.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings_box.h"
@@ -258,7 +259,13 @@ Cover::Cover(
 	});
 	_qrButton->show();
 	_screenshotButton.create(this, st::infoProfileLabeledButtonQr);
-	_screenshotButton->setIconOverride(&st::menuIconCopy, &st::menuIconCopy);
+	const auto camera = &st::infoProfileTopBarActionSetPhoto;
+	_screenshotButton->setIconOverride(camera, camera);
+	const auto updateScreenshotColor = [=] {
+		_screenshotButton->setIconColorOverride(st::windowActiveTextFg->c);
+	};
+	updateScreenshotColor();
+	style::PaletteChanged() | rpl::on_next(updateScreenshotColor, lifetime());
 	_screenshotButton->setAccessibleName(
 		QString::fromUtf8(Mokagram::Lang::Tr("Скриншот профиля")));
 	_screenshotButton->setClickedCallback([=, show = controller->uiShow()] {
@@ -356,12 +363,13 @@ void Cover::refreshGeometry(int newWidth) {
 	_username->resizeToNaturalWidth(textWidth);
 	_phone->resizeToNaturalWidth(textWidth);
 	const auto showPhone = !_phone->isHidden();
-	const auto total = _name->height() + labelGap + _username->height()
+	const auto usernameOffset = _name->height() - style::ConvertScale(2);
+	const auto total = usernameOffset + _username->height()
 		+ (showPhone ? labelGap + _phone->height() : 0);
 	const auto y = (height() - total) / 2;
 	_name->moveToLeft(left, y, newWidth);
 	_badge.move(left + _name->width(), y, y + _name->height());
-	const auto usernameY = y + _name->height() + labelGap;
+	const auto usernameY = y + usernameOffset;
 	_username->moveToLeft(left, usernameY, newWidth);
 	if (showPhone) {
 		_phone->moveToLeft(
