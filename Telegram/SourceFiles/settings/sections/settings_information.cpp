@@ -761,9 +761,20 @@ void SetupBio(
 	const auto limits = Data::PremiumLimits(&self->session());
 	const auto defaultLimit = limits.aboutLengthDefault();
 	const auto premiumLimit = limits.aboutLengthPremium();
+	const auto inset = style::ConvertScale(12);
+	// Mokagram: keep the bio and its character counter on one card.
+	const auto card = container->add(
+		object_ptr<Ui::VerticalLayout>(container),
+		st::settingsBioMargins);
+	card->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(card);
+		Mokagram::BoxParts::PaintCard(p, card->rect());
+	}, card->lifetime());
 	const auto bioStyle = [=] {
 		auto result = st::settingsBio;
-		result.textMargins.setRight(st::boxTextFont->spacew
+		result.textBgActive = result.textBg;
+		result.textMargins.setLeft(inset);
+		result.textMargins.setRight(inset + st::boxTextFont->spacew
 			+ st::boxTextFont->width('-' + QString::number(premiumLimit)));
 		return result;
 	};
@@ -771,20 +782,19 @@ void SetupBio(
 	const auto current = Ui::AttachAsChild(container, self->about());
 	const auto changed = Ui::CreateChild<rpl::event_stream<bool>>(
 		container.get());
-	const auto bio = container->add(
+	const auto bio = card->add(
 		object_ptr<Ui::InputField>(
-			container,
+			card,
 			*style,
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_bio_placeholder(),
-			*current),
-		st::settingsBioMargins);
+			*current));
 	if (targets) {
 		targets->bio = bio;
 	}
 
 	const auto countdown = Ui::CreateChild<Ui::FlatLabel>(
-		container.get(),
+		card,
 		QString(),
 		st::settingsBioCountdown);
 
@@ -793,7 +803,7 @@ void SetupBio(
 		countdown->widthValue()
 	) | rpl::on_next([=](QRect geometry, int width) {
 		countdown->move(
-			geometry.x() + geometry.width() - width,
+			geometry.x() + geometry.width() - width - inset,
 			geometry.y() + style->textMargins.top());
 	}, countdown->lifetime());
 
