@@ -7,6 +7,7 @@
 #include "ui/effects/animations.h"
 #include "ui/rp_widget.h"
 
+#include <QtCore/QCache>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QTimer>
 #include <QtGui/QImage>
@@ -98,7 +99,20 @@ private:
 			QPointF origin,
 			double fill,
 			double sung,
-			double unsung) const;
+			double unsung);
+	struct LineRaster {
+		QImage image;
+		QPointF offset;
+	};
+	[[nodiscard]] LineRaster rasterizeLayout(
+		const QTextLayout &layout,
+		QPointF origin,
+		qreal ratio) const;
+	bool drawCachedLayout(
+		QPainter &p,
+		const QTextLayout &layout,
+		QPointF origin,
+		double opacity);
 	[[nodiscard]] double centerOf(int index);
 
 	void paintEvent(QPaintEvent *e) override;
@@ -115,6 +129,8 @@ private:
 	std::vector<int> _heights;
 	std::vector<double> _lineTops;
 	std::vector<LineLayout> _layouts;
+	QCache<const QTextLayout*, LineRaster> _lineRasters{ 4 * 1024 * 1024 };
+	qreal _lineRasterRatio = 0.;
 	int _subtitleMode = 0;
 	QString _timingTrack;
 	int _timingOffset = 0;

@@ -31,6 +31,7 @@
 #include <QtCore/QJsonObject>
 #include <QtGui/QContextMenuEvent>
 #include <QtGui/QGuiApplication>
+#include <QtGui/QGlyphRun>
 #include <QtGui/QLinearGradient>
 #include <QtGui/QTextLayout>
 #include <algorithm>
@@ -788,6 +789,7 @@ void LyricsView::reset() {
 void LyricsView::invalidateLayouts() {
 	_heights.clear();
 	_layouts.clear();
+	_lineRasters.clear();
 	_lineTops.clear();
 }
 
@@ -1018,6 +1020,93 @@ void LyricsView::tick() {
 	return _heights[index];
 }
 
+auto LyricsView::rasterizeLayout(
+		const QTextLayout &layout,
+		QPointF origin,
+		qreal ratio) const -> LineRaster {
+	auto bounds = QRectF();
+	for (const auto &run : layout.glyphRuns()) {
+		const auto font = run.rawFont();
+		// Цветные глифы Qt рисует без учёта альфы пера.
+		if (!font.fontTable("COLR").isEmpty()
+			|| !font.fontTable("sbix").isEmpty()
+			|| !font.fontTable("CBDT").isEmpty()
+			|| !font.fontTable("SVG ").isEmpty()) {
+			return {};
+		}
+		const auto glyphs = run.glyphIndexes();
+		const auto positions = run.positions();
+		for (auto i = 0; i != glyphs.size(); ++i) {
+			bounds = bounds.united(font.boundingRect(glyphs[i])
+				.translated(positions[i]));
+		}
+	}
+	if (bounds.isEmpty()) {
+		return {};
+	}
+	const auto outset = style::ConvertScale(2);
+	bounds.adjust(-outset, -outset, outset, outset);
+	bounds = bounds.intersected(QRectF(
+		-origin.x(), bounds.y(), width(), bounds.height()));
+	const auto pixels = QRectF(
+		bounds.topLeft() * ratio,
+		bounds.size() * ratio).toAlignedRect();
+	if (pixels.isEmpty()
+		|| int64(pixels.width()) * pixels.height() * 4 > _lineRasters.maxCost()) {
+		return {};
+	}
+	auto image = QImage(pixels.size(), QImage::Format_ARGB32_Premultiplied);
+	if (image.isNull()) {
+		return {};
+	}
+	image.setDevicePixelRatio(ratio);
+	image.fill(Qt::transparent);
+	const auto offset = QPointF(pixels.topLeft()) / ratio;
+	auto painter = QPainter(&image);
+	auto hq = PainterHighQualityEnabler(painter);
+	painter.setPen(Qt::white);
+	for (auto i = 0; i != layout.lineCount(); ++i) {
+		layout.lineAt(i).draw(&painter, -offset);
+	}
+	painter.end();
+	return { std::move(image), offset };
+}
+
+bool LyricsView::drawCachedLayout(
+		QPainter &p,
+		const QTextLayout &layout,
+		QPointF origin,
+		double opacity) {
+	const auto ratio = p.device()->devicePixelRatioF();
+	if (!_big || ratio < 2.) {
+		return false;
+	}
+	if (_lineRasterRatio != ratio) {
+		_lineRasters.clear();
+		_lineRasterRatio = ratio;
+	}
+	auto raster = _lineRasters.object(&layout);
+	if (!raster) {
+		auto result = std::make_unique<LineRaster>(
+			rasterizeLayout(layout, origin, ratio));
+		const auto cost = std::max(qsizetype(1), result->image.sizeInBytes());
+		raster = result.get();
+		if (!_lineRasters.insert(&layout, result.release(), cost)) {
+			return false;
+		}
+	}
+	if (raster->image.isNull()) {
+		return false;
+	}
+	const auto previous = p.opacity();
+	p.setOpacity(previous * std::clamp(opacity, 0., 1.));
+	// Позиция с точностью до физического пикселя не требует ресэмплинга.
+	origin.setY(std::round(origin.y() * ratio) / ratio);
+	p.drawImage(origin + raster->offset, raster->image);
+	p.setOpacity(previous);
+	return true;
+}
+
 // Строка поверх фона; fill >= 0 заливает спетую часть белым слева направо с мягким краем.
 void LyricsView::drawLayout(
 		QPainter &p,
@@ -1025,7 +1114,12 @@ void LyricsView::drawLayout(
 		QPointF origin,
 		double fill,
 		double sung,
-		double unsung) const {
+		double unsung) {
+	// В Retina крупный текст выходит за лимит кэша глифов Qt. Для
+	// однотонных строк переиспользуем растр, а градиент рисуем как раньше.
+	if (fill < 0. && drawCachedLayout(p, layout, origin, sung)) {
+		return;
+	}
 	const auto white = [](double alpha) {
 		auto color = QColor(255, 255, 255);
 		color.setAlphaF(std::clamp(alpha, 0., 1.));
