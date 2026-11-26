@@ -1648,9 +1648,6 @@ PRIVATE
     info/profile/info_profile_members.h
     info/profile/info_profile_members_controllers.cpp
     info/profile/info_profile_members_controllers.h
-    # Mokagram: profile playback depends on the client's media and MTProto code.
-    info/profile/info_profile_music_button.cpp
-    info/profile/info_profile_music_button.h
     info/profile/info_profile_phone_menu.cpp
     info/profile/info_profile_phone_menu.h
     info/profile/info_profile_pills.cpp

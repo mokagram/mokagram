@@ -8,15 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/abstract_button.h"
-#include "data/data_audio_msg_id.h"
-
-namespace Data {
-class DocumentMedia;
-} // namespace Data
-
-namespace Media::Player {
-struct TrackState;
-} // namespace Media::Player
+#include "ui/text/format_song_name.h"
+#include "ui/text/text.h"
 
 namespace Info::Profile {
 
@@ -34,43 +27,48 @@ void PaintPillBackground(
 [[nodiscard]] int PillTextBaseline();
 [[nodiscard]] int PillArrowTop();
 
+struct MusicButtonData {
+	Ui::Text::FormatSongName name;
+};
+
 class MusicButton final : public Ui::AbstractButton {
 public:
 	explicit MusicButton(QWidget *parent);
 	~MusicButton();
 
-	// Mokagram: the row opens the music list; the trailing button plays.
-	[[nodiscard]] static int RowHeight();
-	void setTrack(const AudioMsgId &track);
+	void updateData(MusicButtonData data);
 	void setOverrideBg(std::optional<QColor> color);
 	void setOpacity(float64 opacity);
 	[[nodiscard]] bool actionable() const;
 
 private:
 	void paintEvent(QPaintEvent *e) override;
-	void focusInEvent(QFocusEvent *e) override;
-	void focusOutEvent(QFocusEvent *e) override;
-	void onStateChanged(State was, StateChangeSource source) override;
-	void resizeEvent(QResizeEvent *e) override;
 	int resizeGetHeight(int newWidth) override;
 
-	class PlaybackButton;
-	void updatePlayback(const ::Media::Player::TrackState &state);
-	void refreshText(int width);
-	[[nodiscard]] bool hasCover() const;
-	[[nodiscard]] int textLeft() const;
+	[[nodiscard]] int chromeWidth() const;
+	void refreshShares(int newWidth);
+	void validateCache();
+	void paintRun(
+		QPainter &p,
+		const Ui::Text::String &text,
+		int left,
+		int share,
+		const QColor &color) const;
 
-	const std::unique_ptr<PlaybackButton> _playback;
-	AudioMsgId _track;
-	std::shared_ptr<Data::DocumentMedia> _media;
-	rpl::lifetime _coverLifetime;
-	QString _title;
-	QString _performer;
-	QString _shownTitle;
-	QString _shownPerformer;
+	Ui::Text::String _performer;
+	Ui::Text::String _title;
 	std::optional<QColor> _overrideBg;
 	PillColors _colors;
+	QImage _cache;
+
+	const QString _noteSymbol;
 	float64 _opacity = 0.;
+	const int _noteWidth;
+	const int _baseline;
+	const int _arrowTop;
+	int _textSkip = 0;
+	int _performerShare = 0;
+	int _titleShare = 0;
 
 };
 

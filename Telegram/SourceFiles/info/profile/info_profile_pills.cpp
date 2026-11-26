@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_balance_pill.h"
 #include "info/profile/info_profile_music_button.h"
 #include "info/profile/info_profile_top_bar.h"
+#include "ui/text/format_song_document_name.h"
 #include "ui/rect.h"
 #include "wallet/wallet_card_view.h"
 
@@ -25,8 +26,7 @@ namespace {
 
 constexpr auto kFadeStart = 0.6;
 
-// Mokagram: keep the saved music message context for native playback.
-[[nodiscard]] rpl::producer<AudioMsgId> ProfileMusicValue(
+[[nodiscard]] rpl::producer<DocumentData*> ProfileMusicValue(
 		not_null<UserData*> user) {
 	const auto savedMusic = &user->owner().savedMusic();
 	const auto peerId = user->id;
@@ -34,16 +34,10 @@ constexpr auto kFadeStart = 0.6;
 		peerId
 	) | rpl::then(
 		savedMusic->changed() | rpl::filter(rpl::mappers::_1 == peerId)
-	) | rpl::map([=] {
+	) | rpl::map([=]() -> DocumentData* {
 		const auto &list = savedMusic->list(peerId);
-		if (!list.empty()) {
-			if (const auto media = list.front()->media()) {
-				if (const auto document = media->document()) {
-					return AudioMsgId(document, list.front()->fullId());
-				}
-			}
-		}
-		return AudioMsgId();
+		const auto media = list.empty() ? nullptr : list.front()->media();
+		return media ? media->document() : nullptr;
 	}) | rpl::distinct_until_changed();
 }
 
@@ -83,29 +77,31 @@ PillsRow::PillsRow(
 
 	ProfileMusicValue(
 		user
-	) | rpl::on_next([=](const AudioMsgId &track) {
-		music->setTrack(track);
+	) | rpl::on_next([=](DocumentData *document) {
+		if (document) {
+			music->updateData({ Ui::Text::FormatSongNameFor(document) });
+			music->show();
+		} else {
+			music->hide();
+		}
 	}, _lifetime);
 
-	_reserve = rpl::combine(
-		balance->shownValue(),
-		music->shownValue()
-	) | rpl::map([=](bool hasBalance, bool hasMusic) {
-		if (!hasBalance && !hasMusic) {
-			return 0;
-		}
-		const auto balanceHeight = st::infoProfileBalancePillHeight;
-		const auto rowsHeight = (hasBalance ? balanceHeight : 0)
-			+ (hasMusic ? MusicButton::RowHeight() : 0)
-			+ ((hasBalance && hasMusic) ? st::infoProfileTopBarPillsGap : 0);
-		// Without action buttons one balance-sized row already fits.
-		return rowsHeight - balanceHeight
-			+ (underButtons ? st::infoProfileTopBarPillsReserve : 0);
-	});
+	// Without the action buttons the row fits the gap below the status.
+	if (underButtons) {
+		_reserve = rpl::combine(
+			balance->shownValue(),
+			music->shownValue()
+		) | rpl::map([](bool hasBalance, bool hasMusic) {
+			return (hasBalance || hasMusic)
+				? st::infoProfileTopBarPillsReserve
+				: 0;
+		});
+	}
 
 	rpl::merge(
 		balance->naturalWidthValue() | rpl::to_empty,
 		balance->shownValue() | rpl::to_empty,
+		music->naturalWidthValue() | rpl::to_empty,
 		music->shownValue() | rpl::to_empty
 	) | rpl::on_next([=] {
 		layout();
@@ -129,7 +125,8 @@ void PillsRow::place(int top, float64 progress) {
 	if (_outerWidth != _parent->width()) {
 		layout();
 	} else {
-		moveRows();
+		_balance->move(_balance->x(), _top);
+		_music->move(_music->x(), _top);
 	}
 }
 
@@ -144,34 +141,32 @@ void PillsRow::layout() {
 	if (available <= 0) {
 		return;
 	}
-	if (!_balance->isHidden()) {
-		_balance->resizeToNaturalWidth(available);
+	const auto hasBalance = !_balance->isHidden();
+	const auto hasMusic = !_music->isHidden();
+	const auto gap = (hasBalance && hasMusic)
+		? st::infoProfileTopBarPillsGap
+		: 0;
+	auto balanceWidth = 0;
+	if (hasBalance) {
+		const auto chrome = hasMusic ? _music->minimumWidth() : 0;
+		_balance->resizeToNaturalWidth(
+			std::max(available - gap - chrome, 0));
 		const auto fitted = _balance->fittedWidth();
 		if (fitted < _balance->width()) {
 			_balance->resizeToWidth(fitted);
 		}
+		balanceWidth = _balance->width();
 	}
-	if (!_music->isHidden()) {
-		_music->resizeToWidth(available);
-	}
-	moveRows();
-}
-
-void PillsRow::moveRows() {
-	const auto &padding = st::infoProfileTopBarActionButtonsPadding;
-	const auto hasMusic = !_music->isHidden();
+	auto musicWidth = 0;
 	if (hasMusic) {
-		_music->moveToLeft(padding.left(), _top);
+		_music->resizeToNaturalWidth(
+			std::max(available - gap - balanceWidth, 0));
+		musicWidth = _music->width();
 	}
-	if (!_balance->isHidden()) {
-		const auto left = hasMusic
-			? _outerWidth - padding.right() - _balance->width()
-			: (_outerWidth - _balance->width()) / 2;
-		const auto top = _top + (hasMusic
-			? MusicButton::RowHeight() + st::infoProfileTopBarPillsGap
-			: 0);
-		_balance->moveToLeft(left, top);
-	}
+	const auto left = padding.left()
+		+ (available - musicWidth - gap - balanceWidth) / 2;
+	_music->move(left, _top);
+	_balance->move(left + musicWidth + gap, _top);
 }
 
 void TopBar::setupPills(

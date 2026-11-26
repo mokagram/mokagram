@@ -40,7 +40,6 @@ public:
 
 private:
 	void layout();
-	void moveRows();
 
 	const not_null<Ui::RpWidget*> _parent;
 	const std::unique_ptr<BalancePill> _balance;
