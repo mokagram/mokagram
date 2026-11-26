@@ -106,8 +106,14 @@ void CanvasPlayer::refresh(
 		updatePlayback();
 		_repaint();
 	}
+	const auto youtube = id.startsWith(u"yt:"_q);
+	constexpr auto topicSuffix = QStringView(u" - Topic");
+	if (youtube && artist.endsWith(topicSuffix)) {
+		artist.chop(topicSuffix.size());
+	}
 	const auto metadata = MotionProtocol::Metadata(
-		title, artist, !id.startsWith(u"telegram:"_q));
+		std::move(title), std::move(artist),
+		!youtube && !id.startsWith(u"telegram:"_q));
 	if (_id == id && _title == metadata.title && _artist == metadata.artist) {
 		return;
 	}
@@ -200,11 +206,11 @@ void CanvasPlayer::findArtist(const QString &artist) {
 void CanvasPlayer::readArtist(
 		const QByteArray &data,
 		const QString &artist) {
-	const auto artists = QJsonDocument::fromJson(data).object()
-		.value(u"artists"_q).toArray();
-	for (const auto &entry : artists) {
+	const auto artists = QJsonDocument::fromJson(data).object().value(u"artists"_q);
+	const auto normalized = Normalize(artist);
+	for (const auto &entry : artists.toArray()) {
 		const auto object = entry.toObject();
-		if (Normalize(object.value(u"name"_q).toString()) != Normalize(artist)) {
+		if (Normalize(object.value(u"name"_q).toString()) != normalized) {
 			continue;
 		}
 		const auto slug = object.value(u"slug"_q).toString();
@@ -218,6 +224,15 @@ void CanvasPlayer::readArtist(
 			readCandidates(page);
 		});
 		return;
+	}
+	// YouTube joins credits with commas. Prefer the full name, then try the
+	// longest prefix so an artist name that contains commas can still match.
+	if (artists.isArray() && _id.startsWith(u"yt:"_q)) {
+		const auto comma = artist.lastIndexOf(u", "_q);
+		if (comma > 0) {
+			findArtist(artist.left(comma));
+			return;
+		}
 	}
 	setLoading(false);
 }

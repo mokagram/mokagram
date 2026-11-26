@@ -7,6 +7,7 @@ mokaGram (26.11.26)
 - Smooth the transition between Profile and Name in the color preview.
 - Show saved tracks on Music Home while recommendations load.
 - Show a complete For You batch without waiting for slow SoundCloud replies.
+- Fix public Canvas lookup for YouTube Music topic channels and multi-artist credits.
 
 mokaGram (24.11.26)
 
