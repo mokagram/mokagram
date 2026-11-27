@@ -44,8 +44,11 @@ namespace Mokagram::Music {
 namespace details {
 namespace {
 
-[[nodiscard]] QColor LyricsInk(bool fullscreen) {
-	return fullscreen ? st::windowFg->c : QColor(Qt::white);
+[[nodiscard]] QColor CompactLyricsSurface() {
+	const auto bg = st::windowBg->c;
+	return Ui::IsLightBackground(bg)
+		? anim::color(bg, st::windowBgOver->c, .65)
+		: st::windowBgOver->c;
 }
 
 // Карточка комментария поверх плеера, в палитре и формах mokaGram.
@@ -1073,7 +1076,7 @@ auto LyricsView::rasterizeLayout(
 	const auto offset = QPointF(pixels.topLeft()) / ratio;
 	auto painter = QPainter(&image);
 	auto hq = PainterHighQualityEnabler(painter);
-	painter.setPen(LyricsInk(_big));
+	painter.setPen(st::windowFg);
 	for (auto i = 0; i != layout.lineCount(); ++i) {
 		layout.lineAt(i).draw(&painter, -offset);
 	}
@@ -1129,7 +1132,7 @@ void LyricsView::drawLayout(
 	if (fill < 0. && drawCachedLayout(p, layout, origin, sung)) {
 		return;
 	}
-	const auto ink = LyricsInk(_big);
+	const auto ink = st::windowFg->c;
 	const auto withOpacity = [ink](double alpha) {
 		auto color = ink;
 		color.setAlphaF(std::clamp(alpha, 0., 1.));
@@ -1168,29 +1171,28 @@ void LyricsView::drawLayout(
 void LyricsView::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 	auto hq = PainterHighQualityEnabler(p);
-	auto rounded = QPainterPath();
+	const auto surface = _big ? st::boxBg->c : CompactLyricsSurface();
+	const auto light = Ui::IsLightBackground(surface);
+	const auto tint = !_big && _coverTint;
 	if (_big) {
 		if (_background) {
 			_background(p, e->rect());
 		}
-	} else {
-		// Скругление нужно только подложке и затуханию, текст рисуется без маски.
-		rounded.addRoundedRect(QRectF(rect()), 12, 12);
-		p.save();
-		p.setClipPath(rounded);
-		if (_coverTint) {
-			_backdrop.paint(p, rect(), rect());
-		} else {
-			p.fillRect(rect(), st::windowBgOver);
+	} else if (tint) {
+		_backdrop.paint(p, e->rect(), rect());
+		if (light) {
+			auto veil = surface;
+			veil.setAlphaF(.92);
+			p.fillRect(e->rect(), veil);
 		}
-		p.restore();
+	} else {
+		p.fillRect(e->rect(), surface);
 	}
 	p.setClipRect(QRect(0, 0, width(), lyricsHeight()));
-	const auto light = _big && Ui::IsLightBackground(st::boxBg->c);
-	const auto ink = LyricsInk(_big);
+	const auto ink = st::windowFg->c;
 	if (!_lyrics.found) {
-		auto status = _big ? ink : st::windowSubTextFg->c;
-		if (_big) status.setAlphaF(light ? .74 : .55);
+		auto status = ink;
+		status.setAlphaF(light ? .74 : .60);
 		p.setPen(status);
 		p.setFont(st::normalFont);
 		p.drawText(QRect(0, 0, width(), lyricsHeight()), Qt::AlignCenter, _status);
@@ -1201,6 +1203,11 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 	const auto first = std::clamp(lineAtOffset(-20. - offset) - 1, 0, count);
 	auto top = offset + topOf(first);
 	p.setFont(lineFont());
+	const auto fade = std::min(style::ConvertScale(28), std::max(height() / 5, 1));
+	const auto smooth = [](double t) {
+		t = std::clamp(t, 0., 1.);
+		return t * t * (3. - 2. * t);
+	};
 	for (auto i = first; i != count; ++i) {
 		const auto lineHeight = heightOf(i);
 		if (top + lineHeight >= -20 && top <= height() + 20) {
@@ -1215,19 +1222,12 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 			const auto rest = !_lyrics.synced
 				? 0.84
 				: light
-				? std::max(.44, (past ? .66 : .72) - .04 * distance)
+				? std::max(_big ? .44 : .59, (past ? .66 : .72) - .04 * distance)
 				: std::max(0.22, (past ? 0.34 : 0.44) - 0.04 * distance);
 			const auto cy = top + lineHeight / 2.;
-			auto edge = 1.;
-			if (_big) {
-				// Края текста растворяются в фоне плавно.
-				const auto smooth = [](double t) {
-					t = std::clamp(t, 0., 1.);
-					return t * t * (3. - 2. * t);
-				};
-				edge = smooth(cy / (height() * 0.2))
-					* smooth((height() - cy) / (height() * 0.28));
-			}
+			const auto edge = _big
+				? smooth(cy / (height() * 0.2)) * smooth((height() - cy) / (height() * 0.28))
+				: smooth(cy / fade) * smooth((height() - cy) / fade);
 			// Без масштабирования: текст с трансформацией не берётся из кэша глифов и тормозит.
 			const auto &layout = layoutOf(i);
 			const auto origin = lineOrigin(top);
@@ -1252,19 +1252,6 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 			break;
 		}
 	}
-	if (_big) {
-		return;
-	}
-	// Мягкое затухание сверху и снизу.
-	p.setClipPath(rounded);
-	auto fadeTop = QLinearGradient(0, 0, 0, 56);
-	fadeTop.setColorAt(0., QColor(0, 0, 0, 140));
-	fadeTop.setColorAt(1., QColor(0, 0, 0, 0));
-	p.fillRect(QRect(0, 0, width(), 56), fadeTop);
-	auto fadeBottom = QLinearGradient(0, height() - 56, 0, height());
-	fadeBottom.setColorAt(0., QColor(0, 0, 0, 0));
-	fadeBottom.setColorAt(1., QColor(0, 0, 0, 140));
-	p.fillRect(QRect(0, height() - 56, width(), 56), fadeBottom);
 }
 
 int LyricsView::lyricsHeight() const {
