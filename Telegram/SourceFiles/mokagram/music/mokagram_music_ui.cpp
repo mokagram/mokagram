@@ -1896,6 +1896,22 @@ private:
 
 };
 
+[[nodiscard]] bool IsLightMusicTheme() {
+	return Ui::IsLightBackground(st::boxBg->c);
+}
+
+[[nodiscard]] QColor MusicSecondaryColor() {
+	return IsLightMusicTheme()
+		? anim::color(st::windowSubTextFg->c, st::windowFg->c, .45)
+		: st::windowSubTextFg->c;
+}
+
+[[nodiscard]] QColor MusicCardColor() {
+	return IsLightMusicTheme()
+		? anim::color(st::windowBg->c, st::windowBgOver->c, .65)
+		: st::windowBg->c;
+}
+
 // Карточка SoundCloud: вход и обновление лайков или плейлистов.
 class SoundCloudAccountBar final : public Ui::AbstractButton {
 public:
@@ -1978,7 +1994,7 @@ protected:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto r = rect();
 		p.setPen(Qt::NoPen);
-		p.setBrush(_logged || !isOver() ? st::windowBg->c : st::windowBgOver->c);
+		p.setBrush(_logged || !isOver() ? MusicCardColor() : st::windowBgOver->c);
 		p.drawRoundedRect(r, s(22), s(22));
 		if (hasFocus()) {
 			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
@@ -2007,7 +2023,7 @@ protected:
 				mark,
 				mark);
 			p.setPen(Qt::NoPen);
-			p.setBrush(st::windowBg->c);
+			p.setBrush(MusicCardColor());
 			p.drawEllipse(markRect.adjusted(-s(2), -s(2), s(2), s(2)));
 			Mokagram::Music::PaintSoundCloudBadge(p, markRect);
 		}
@@ -2025,7 +2041,7 @@ protected:
 				? QString::fromUtf8(Mokagram::Lang::Tr("SoundCloud"))
 				: QString::fromUtf8(Mokagram::Lang::Tr("Подключить SoundCloud")));
 		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
+		p.setPen(MusicSecondaryColor());
 		const auto noteFont = QFontMetrics(st::normalFont->f);
 		p.drawText(
 			QRect(textLeft, s(37), textRight - textLeft, s(18)),
@@ -2269,7 +2285,12 @@ public:
 					p.drawEllipse(rect().adjusted(inset, inset, -inset, -inset));
 				}
 			}
-			DrawHeart(p, icon, liked, liked ? HeartColor() : QColor(st::windowSubTextFg->c));
+			const auto color = !liked
+				? MusicSecondaryColor()
+				: IsLightMusicTheme()
+				? anim::color(HeartColor(), st::windowFg->c, .24)
+				: HeartColor();
+			DrawHeart(p, icon, liked, color);
 			if (hasFocus()) {
 				const auto line = _roomy ? style::ConvertScale(2) : 2;
 				p.setPen(QPen(st::windowActiveTextFg->c, line));
@@ -2348,9 +2369,10 @@ constexpr auto kHomeCardDetailsHeight = 56;
 }
 
 [[nodiscard]] QColor HomeSurfaceColor(double hover, bool pressed, bool selected) {
+	const auto surface = MusicCardColor();
 	const auto base = selected
-		? anim::color(st::windowBg->c, st::windowBgActive->c, .16)
-		: st::windowBg->c;
+		? anim::color(surface, st::windowBgActive->c, .16)
+		: surface;
 	return anim::color(base, st::windowFg->c, pressed ? .12 : .08 * hover);
 }
 
@@ -2376,6 +2398,11 @@ void PaintHomeSurface(
 			innerRadius, innerRadius);
 		p.setPen(Qt::NoPen);
 	}
+}
+
+void PaintMusicCard(QPainter &p, QRect rect) {
+	auto hq = PainterHighQualityEnabler(p);
+	PaintHomeSurface(p, rect, 0., false, false);
 }
 
 void PaintHomeCover(QPainter &p, const QRect &rect, const QImage &art) {
@@ -2468,7 +2495,7 @@ protected:
 			p.drawRoundedRect(rect().adjusted(2, 2, -2, -2), 7, 7);
 		}
 		p.setPen(Qt::NoPen);
-		p.setBrush((underMouse() || hasFocus()) ? st::windowFg->c : st::windowSubTextFg->c);
+		p.setBrush((underMouse() || hasFocus()) ? st::windowFg->c : MusicSecondaryColor());
 		const auto center = QPointF(width() / 2., height() / 2.);
 		for (auto i = -1; i <= 1; ++i) {
 			p.drawEllipse(center + QPointF(i * 4.5, 0), 1.5, 1.5);
@@ -3274,7 +3301,7 @@ private:
 		if (album) {
 			if (!playing) {
 				p.setFont(st::normalFont);
-				p.setPen(st::windowSubTextFg);
+				p.setPen(MusicSecondaryColor());
 				p.drawText(art, Qt::AlignCenter, _trackNumber);
 			}
 		} else if (!_art.isNull()) {
@@ -3325,7 +3352,8 @@ private:
 		const auto duration = FormatDuration(_track.durationMs);
 		const auto durationWidth = st::normalFont->width(duration);
 		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
+		const auto secondary = MusicSecondaryColor();
+		p.setPen(secondary);
 		p.drawText(
 			QRect(durationRight() - durationWidth, 0, durationWidth, height()),
 			Qt::AlignVCenter | Qt::AlignRight,
@@ -3333,16 +3361,16 @@ private:
 		const auto titleRect = listTextRect(true);
 		auto subtitleRect = listTextRect(false);
 		p.setFont(_titleFont);
-		p.setPen((grouped && isDisabled()) ? st::windowSubTextFg
-			: (playing && !grouped && _mode != RowMode::QueueCurrent)
-			? st::windowActiveTextFg
-			: st::windowFg);
+		p.setPen((grouped && isDisabled()) ? secondary
+			: (playing && !grouped && _mode != RowMode::QueueCurrent && !IsLightMusicTheme())
+			? st::windowActiveTextFg->c
+			: st::windowFg->c);
 		p.drawText(
 			titleRect,
 			Qt::AlignVCenter | Qt::AlignLeft,
 			_titleFont->elided(_track.title, titleRect.width()));
 		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
+		p.setPen(secondary);
 		if ((grouped && !isDisabled()) || (_moreArtists && CanPlayTrack(_track))) {
 			if (!subtitleRect.isEmpty()) {
 				paintArtistLinks(p, subtitleRect);
@@ -3402,7 +3430,7 @@ private:
 			Qt::AlignVCenter | Qt::AlignLeft,
 			st::semiboldFont->elided(_track.title, art.width()));
 		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
+		p.setPen(MusicSecondaryColor());
 		p.drawText(QRect(art.left(), art.bottom() + s(30), textWidth, s(22)),
 			Qt::AlignVCenter | Qt::AlignLeft,
 			st::normalFont->elided(_track.artist, textWidth));
@@ -4007,7 +4035,7 @@ protected:
 		p.drawText(QRect(art.left(), art.bottom() + s(8), art.width(), s(22)),
 			Qt::AlignVCenter | Qt::AlignLeft, st::semiboldFont->elided(_album.title, art.width()));
 		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
+		p.setPen(MusicSecondaryColor());
 		const auto kind = HomeReleaseKindText(_album.releaseKind);
 		const auto details = _album.releaseYear > 0
 			? QString::number(_album.releaseYear) + u" · "_q + kind
@@ -4129,7 +4157,7 @@ protected:
 		p.drawText(QRect(left, top, available, textHeight), Qt::AlignLeft | Qt::AlignVCenter,
 			st::semiboldFont->elided(title, available));
 		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
+		p.setPen(MusicSecondaryColor());
 		p.drawText(QRect(left, top + textHeight, available, textHeight),
 			Qt::AlignLeft | Qt::AlignVCenter, st::normalFont->elided(artist, available));
 	}
@@ -4197,7 +4225,7 @@ protected:
 		p.drawText(QRect(art.left(), art.bottom() + s(8), art.width(), s(22)),
 			Qt::AlignVCenter, st::semiboldFont->elided(_track.artist, art.width()));
 		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
+		p.setPen(MusicSecondaryColor());
 		p.drawText(QRect(art.left(), art.bottom() + s(30), art.width(), s(22)),
 			Qt::AlignVCenter, QString::fromUtf8(Mokagram::Lang::Tr("Исполнитель")));
 	}
@@ -4907,7 +4935,7 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		BoxParts::PaintCard(p, layout.card);
+		PaintMusicCard(p, layout.card);
 		if (!layout.banner.isEmpty()) {
 			auto path = QPainterPath();
 			const auto radius = s(BoxParts::kCardRadius);
@@ -4938,7 +4966,7 @@ protected:
 			p.drawText(rect, Qt::AlignVCenter | Qt::AlignLeft,
 				QFontMetrics(font).elidedText(text, Qt::ElideRight, rect.width()));
 		};
-		p.setPen(st::windowSubTextFg);
+		p.setPen(MusicSecondaryColor());
 		paintText(layout.kind, st::normalFont->f, _kind);
 		if (!_artist) paintText(layout.author, st::normalFont->f, _album.artist);
 		paintText(layout.facts, st::normalFont->f, _facts);
@@ -5462,7 +5490,7 @@ protected:
 		const auto text = QRect(side, 0, available, s(24));
 		if (dirty.intersects(text)) {
 			p.setFont(st::normalFont);
-			p.setPen(st::windowSubTextFg);
+			p.setPen(MusicSecondaryColor());
 			p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft,
 				st::normalFont->elided(_text, available));
 		}
@@ -5505,7 +5533,7 @@ protected:
 			if (!dirty.intersects(card)) {
 				continue;
 			}
-			p.setBrush(st::windowBg);
+			p.setBrush(MusicCardColor());
 			p.drawRoundedRect(card, radius, radius);
 			p.setBrush(st::windowBgOver);
 			p.drawRoundedRect(art.translated(card.topLeft()), coverRadius, coverRadius);
@@ -5532,7 +5560,7 @@ private:
 		if (!dirty.intersects(panel)) {
 			return;
 		}
-		BoxParts::PaintCard(p, panel);
+		PaintMusicCard(p, panel);
 		p.setBrush(st::windowBgOver);
 		const auto durationRight = panel.right() + 1 - s(kGroupedTrackDurationInset);
 		const auto textRight = durationRight - s(kGroupedTrackDurationColumn) - s(kGroupedTrackActionSize) - s(8);
@@ -7110,7 +7138,18 @@ namespace {
 constexpr auto kFullscreenSide = 56;
 
 [[nodiscard]] QColor TintedNavTrack(const QColor &accent) {
-	return anim::color(st::windowBgOver->c, accent.darker(220), 0.65);
+	const auto light = IsLightMusicTheme();
+	return anim::color(st::windowBgOver->c, light ? accent : accent.darker(220),
+		light ? .12 : .65);
+}
+
+struct NavColors {
+	QColor track;
+	QColor selected;
+};
+
+[[nodiscard]] QColor MusicBackdropBase() {
+	return IsLightMusicTheme() ? st::boxBg->c : QColor(0x14, 0x14, 0x15);
 }
 
 // Полноэкранный плеер: размытый цветной фон, крупный текст песни, тонкая полоса времени.
@@ -7121,11 +7160,11 @@ public:
 		QWidget *parent,
 		const QString &text,
 		bool centered,
-		Fn<QColor()> bannerColor = nullptr,
+		Fn<NavColors()> colors = nullptr,
 		Fn<QColor()> headerBackground = nullptr)
 	: AbstractButton(parent)
 	, _text(text)
-	, _bannerColor(std::move(bannerColor))
+	, _colors(std::move(colors))
 	, _headerBackground(std::move(headerBackground))
 	, _centered(centered) {
 		setPointerCursor(true);
@@ -7158,12 +7197,6 @@ public:
 			}
 		}
 	}
-	void setActiveColor(QColor color) {
-		if (_activeColor != color) {
-			_activeColor = color;
-			update();
-		}
-	}
 	void setCentered(bool centered) {
 		if (_centered != centered) {
 			_centered = centered;
@@ -7191,22 +7224,17 @@ private:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto font = PlayerStyle::kControlLabel.font();
 		p.setFont(font);
-		auto inactive = isOver()
-			? st::windowFg->c
-			: st::windowSubTextFg->c;
-		auto active = _activeColor.isValid()
-			? _activeColor
-			: st::windowFg->c;
-		const auto banner = _bannerColor ? _bannerColor() : QColor();
+		auto inactive = isOver() ? st::windowFg->c : MusicSecondaryColor();
+		auto active = st::windowFg->c;
 		const auto background = _headerBackground ? _headerBackground() : QColor();
 		if (background.isValid()) {
 			inactive = active = PaintPlayerHeaderButton(p, rect(), background, isOver(), isDown());
-		} else if (banner.isValid()) {
-			const auto track = TintedNavTrack(banner);
-			if (Ui::CountContrast(track, inactive) < 4.5) {
-				inactive = ContrastingForeground(track);
+		} else if (_colors) {
+			const auto colors = _colors();
+			if (Ui::CountContrast(colors.track, inactive) < 4.5) {
+				inactive = ContrastingForeground(colors.track);
 			}
-			active = ContrastingForeground(banner);
+			active = ContrastingForeground(colors.selected);
 		}
 		p.setPen(anim::color(
 			inactive,
@@ -7228,9 +7256,8 @@ private:
 	}
 
 	QString _text;
-	Fn<QColor()> _bannerColor;
+	Fn<NavColors()> _colors;
 	Fn<QColor()> _headerBackground;
-	QColor _activeColor;
 	Ui::Animations::Simple _fade;
 	bool _centered = false;
 	bool _active = false;
@@ -7720,7 +7747,8 @@ public:
 	, _playbackBar(Ui::CreateChild<Ui::RpWidget>(this))
 	, _seek(Ui::CreateChild<SeekBar>(_playbackBar, &_playbackColors))
 	, _heart(Ui::CreateChild<RoundGlyph>(_playbackBar, Glyph::Add, 44))
-	, _collapse(Ui::CreateChild<RoundGlyph>(this, Glyph::Collapse, 44))
+	, _collapse(Ui::CreateChild<RoundGlyph>(
+			this, Glyph::Collapse, 44, [=] { return headerControlBackground(); }))
 	, _filter(Ui::CreateChild<RoundGlyph>(
 			this, Glyph::Filter, 44, [=] { return headerControlBackground(); }))
 	, _queueToggle(Ui::CreateChild<RoundGlyph>(_playbackBar, Glyph::Queue, 44))
@@ -7766,7 +7794,6 @@ public:
 			animateHomeBackExit();
 			_homeAlbumOpen = false;
 			_homeArtistOpen = false;
-			_nav[1]->setActiveColor(Qt::white);
 			++_homeAlbumGeneration;
 			relayout();
 			rebuildTab();
@@ -7784,7 +7811,7 @@ public:
 			p.fillRect(_homeArtistBar->rect(), st::boxBg);
 			const auto side = s(BoxParts::kOuterSide);
 			const auto inner = _homeArtistBar->rect().adjusted(side, 0, -side, 0);
-			BoxParts::PaintCard(p, inner);
+			PaintMusicCard(p, inner);
 			const auto text = inner.adjusted(s(16), 0, -s(16), 0);
 			p.setFont(st::semiboldFont);
 			p.setPen(st::windowFg);
@@ -7933,7 +7960,7 @@ public:
 			refreshQueuePanel();
 		}, lifetime());
 		_queuePanel->paintOn([=](QPainter &p) {
-			BoxParts::PaintCard(p, _queuePanel->rect());
+			PaintMusicCard(p, _queuePanel->rect());
 		});
 		_shuffle->resize(s(36), s(36));
 		_previous->resize(s(40), s(40));
@@ -7961,6 +7988,7 @@ public:
 			_playbackColors = MakePlaybackBarColors();
 			repaintPlaybackBar();
 			_seek->update();
+			repaintBackdrop();
 		}, lifetime());
 		_coverOverlay->setAttribute(Qt::WA_TransparentForMouseEvents);
 		_coverOverlay->hide();
@@ -8011,7 +8039,7 @@ public:
 				this,
 				QString::fromUtf8(Mokagram::Lang::Tr(names[i])),
 				false,
-				[=] { return homeArtistBannerColor(); });
+				[=] { return navColors(); });
 			item->setClickedCallback([=] { setTab(Tab(i)); });
 			_nav[i] = item;
 		}
@@ -9494,7 +9522,6 @@ protected:
 		_homeReturnToArtist = false;
 		_homeBackToSearch = false;
 		++_artistLinkGeneration;
-		_nav[1]->setActiveColor(Qt::white);
 		++_homeAlbumGeneration;
 	}
 	void setTab(Tab tab) {
@@ -9730,6 +9757,21 @@ protected:
 			: ((_tab == Tab::Home && _homeAlbumOpen) ? _homeAccent : QColor());
 	}
 
+	[[nodiscard]] NavColors navColors() {
+		const auto plainTrack = st::windowBgOver->c;
+		const auto plainSelected = st::windowActiveTextFg->c;
+		const auto detail = homeDetailAccent();
+		const auto accent = detail.isValid() ? detail : _accent;
+		if (!accent.isValid()) {
+			return { plainTrack, plainSelected };
+		}
+		const auto plain = detail.isValid() ? 0. : _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
+		return {
+			anim::color(TintedNavTrack(accent), plainTrack, plain),
+			IsLightMusicTheme() ? plainSelected : anim::color(accent, plainSelected, plain),
+		};
+	}
+
 	[[nodiscard]] QColor headerControlBackground() {
 		const auto accent = homeDetailAccent();
 		return accent.isValid() ? TintedNavTrack(accent) : st::windowBgOver->c;
@@ -9737,7 +9779,6 @@ protected:
 
 	void loadHomeAccent(const QString &url, int generation) {
 		_homeAccent = QColor();
-		_nav[1]->setActiveColor(Qt::white);
 		update();
 		LoadImage(ArtUrl(url, u"t500x500"_q), crl::guard(this, [=](QImage image) {
 			if (generation != _homeAlbumGeneration
@@ -9745,8 +9786,6 @@ protected:
 				return;
 			}
 			_homeAccent = ComputeAccent(image);
-			_nav[1]->setActiveColor(Ui::CountContrast(_homeAccent, Qt::white) >= Ui::CountContrast(_homeAccent, Qt::black)
-				? QColor(Qt::white) : QColor(Qt::black));
 			_queuePanel->update();
 			update();
 		}));
@@ -10318,7 +10357,7 @@ protected:
 				? _tabList->add(object_ptr<Ui::VerticalLayout>(_tabList), QMargins(side, 0, side, 0))
 				: _tabList;
 			if (grouped) {
-				list->paintOn([=](QPainter &p) { BoxParts::PaintCard(p, list->rect()); });
+				list->paintOn([=](QPainter &p) { PaintMusicCard(p, list->rect()); });
 			}
 			const auto hiddenArtist = grouped
 				? QStringView(_homeArtistOpen ? _homeArtistProfile.name : _homeAlbum.artist).trimmed()
@@ -11136,9 +11175,7 @@ protected:
 		// Вне «Сейчас играет» экран в цветах клиента, как остальные окна.
 		if (plainBackground > 0.) {
 			p.setOpacity(plainBackground);
-			p.fillRect(e->rect(), _tab == Tab::Home
-				? st::boxBg->c
-				: QColor(0x1c, 0x1c, 0x1c));
+			p.fillRect(e->rect(), st::boxBg);
 			p.setOpacity(1.);
 		}
 		const auto layout = computeLayout();
@@ -11156,20 +11193,8 @@ protected:
 		}
 		// Одна общая дорожка и движущаяся пилюля вместо отдельных фонов вкладок.
 		p.setPen(Qt::NoPen);
-		const auto homeColor = homeDetailAccent();
-		// На «Сейчас играет» дорожка тоже берёт оттенок обложки.
-		const auto trackPlain = _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
-		const auto trackTint = homeColor.isValid()
-			? homeColor
-			: (_accent.isValid() ? _accent : QColor());
-		auto track = st::windowBgOver->c;
-		if (trackTint.isValid()) {
-			track = TintedNavTrack(trackTint);
-			if (!homeColor.isValid()) {
-				track = anim::color(track, st::windowBgOver->c, trackPlain);
-			}
-		}
-		p.setBrush(track);
+		const auto colors = navColors();
+		p.setBrush(colors.track);
 		p.drawRoundedRect(layout.nav, s(20), s(20));
 		const auto inset = s(4);
 		const auto segment = std::max(layout.nav.width() - 2 * inset, 0) / float64(layout.verticalNav ? 3 : _nav.size());
@@ -11187,18 +11212,14 @@ protected:
 			layout.nav.y() + inset + (layout.verticalNav ? s(40) * (int(_tab) / 3) : 0),
 			segment + stretch,
 			s(40) - 2 * inset);
-		const auto coverColor = _accent.isValid()
-			? _accent
-			: st::windowActiveTextFg->c;
-		const auto plain = _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
-		p.setBrush(homeColor.isValid() ? homeColor : anim::color(coverColor, st::windowActiveTextFg->c, plain));
+		p.setBrush(colors.selected);
 		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
 		if ((_tab != Tab::Now || (showsQueue() && !_queuePanelOpen))
 			&& !(_tab == Tab::Home && _homeAlbumOpen)) {
 			if (!_tabNote.isEmpty()) {
 				p.setFont(PlayerStyle::kTrackArtist.font());
-				p.setPen(st::windowSubTextFg);
+				p.setPen(MusicSecondaryColor());
 				const auto noteWidth = std::max(layout.center.width() - s(20), 0);
 				p.drawText(
 					QRect(layout.center.x() + s(10), layout.scrollTop + ((_tab == Tab::Playlists) ? s(64) : 0), noteWidth, s(80)),
@@ -11208,7 +11229,7 @@ protected:
 			if (_tab == Tab::Search && _searchEmptySticker) {
 				const auto sticker = _searchEmptySticker->geometry();
 				p.setFont(PlayerStyle::kTrackArtist.font());
-				p.setPen(st::windowSubTextFg);
+				p.setPen(MusicSecondaryColor());
 				p.drawText(QRect(layout.center.x() + s(10), sticker.bottom() + s(12),
 					std::max(layout.center.width() - s(20), 0), s(44)),
 					Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
@@ -11518,7 +11539,7 @@ private:
 			_backdropDirty = true;
 		}
 		if (_preparedBackdrop.isNull()) {
-			p.fillRect(area, QColor(0x14, 0x14, 0x15));
+			p.fillRect(area, MusicBackdropBase());
 			return;
 		}
 		if (_backdropDirty) {
@@ -11545,7 +11566,7 @@ private:
 		if (_backdropRaster.size() != rasterSize) {
 			_backdropRaster = QImage(rasterSize, QImage::Format_RGBA64_Premultiplied);
 		}
-		_backdropRaster.fill(QColor(0x14, 0x14, 0x15));
+		_backdropRaster.fill(MusicBackdropBase());
 		{
 			auto raster = QPainter(&_backdropRaster);
 			auto hq = PainterHighQualityEnabler(raster);
@@ -11575,11 +11596,15 @@ private:
 		p.setRenderHint(QPainter::SmoothPixmapTransform);
 		const auto area = QRectF(QPointF(), _preparedBackdrop.deviceIndependentSize());
 		p.drawImage(area, _backdropRaster);
-		p.fillRect(area, grain);
+		if (!IsLightMusicTheme()) {
+			p.fillRect(area, grain);
+		}
 	}
 
 	void paintBackdrop(QPainter &p) {
 		const auto area = rect();
+		const auto light = IsLightMusicTheme();
+		const auto base = MusicBackdropBase();
 		const auto pulse = animatesBackdrop()
 			&& !PowerSaving::On(PowerSaving::kAnimations)
 			&& QGuiApplication::applicationState() == Qt::ApplicationActive
@@ -11591,21 +11616,23 @@ private:
 			} else {
 				p.drawImage(area, canvasBackgroundFrame());
 			}
-			p.fillRect(area, QColor(0x10, 0x10, 0x12, 100));
-			if (Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
+			auto shade = light ? base : QColor(0x10, 0x10, 0x12);
+			shade.setAlpha(light ? 234 : 100);
+			p.fillRect(area, shade);
+			if (_accent.isValid() && Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
 				const auto phase = crl::now() / 14000.;
 				const auto center = QPointF(width() * (0.5 + 0.25 * std::sin(phase)),
 					height() * (0.5 + 0.25 * std::cos(phase * 0.7)));
 				auto glow = QRadialGradient(center, std::max(width(), height()) * 0.7);
 				auto color = _accent;
-				color.setAlpha(int(60 + 24 * pulse));
+				color.setAlpha(light ? int(16 + 8 * pulse) : int(60 + 24 * pulse));
 				glow.setColorAt(0., color);
 				color.setAlpha(0);
 				glow.setColorAt(1., color);
 				p.fillRect(area, glow);
 			}
 		} else {
-			p.fillRect(area, QColor(0x14, 0x14, 0x15));
+			p.fillRect(area, base);
 		}
 		const auto layout = computeLayout();
 		if (!layout.cover.isEmpty() && _accent.isValid()) {
@@ -11614,7 +11641,7 @@ private:
 				cover.center(),
 				std::max(cover.width(), cover.height()) * 0.8);
 			auto color = _accent;
-			color.setAlpha(int(45 + 38 * pulse));
+			color.setAlpha(light ? int(14 + 10 * pulse) : int(45 + 38 * pulse));
 			glow.setColorAt(0., color);
 			color.setAlpha(0);
 			glow.setColorAt(1., color);
@@ -11684,7 +11711,6 @@ private:
 						Qt::KeepAspectRatio, Qt::SmoothTransformation)
 					: cover);
 			if (_canvasBackground.isNull()) _accent = CurrentCoverAccent();
-			_nav[0]->setActiveColor(Qt::white);
 			if (_tab == Tab::Home) {
 				_playbackBar->update();
 			}

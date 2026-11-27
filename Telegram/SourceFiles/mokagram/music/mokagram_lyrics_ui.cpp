@@ -18,6 +18,7 @@
 #include "mokagram/ui/mokagram_box_parts.h"
 #include "styles/style_chat.h"
 #include "styles/style_window.h"
+#include "ui/color_contrast.h"
 #include "ui/image/image_prepare.h"
 #include "ui/painter.h"
 #include "ui/power_saving.h"
@@ -42,6 +43,10 @@
 namespace Mokagram::Music {
 namespace details {
 namespace {
+
+[[nodiscard]] QColor LyricsInk(bool fullscreen) {
+	return fullscreen ? st::windowFg->c : QColor(Qt::white);
+}
 
 // Карточка комментария поверх плеера, в палитре и формах mokaGram.
 class CommentHoverCard final : public Ui::RpWidget {
@@ -551,6 +556,10 @@ LyricsView::LyricsView(QWidget *parent)
 	}, Qt::QueuedConnection);
 	PowerSaving::Changes() | rpl::on_next([=] {
 		updateTimer();
+	}, lifetime());
+	style::PaletteChanged() | rpl::on_next([=] {
+		_lineRasters.clear();
+		update();
 	}, lifetime());
 	Settings::IntValue(u"lyrics.subtitle"_q) | rpl::on_next([=](int mode) {
 		_subtitleMode = mode;
@@ -1064,7 +1073,7 @@ auto LyricsView::rasterizeLayout(
 	const auto offset = QPointF(pixels.topLeft()) / ratio;
 	auto painter = QPainter(&image);
 	auto hq = PainterHighQualityEnabler(painter);
-	painter.setPen(Qt::white);
+	painter.setPen(LyricsInk(_big));
 	for (auto i = 0; i != layout.lineCount(); ++i) {
 		layout.lineAt(i).draw(&painter, -offset);
 	}
@@ -1107,7 +1116,7 @@ bool LyricsView::drawCachedLayout(
 	return true;
 }
 
-// Строка поверх фона; fill >= 0 заливает спетую часть белым слева направо с мягким краем.
+// The karaoke fill blends from the upcoming text to the sung text at the cursor.
 void LyricsView::drawLayout(
 		QPainter &p,
 		const QTextLayout &layout,
@@ -1120,8 +1129,9 @@ void LyricsView::drawLayout(
 	if (fill < 0. && drawCachedLayout(p, layout, origin, sung)) {
 		return;
 	}
-	const auto white = [](double alpha) {
-		auto color = QColor(255, 255, 255);
+	const auto ink = LyricsInk(_big);
+	const auto withOpacity = [ink](double alpha) {
+		auto color = ink;
 		color.setAlphaF(std::clamp(alpha, 0., 1.));
 		return color;
 	};
@@ -1132,9 +1142,9 @@ void LyricsView::drawLayout(
 		const auto from = line.textStart();
 		const auto till = from + line.textLength();
 		if (fill < 0. || position >= till) {
-			p.setPen(white(sung));
+			p.setPen(withOpacity(sung));
 		} else if (position <= from) {
-			p.setPen(white(unsung));
+			p.setPen(withOpacity(unsung));
 		} else {
 			const auto index = int(position);
 			const auto left = line.cursorToX(index);
@@ -1142,8 +1152,8 @@ void LyricsView::drawLayout(
 			const auto x = origin.x() + left + (right - left) * (position - index);
 			auto gradient = QLinearGradient(x - feather, 0., x + feather, 0.);
 			const auto rtl = layout.text().isRightToLeft();
-			gradient.setColorAt(0., white(rtl ? unsung : sung));
-			gradient.setColorAt(1., white(rtl ? sung : unsung));
+			gradient.setColorAt(0., withOpacity(rtl ? unsung : sung));
+			gradient.setColorAt(1., withOpacity(rtl ? sung : unsung));
 			p.setPen(QPen(QBrush(gradient), 1.));
 		}
 		line.draw(&p, origin);
@@ -1176,8 +1186,12 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 		p.restore();
 	}
 	p.setClipRect(QRect(0, 0, width(), lyricsHeight()));
+	const auto light = _big && Ui::IsLightBackground(st::boxBg->c);
+	const auto ink = LyricsInk(_big);
 	if (!_lyrics.found) {
-		p.setPen(_big ? QColor(255, 255, 255, 140) : st::windowSubTextFg->c);
+		auto status = _big ? ink : st::windowSubTextFg->c;
+		if (_big) status.setAlphaF(light ? .74 : .55);
+		p.setPen(status);
 		p.setFont(st::normalFont);
 		p.drawText(QRect(0, 0, width(), lyricsHeight()), Qt::AlignCenter, _status);
 		return;
@@ -1193,13 +1207,15 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 			const auto w = (_lyrics.synced && i < int(_weights.size()))
 				? double(_weights[i])
 				: 0.;
-			// Дальние строки тусклее, уже спетые ещё тусклее, текущая белая.
+			// Distant and past lines recede behind the current lyric.
 			const auto distance = _lyrics.synced
 				? std::abs(i - std::max(_current, 0))
 				: 1;
 			const auto past = _lyrics.synced && i < _current;
 			const auto rest = !_lyrics.synced
 				? 0.84
+				: light
+				? std::max(.44, (past ? .66 : .72) - .04 * distance)
 				: std::max(0.22, (past ? 0.34 : 0.44) - 0.04 * distance);
 			const auto cy = top + lineHeight / 2.;
 			auto edge = 1.;
@@ -1221,9 +1237,9 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 				origin,
 				(_lyrics.synced && i == _current) ? _fill : -1.,
 				(rest + (1. - rest) * w) * edge,
-				(rest + (0.45 - rest) * w) * edge);
+				(rest + ((light ? .72 : .45) - rest) * w) * edge);
 			if (layout.subtitle) {
-				auto shade = QColor(Qt::white);
+				auto shade = ink;
 				shade.setAlphaF((rest + (0.67 - rest) * w) * edge);
 				p.setPen(shade);
 				layout.subtitle->draw(&p, origin + QPointF(

@@ -6,6 +6,7 @@ mokaGram (27.11.26)
 - Align the current track highlight with the rounded edges of the track list.
 - Center the pause icon in Music Home cards.
 - Use unfilled text buttons for secondary Music section actions and align the artist actions on the trailing edge.
+- Make Music backgrounds, lyrics, navigation and track lists readable in the light theme.
 
 mokaGram (26.11.26)
 
