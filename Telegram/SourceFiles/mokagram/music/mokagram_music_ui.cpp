@@ -3255,7 +3255,9 @@ private:
 		}
 		if (_grouped || _compactQueue) {
 			const auto side = listMetric(_compactQueue ? 32 : kGroupedTrackActionSize);
-			const auto durationColumn = listMetric(_compactQueue ? 44 : kGroupedTrackDurationColumn);
+			const auto durationColumn = _compactQueue
+				? st::normalFont->width(FormatDuration(_track.durationMs)) + listMetric(6)
+				: listMetric(kGroupedTrackDurationColumn);
 			return QRect(durationRight() - durationColumn - side,
 				(height() - side) / 2, side, side);
 		}
@@ -3399,7 +3401,8 @@ private:
 		const auto album = (_mode == RowMode::AlbumTrack);
 		if (_compactQueue) {
 			if (!isDisabled() && (playing || over || hasFocus())) {
-				PaintHomeSurface(p, rect(), isOver() ? 1. : 0., isDown(), hasFocus(),
+				const auto gap = listMetric(2);
+				PaintHomeSurface(p, rect().adjusted(0, gap, 0, -gap), isOver() ? 1. : 0., isDown(), hasFocus(),
 					playing, st::windowBgActive->c);
 			}
 		} else if (_grouped) {
@@ -8054,7 +8057,9 @@ public:
 				st::semiboldFont->elided(_homeArtistProfile.name, text.width()));
 		});
 		_homeArtistBar->hide();
-		AttachCommentsToPlayer(controller, _playbackBar, _seek, false);
+		AttachMissingLyricsComments(controller, this, _tabScroll, [=] {
+			return showsQueue();
+		});
 		_filter->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Звуковой фильтр")));
 		_filter->setClickedCallback([=] {
 			_filterMenu = base::make_unique_q<Ui::PopupMenu>(this, st::popupMenuWithIcons);
@@ -9232,19 +9237,19 @@ protected:
 				QRectF(layout.seek).adjusted(-inset, -inset, inset, inset)));
 		_view->setVisible(_tab == Tab::Now && !showsQueue());
 		_view->setGeometry(layout.lyrics);
-		_tabScroll->setVisible(_tab != Tab::Now || (showsQueue() && !_queuePanelOpen));
+		_tabScroll->setVisible(_tab != Tab::Now || showsQueue());
 		_queuePanelTarget = layout.queuePanel;
 		layoutQueuePanel();
 		const auto home = (_tab == Tab::Home);
 		const auto scrollBottom = home
 			? (_hasPlaybackTrack ? height() : layout.contentBottom)
-			: layout.center.bottom() + 1 - s(12);
+			: layout.center.bottom() + 1 - (showsQueue() ? 0 : s(12));
 		const auto bottomPadding = (home && _hasPlaybackTrack) ? height() - layout.contentBottom : 0;
 		const auto queueInset = s(PlayerStyle::kSpace8);
 		_tabContent->setPadding(showsQueue()
 			? QMargins(queueInset, queueInset, queueInset, queueInset)
 			: QMargins(0, 0, 0, bottomPadding));
-		const auto scrollWidth = ((home && _homeAlbumOpen) || _tab == Tab::Search || showsQueue())
+		const auto scrollWidth = ((home && _homeAlbumOpen) || _tab == Tab::Search)
 			? std::min(layout.center.width(), s(kMusicListMaxWidth))
 			: layout.center.width();
 		_tabScroll->setGeometry(
@@ -11871,11 +11876,18 @@ protected:
 			s(40) - 2 * inset);
 		p.setBrush(colors.selected);
 		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
-		if (showsQueue() && !_queuePanelOpen && _tabQueueList && _tabQueueList->count()) {
-			PaintMusicCard(p, _tabScroll->geometry());
+		if (showsQueue() && _tabQueueList && _tabQueueList->count()) {
+			const auto card = _tabScroll->geometry();
+			const auto radius = s(BoxParts::kCardRadius);
+			const auto surface = MusicCardColor();
+			p.setPen(Qt::NoPen);
+			p.setBrush(_coverAccent.isValid()
+				? anim::color(surface, _coverAccent, .10)
+				: surface);
+			p.drawRoundedRect(card, radius, radius);
 		}
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
-		if ((_tab != Tab::Now || (showsQueue() && !_queuePanelOpen))
+		if ((_tab != Tab::Now || showsQueue())
 			&& !(_tab == Tab::Home && _homeAlbumOpen)) {
 			if (!_tabNote.isEmpty()) {
 				p.setFont(PlayerStyle::kTrackArtist.musicFont());

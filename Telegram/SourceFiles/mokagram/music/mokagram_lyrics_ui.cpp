@@ -1655,30 +1655,26 @@ void SyncLyricsPanel(
 	}
 }
 
-void AttachCommentsToPlayer(
+void AttachMissingLyricsComments(
 		not_null<Window::SessionController*> controller,
 		not_null<Ui::RpWidget*> parent,
 		not_null<Ui::RpWidget*> anchor,
-		bool compactTimeline,
 		Fn<bool()> available) {
 	Settings::PreloadRowIcons(&controller->session());
 	const auto button = Ui::CreateChild<TimedComments>(parent);
 	const auto refresh = [=] {
 		const auto track = PlayingTrack();
-		const auto allowed = !available || available();
-		const auto enabled = allowed && Settings::Bool(u"lyrics.comments"_q) && !LyricsAvailable();
+		const auto enabled = available() && Settings::Bool(u"lyrics.comments"_q);
 		const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
-		button->setTimelineDuration(std::max<qint64>(track.durationMs,
-			state.length * 1000 / std::max<int64>(state.frequency, 1)));
 		button->setTrack(enabled ? track.id : QString());
 		const auto shown = enabled && button->validTrack() && button->avatarCount() > 0
 			&& !anchor->isHidden();
 		button->setVisible(shown);
-		const auto size = style::ConvertScale(compactTimeline ? 24 : 28);
+		const auto size = style::ConvertScale(32);
+		const auto width = std::min(anchor->width(), style::ConvertScale(96));
 		const auto anchorTop = anchor->mapTo(parent, QPoint());
-		button->setGeometry(anchorTop.x(),
-			std::clamp(anchorTop.y() + (anchor->height() - size) / 2,
-				0, std::max(0, parent->height() - size)), anchor->width(), size);
+		button->setGeometry(anchorTop.x() + anchor->width() - width,
+			std::max(anchorTop.y() - size, 0), width, size);
 		button->setPosition(state.position * 1000 / std::max<int64>(state.frequency, 1));
 		button->raise();
 	};
