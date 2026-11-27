@@ -11189,7 +11189,6 @@ protected:
 		_tabNote.clear();
 		const auto playingId = PlayingTrack().id;
 		const auto focusTrack = !_tabQueueList || _tabQueuePlayingId != playingId;
-		_tabQueuePlayingId = playingId;
 		const auto [tracks, mode] = queueTracks(playingId);
 		if (!_tabQueueList) {
 			_tabQueueList = _tabList->add(object_ptr<CompactQueueList>(_tabList));
@@ -11201,6 +11200,7 @@ protected:
 			? QueueState().index
 			: int(ranges::find(tracks, playingId, &Track::id) - begin(tracks));
 		if (focusTrack && current >= 0 && current < list->count()) {
+			_tabQueuePlayingId = playingId;
 			const auto first = std::max(current - 1, 0);
 			_tabScroll->scrollToY(first ? list->y() + list->widgetAt(first)->y() : 0);
 		}
