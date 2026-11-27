@@ -6,6 +6,7 @@
 - Share a track title and artist from the built-in MokaGram player. Include the public SoundCloud track ID when available. Include Telegram tracks only when forwarding is allowed. Omit audio, links, chat IDs, and playback position.
 - Send listening-status requests to `@mokagent` using Telegram inline queries. Use the existing bot destination for all other requests.
 - Use a static accent ring on avatars in profiles, direct-chat headers, chat lists, and visible messages. Keep story rings and saved profile music available.
+- Album context is local to My Profile. The bot still shares the current track. Only a release marked as an album gets an album card.
 
 ## Acceptance criteria
 
@@ -15,6 +16,8 @@
 - The regular chat list shows the ring on direct-chat avatars. Open chats and threads show the same ring on visible message avatars from eligible users. The ring follows the displayed sender and leaves avatar clicks intact.
 - A confirmed listening status appears in any visible view of that user in the same signed-in account. The status keeps its original expiry time across views.
 - The profile card shows the track cover when the player cache or SoundCloud has one.
+- Starting an album from its Play button queues all playable tracks in release order. Selecting a track on the album page queues the same album and starts at the selected track, even if the previous queue was edited.
+- While an album track is playing from that queue, My Profile shows the album cover, title, and artist in the existing listening card. Playing a standalone track, even one from the same album, shows the track card instead.
 - Activating the card or a ringed avatar opens the track in the player when its public SoundCloud ID is available. Other tracks open music search with their shared text.
 - The track and ring disappear after a pause, stop, or opt-out reaches the viewer. The status also expires when the publisher loses its connection or closes the client.
 - Switching chats never shows a previous user's track. Bot errors and invalid responses leave the normal profile and chat status usable.

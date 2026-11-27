@@ -2675,29 +2675,23 @@ void DetailsFiller::addListeningCard(not_null<UserData*> user) {
 	const auto card = result.data();
 	const auto shown = card->lifetime().make_state<rpl::variable<bool>>(false);
 	if (user->isSelf()) {
-		// Своё превью: показываем то, что уйдёт в статус, без запросов к боту.
+		// Mokagram: build the local preview without querying the status bot.
 		const auto update = [=] {
 			using namespace Mokagram::Music;
-			const auto track = CurrentQueueTrack();
-			const auto state = ::Media::Player::instance()->getState(
-				AudioMsgId::Type::Song);
-			const auto visible = !track.title.isEmpty()
-				&& state.state == ::Media::Player::State::Playing
-				&& ::Mokagram::Settings::Bool(Presence::kShareKey);
-			card->setTrack(visible
-				? Presence::Track{
-					.title = track.title,
-					.artist = track.artist,
-					.soundcloudId = track.id.toULongLong(),
-					.artworkUrl = track.artworkUrl,
-				}
-				: Presence::Track());
+			auto track = ::Mokagram::Settings::Bool(Presence::kShareKey)
+				? CurrentProfileTrack(&user->session())
+				: Presence::Track();
+			const auto visible = bool(track);
+			card->setTrack(std::move(track));
 			*shown = visible;
 		};
 		::Media::Player::instance()->updatedNotifier(
-		) | rpl::on_next([=](const ::Media::Player::TrackState &) {
-			update();
-		}, card->lifetime());
+		) | rpl::filter([](const ::Media::Player::TrackState &state) {
+			return state.id.type() == AudioMsgId::Type::Song;
+		}) | rpl::map([](const ::Media::Player::TrackState &state) {
+			return std::pair(state.id, state.state);
+		}) | rpl::distinct_until_changed(
+		) | rpl::on_next([=](const auto &) { update(); }, card->lifetime());
 		Mokagram::Music::QueueChanges(
 		) | rpl::on_next(update, card->lifetime());
 		Mokagram::Settings::BoolValue(

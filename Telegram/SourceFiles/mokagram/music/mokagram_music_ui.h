@@ -14,6 +14,10 @@
 class AudioMsgId;
 class QImage;
 
+namespace Main {
+class Session;
+} // namespace Main
+
 namespace Window {
 class SessionController;
 } // namespace Window
@@ -25,6 +29,10 @@ class RpWidget;
 namespace Mokagram::Music {
 
 struct Track;
+
+namespace Presence {
+struct Track;
+} // namespace Presence
 
 void ShowMusicBox(
 	not_null<Window::SessionController*> controller,
@@ -49,6 +57,7 @@ void Step(int delta);
 [[nodiscard]] rpl::producer<> QueueChanges();
 // Текущий трек очереди SoundCloud, пустой для обычных аудио Telegram.
 [[nodiscard]] Track CurrentQueueTrack();
+[[nodiscard]] Presence::Track CurrentProfileTrack(not_null<Main::Session*> session);
 
 // Название и исполнитель текущего трека из очереди (false, если играет чужой трек).
 [[nodiscard]] bool CurrentTrackInfo(QString &title, QString &artist);

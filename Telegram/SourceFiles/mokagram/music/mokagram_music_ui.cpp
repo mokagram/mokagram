@@ -300,7 +300,7 @@ struct Radio {
 };
 
 struct QueueAlbum {
-	QString id;
+	std::shared_ptr<const Album> release;
 	std::vector<QString> trackIds;
 };
 
@@ -317,6 +317,7 @@ struct Queue {
 	QString forYouNote;
 	int tab = 0;                     // 0 поиск, 1 лайкнутые, 2 для вас
 	Track current;                   // играющий трек (с разобранными ссылками)
+	std::shared_ptr<const Album> currentAlbum;
 	bool recorded = true;            // прослушивание уже записано в историю
 	QString lastQuery;
 	bool custom = false;             // очередь собрана вручную
@@ -340,6 +341,10 @@ struct Queue {
 Queue &QueueState() {
 	static auto queue = Queue();
 	return queue;
+}
+
+[[nodiscard]] bool QueueAlbumContains(const Queue &queue, const QString &id) {
+	return std::ranges::binary_search(queue.album.trackIds, id);
 }
 
 [[nodiscard]] bool IsTelegramTrack(const Track &track) {
@@ -380,6 +385,7 @@ void BindController(not_null<Window::SessionController*> controller) {
 		queue.results.clear();
 		queue.searchResults.clear();
 		queue.current = {};
+		queue.currentAlbum.reset();
 		queue.currentId.clear();
 		queue.lastQuery.clear();
 		queue.index = -1;
@@ -891,6 +897,7 @@ void CommitRadio(
 	queue.autoIds.clear();
 	queue.tracks = { seed };
 	queue.album = {};
+	queue.currentAlbum.reset();
 	queue.tracks.insert(queue.tracks.end(), tracks.begin(), tracks.end());
 	queue.index = 0;
 	queue.currentId = seed.id;
@@ -1271,6 +1278,7 @@ void PlayIndex(int index, bool skipUnavailable) {
 			return;
 		}
 		queue.current = track;
+		queue.currentAlbum.reset();
 		queue.recorded = true;
 		Media::Player::instance()->play(
 			AudioMsgId(document, item->fullId()),
@@ -1282,6 +1290,9 @@ void PlayIndex(int index, bool skipUnavailable) {
 		auto &queue = QueueState();
 		LoadQueuePlaybackCover(document->id, resolved);
 		queue.current = resolved;
+		queue.currentAlbum = QueueAlbumContains(queue, queue.currentId)
+			? queue.album.release
+			: nullptr;
 		queue.recorded = false;
 		Media::Player::instance()->play(AudioMsgId(document, FullMsgId()), std::nullopt);
 		RecordRecentTrack(resolved);
@@ -1579,11 +1590,11 @@ void PlayFromResults(int resultIndex) {
 		return;
 	}
 	const auto track = queue.results[resultIndex];
+	queue.album = {};
 	if (!queue.custom) {
 		queue.radio.reset();
 		queue.pendingRadio.reset();
 		queue.tracks = queue.results;
-		queue.album = {};
 		queue.stream = StreamEnabled();
 		++queue.streamEpoch;
 		queue.refilling = false;
@@ -2137,7 +2148,8 @@ private:
 void PlayAll(
 		std::vector<Track> tracks,
 		bool skipUnavailable = false,
-		QString albumId = {}) {
+		std::shared_ptr<const Album> release = nullptr,
+		int startIndex = 0) {
 	auto &queue = QueueState();
 	if (tracks.empty()) {
 		return;
@@ -2146,8 +2158,8 @@ void PlayAll(
 	queue.radio.reset();
 	queue.pendingRadio.reset();
 	queue.tracks = std::move(tracks);
-	queue.album = { .id = std::move(albumId) };
-	if (!queue.album.id.isEmpty()) {
+	queue.album = { .release = std::move(release) };
+	if (queue.album.release) {
 		auto &ids = queue.album.trackIds;
 		ids.reserve(queue.tracks.size());
 		for (const auto &track : queue.tracks) {
@@ -2160,12 +2172,12 @@ void PlayAll(
 	queue.waiting = false;
 	++queue.streamEpoch;
 	queue.autoIds.clear();
-	if (queue.stream) {
+	if (queue.stream && !queue.album.release) {
 		for (const auto &t : queue.tracks) {
 			queue.autoIds.insert(t.id);
 		}
 	}
-	PlayIndex(0, skipUnavailable);
+	PlayIndex(startIndex, skipUnavailable);
 }
 
 struct HomeTrackPlaybackState {
@@ -2195,8 +2207,9 @@ struct HomeTrackPlaybackState {
 
 [[nodiscard]] HomeTrackPlaybackState HomeAlbumPlayback(const QString &id) {
 	const auto &queue = QueueState();
-	if (id.isEmpty() || queue.album.id != id
-		|| !std::ranges::binary_search(queue.album.trackIds, queue.currentId)) {
+	const auto &release = queue.album.release;
+	if (id.isEmpty() || !release || release->id != id
+		|| !QueueAlbumContains(queue, queue.currentId)) {
 		return {};
 	}
 	const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
@@ -2247,7 +2260,7 @@ void PlayHomeAlbum(
 			}
 		}
 		RecordRecentAlbum(album);
-		PlayAll(std::move(tracks), true, album.id);
+		PlayAll(std::move(tracks), true, std::make_shared<Album>(album));
 	}));
 }
 
@@ -2855,7 +2868,8 @@ public:
 		int resultIndex = -1,
 		Fn<void(Track)> open = nullptr,
 		QString playlistId = {},
-		bool homePlaybackControls = true)
+		bool homePlaybackControls = true,
+		std::shared_ptr<const Album> album = nullptr)
 	: AbstractButton(parent)
 	, _track(track)
 	, _mode(mode)
@@ -2870,6 +2884,7 @@ public:
 	, _trackNumber(mode == RowMode::AlbumTrack ? QString::number(index + 1) : QString())
 	, _queueIndex(index)
 	, _results(std::move(results))
+	, _album(std::move(album))
 	, _homePlaybackControls(homePlaybackControls)
 	, _playlistId(std::move(playlistId)) {
 		resize(width(), listMetric((_grouped || _compactQueue) ? kGroupedTrackHeight : kRowHeight));
@@ -2970,13 +2985,10 @@ public:
 			} else if (_mode == RowMode::QueueHistory) {
 				playRecent();
 			} else {
-				if (_results) {
-					QueueState().results = *_results;
-				}
 				if (_mode == RowMode::Home) {
 					QueueState().custom = false;
 				}
-				PlayFromResults(playIndex);
+				playResult(controller, playIndex);
 			}
 		};
 		if (_mode == RowMode::Home && !unavailable) {
@@ -3060,8 +3072,23 @@ public:
 
 
 private:
+	void playResult(
+			not_null<Window::SessionController*> controller,
+			int index) const {
+		if (_album) {
+			BindController(controller);
+			PlayAll(*_results, true, _album, index);
+			return;
+		}
+		if (_results) {
+			QueueState().results = *_results;
+		}
+		PlayFromResults(index);
+	}
+
 	void playRecent() const {
 		auto &queue = QueueState();
+		queue.album = {};
 		const auto at = std::min<int>(queue.index + 1, queue.tracks.size());
 		const auto next = queue.tracks.begin() + at;
 		const auto existing = std::find_if(next, queue.tracks.end(),
@@ -3293,10 +3320,7 @@ private:
 			} else if (_mode == RowMode::QueueHistory) {
 				playRecent();
 			} else {
-				if (_results) {
-					QueueState().results = *_results;
-				}
-				PlayFromResults(index);
+				playResult(controller, index);
 			}
 		}, &st::menuIconSoundOn);
 		if (CanPlayTrack(track)) {
@@ -3610,6 +3634,7 @@ private:
 	const int _queueIndex;
 	bool _queueDragging = false;
 	std::shared_ptr<std::vector<Track>> _results;
+	std::shared_ptr<const Album> _album;
 	bool _homePlaybackControls = true;
 	TrackLikeButton *_likeButton = nullptr;
 	HomeCardPlayButton *_playButton = nullptr;
@@ -11275,6 +11300,9 @@ protected:
 					playable->push_back(track);
 				}
 			}
+			const auto album = (mode == RowMode::AlbumTrack)
+				? std::make_shared<Album>(_homeAlbum)
+				: nullptr;
 			QueueState().results = *playable;
 			auto resultIndex = 0;
 			const auto count = (visibleLimit < 0)
@@ -11294,7 +11322,9 @@ protected:
 					playable,
 					index,
 					nullptr,
-					playlistId));
+					playlistId,
+					true,
+					album));
 				setResultTrackLinks(row, hiddenArtist);
 			}
 		};
@@ -15069,13 +15099,25 @@ void ShowMusicBoxWith(
 			const auto albumsShown = albums->active
 				&& queue.tab == 0
 				&& !queue.telegramSearch;
-			if (albumsShown && albums->opened) {
+			const auto album = (albumsShown && albums->opened)
+				? std::make_shared<Album>(*albums->opened)
+				: nullptr;
+			auto albumTracks = std::shared_ptr<std::vector<Track>>();
+			if (album) {
+				albumTracks = std::make_shared<std::vector<Track>>();
+				std::ranges::copy_if(
+					albums->openedTracks,
+					std::back_inserter(*albumTracks),
+					CanPlayTrack);
 				list->add(
 					object_ptr<AlbumBar>(
 						list,
-						albums->opened->title,
+						album->title,
 						[=] { crl::on_main(box, [=] { (*closeAlbum)(); }); },
-						[=] { PlayAll(albums->openedTracks, true); }),
+						[=] {
+							BindController(controller);
+							PlayAll(*albumTracks, true, album);
+						}),
 					QMargins(10, 0, 16, 6));
 			}
 			if (queue.tab == 1 && !queue.telegramSearch) {
@@ -15121,8 +15163,14 @@ void ShowMusicBoxWith(
 					}));
 				}
 			}
-			for (auto i = 0; i != int(queue.results.size()); ++i) {
-				list->add(object_ptr<Row>(list, controller, queue.results[i], i));
+			auto albumIndex = 0;
+			const auto &results = album ? albums->openedTracks : queue.results;
+			for (auto i = 0; i != int(results.size()); ++i) {
+				const auto &track = results[i];
+				const auto index = (album && CanPlayTrack(track)) ? albumIndex++ : -1;
+				list->add(object_ptr<Row>(
+					list, controller, track, i, RowMode::Results,
+					albumTracks, index, nullptr, QString(), true, album));
 			}
 			const auto activeChatSearch = queue.selectedChat
 				? searchState->extraChat.get()
@@ -15168,6 +15216,11 @@ void ShowMusicBoxWith(
 			AlbumTracks(album.id, crl::guard(box, [=](std::vector<Track> tracks, QString error) {
 				if (generation != albums->generation) {
 					return;
+				}
+				for (auto &track : tracks) {
+					if (track.artworkUrl.isEmpty()) {
+						track.artworkUrl = album.artworkUrl;
+					}
 				}
 				albums->openedTracks = std::move(tracks);
 				auto &queue = QueueState();
@@ -16027,6 +16080,34 @@ Track CurrentQueueTrack() {
 	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
 	const auto &queue = QueueState();
 	return OwnsTrack(current) ? queue.current : Track();
+}
+
+Presence::Track CurrentProfileTrack(not_null<Main::Session*> session) {
+	const auto &queue = QueueState();
+	const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
+	const auto &track = queue.current;
+	if (state.state != Media::Player::State::Playing
+		|| queue.session.get() != session.get()
+		|| !OwnsTrack(state.id)
+		|| &state.id.audio()->session() != session.get()
+		|| state.id.audio()->id != DocumentIdForTrack(track.id)) {
+		return {};
+	}
+	if (const auto &album = queue.currentAlbum;
+		album && album->releaseKind == ReleaseKind::Album && !album->title.isEmpty()) {
+		const auto kind = HomeReleaseKindText(album->releaseKind);
+		return {
+			.title = album->title,
+			.artist = album->artist.isEmpty() ? kind : kind + u" · "_q + album->artist,
+			.artworkUrl = album->artworkUrl,
+		};
+	}
+	return {
+		.title = track.title,
+		.artist = track.artist,
+		.soundcloudId = track.id.toULongLong(),
+		.artworkUrl = track.artworkUrl,
+	};
 }
 
 } // namespace Mokagram::Music

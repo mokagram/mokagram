@@ -6,6 +6,7 @@ mokaGram (27.11.26)
 - Slide the next song into Now playing and shift the remaining queue up as playback advances.
 - Add floating waffle buttons with Tyanka Hikka voice clips to the AHEGAO track card.
 - Group album tracks into a numbered Material 3 list with aligned favorites and durations.
+- Queue the full album when playback starts from its track list. Show the album cover and title in My Profile.
 - Use the same Material 3 track rows on single-track pages and in artist track lists.
 - Align the current track highlight with the rounded edges of the track list.
 - Center the pause icon in Music Home cards.
