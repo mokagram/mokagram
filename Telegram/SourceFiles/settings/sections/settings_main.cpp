@@ -438,8 +438,14 @@ void MokagramImportant::setupContent() {
 				.title = rpl::single(QString::fromUtf8(way.title)),
 				.onClick = [id = QString::fromLatin1(way.id)] {
 					// Бот предложит уровень поддержки и выставит счёт в этом сервисе.
+					const auto language = ::Lang::Id();
+					const auto russian = language.startsWith(u"ru")
+						|| language.startsWith(u"uk")
+						|| language.startsWith(u"be");
 					UrlClickHandler::Open(
-						u"https://t.me/mokagent?start=pay_%1"_q.arg(id));
+						u"https://t.me/mokagent?start=pay_%1_%2"_q.arg(
+							id,
+							russian ? u"ru"_q : u"en"_q));
 				},
 				.keywords = { QString::fromUtf8(way.title).toLower() },
 			});
