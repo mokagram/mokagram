@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/media/info_media_list_widget.h"
 #include "info/peer_gifts/info_peer_gifts_widget.h"
 #include "info/profile/info_profile_actions.h"
+#include "info/profile/info_profile_card_button.h"
 #include "info/profile/info_profile_icon.h"
 #include "info/profile/info_profile_top_bar.h"
 #include "info/profile/info_profile_values.h"
@@ -195,6 +196,25 @@ void EditAlbumBox::prepare() {
 
 void EditAlbumBox::resizeEvent(QResizeEvent *e) {
 	_content->setGeometry(rect());
+}
+
+[[nodiscard]] object_ptr<Ui::SlideWrap<Ui::SettingsButton>> MakeShortcutButton(
+		Ui::RpWidget *parent,
+		rpl::producer<QString> text,
+		bool inProfileCard) {
+	// Mokagram: the profile card and the default row hover share a color.
+	auto button = inProfileCard
+		? object_ptr<Ui::SettingsButton>(object_ptr<Profile::CardButton>(
+			parent,
+			std::move(text),
+			st::infoSharedMediaButton))
+		: object_ptr<Ui::SettingsButton>(
+			parent,
+			std::move(text),
+			st::infoSharedMediaButton);
+	return object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
+		parent,
+		std::move(button));
 }
 
 } // namespace
@@ -387,12 +407,10 @@ object_ptr<Ui::SlideWrap<>> InnerWidget::makeArchiveButton() {
 		return stories->albumIdsCount(_peer->id, kArchive);
 	}) | rpl::start_spawning(_top->lifetime());
 
-	auto wrap = object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
-		_top,
-		object_ptr<Ui::SettingsButton>(
-			_top,
-			tr::lng_stories_archive_button(),
-			st::infoSharedMediaButton));
+	auto wrap = MakeShortcutButton(
+		_top.data(),
+		tr::lng_stories_archive_button(),
+		_peer->isSelf());
 	const auto archiveWrap = wrap.data();
 	archiveWrap->setDuration(
 		st::infoSlideDuration
@@ -424,12 +442,10 @@ object_ptr<Ui::SlideWrap<>> InnerWidget::makeArchiveButton() {
 object_ptr<Ui::SlideWrap<>> InnerWidget::makeRecentButton() {
 	Expects(_top != nullptr);
 
-	auto wrap = object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
-		_top,
-		object_ptr<Ui::SettingsButton>(
-			_top,
-			tr::lng_stories_recent_button(),
-			st::infoSharedMediaButton));
+	auto wrap = MakeShortcutButton(
+		_top.data(),
+		tr::lng_stories_recent_button(),
+		_peer->isSelf());
 	const auto recentWrap = wrap.data();
 
 	using namespace Dialogs::Stories;
@@ -491,12 +507,10 @@ object_ptr<Ui::SlideWrap<>> InnerWidget::makeGiftsButton() {
 		user
 	) | rpl::start_spawning(_top->lifetime());
 
-	auto wrap = object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
-		_top,
-		object_ptr<Ui::SettingsButton>(
-			_top,
-			tr::lng_peer_gifts_title(),
-			st::infoSharedMediaButton));
+	auto wrap = MakeShortcutButton(
+		_top.data(),
+		tr::lng_peer_gifts_title(),
+		true);
 	const auto giftsWrap = wrap.data();
 	giftsWrap->setDuration(
 		st::infoSlideDuration
