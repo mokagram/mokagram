@@ -2148,9 +2148,33 @@ static void FillPeerQrBoxImpl(
 			st::peerQrShare,
 			tr::lng_group_invite_context_share(tr::now)).get()
 		: nullptr;
-	const auto titleLabel = title
-		? AddLabel(surface, st::peerQrTitle).get()
+	// Mokagram: give the profile preview title a stable surface over animated artwork.
+	const auto titlePlate = (profileExport && title)
+		? CreateChild<RpWidget>(surface)
 		: nullptr;
+	if (titlePlate) {
+		titlePlate->setAttribute(Qt::WA_TransparentForMouseEvents);
+		titlePlate->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBg);
+			const auto radius = titlePlate->height() / 2.;
+			p.drawRoundedRect(titlePlate->rect(), radius, radius);
+		});
+	}
+	const auto titleLabel = title
+		? (titlePlate
+			? CreateChild<FlatLabel>(surface, st::peerQrTitle)
+			: AddLabel(surface, st::peerQrTitle).get())
+		: nullptr;
+	if (titlePlate) {
+		const auto updateTitlePalette = [=] {
+			titleLabel->setTextColorOverride(st::windowFg->c);
+			titlePlate->update();
+		};
+		updateTitlePalette();
+		style::PaletteChanged() | rpl::on_next(updateTitlePalette, titlePlate->lifetime());
+	}
 	const auto aboutLabel = about
 		? AddLabel(surface, st::peerQrAbout).get()
 		: nullptr;
@@ -2292,13 +2316,18 @@ static void FillPeerQrBoxImpl(
 			share->moveToRight(skip, rowTop, width);
 		}
 		if (titleLabel) {
-			const auto left = st::boxTitlePosition.x();
+			const auto pad = titlePlate ? style::ConvertScale(12) : 0;
+			const auto left = titlePlate ? skip + pad : st::boxTitlePosition.x();
 			titleLabel->resizeToNaturalWidth(
-				width - left - close->width() - 2 * skip);
+				std::max(width - left - close->width() - 2 * skip - pad, 0));
 			titleLabel->moveToLeft(
 				left,
 				skip + (close->height() - titleLabel->height()) / 2,
 				width);
+			if (titlePlate) {
+				const auto vertical = style::ConvertScale(6);
+				titlePlate->setGeometry(titleLabel->geometry().adjusted(-pad, -vertical, pad, vertical));
+			}
 		}
 		const auto rest = QRectF(card).center();
 		auto reach = QRectF(rest, rest);
