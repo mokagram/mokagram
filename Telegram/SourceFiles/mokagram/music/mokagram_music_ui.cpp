@@ -6085,7 +6085,7 @@ struct PlaybackBarColors {
 	QColor inactiveTrack;
 };
 
-[[nodiscard]] PlaybackBarColors MakePlaybackBarColors() {
+[[nodiscard]] PlaybackBarColors MakePlaybackBarColors(QColor accent = {}) {
 	const auto readable = [](QColor background, QColor ink, QColor alternate) {
 		return (Ui::CountContrast(background, ink) >= 4.5) ? ink : alternate;
 	};
@@ -6093,12 +6093,18 @@ struct PlaybackBarColors {
 		color.setAlpha(255);
 		return color;
 	};
-	const auto surface = PlaybackSurfaceColor();
+	const auto base = PlaybackSurfaceColor();
+	const auto surface = accent.isValid()
+		? anim::color(base, opaque(accent), IsLightMusicTheme() ? .16 : .32)
+		: base;
 	const auto onSurface = readable(
 		surface, opaque(st::windowFg->c), ContrastingForeground(surface));
-	auto primary = opaque(st::activeButtonBg->c);
+	auto primary = accent.isValid() ? opaque(accent) : opaque(st::activeButtonBg->c);
+	if (accent.isValid() && Ui::CountContrast(surface, primary) < 3.) {
+		primary = anim::color(primary, onSurface, .48);
+	}
 	if (Ui::CountContrast(surface, primary) < 3.) {
-		primary = opaque(st::windowActiveTextFg->c);
+		primary = accent.isValid() ? onSurface : opaque(st::windowActiveTextFg->c);
 		if (Ui::CountContrast(surface, primary) < 3.) {
 			primary = onSurface;
 		}
@@ -8065,9 +8071,7 @@ public:
 			}
 		});
 		style::PaletteChanged() | rpl::on_next([=] {
-			_playbackColors = MakePlaybackBarColors();
-			repaintPlaybackBar();
-			_seek->update();
+			updatePlaybackBarColors(true);
 			repaintBackdrop();
 			if (_tab == Tab::Search) relayout();
 		}, lifetime());
@@ -9674,6 +9678,7 @@ protected:
 		_plainAnim.start(_tab == Tab::Now ? 0. : 1., tab == Tab::Now ? 0. : 1., kEffects);
 		const auto navFrom = double(int(_tab));
 		_tab = tab;
+		updatePlaybackBarColors();
 		_backdropDirty = true;
 		updateAmbientTimer();
 		if (oldLayout.verticalNav) {
@@ -11702,6 +11707,25 @@ private:
 		_canvasAccentTo = accent;
 		_canvasFade.stop();
 		_canvasFade.start(0., 1., kAmbientEffects);
+		updatePlaybackBarColors();
+	}
+
+	void updatePlaybackBarColors(bool paletteChanged = false) {
+		auto accent = QColor();
+		if (_tab == Tab::Now && Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
+			accent = _canvasBackground.isNull()
+				? _accent
+				: anim::color(_canvasAccentFrom, _canvasAccentTo, _canvasFade.unitValue(1.));
+		}
+		if (!paletteChanged && _playbackBarAccent == accent) return;
+		_playbackBarAccent = accent;
+		_playbackColors = MakePlaybackBarColors(accent);
+		repaintPlaybackBar();
+		for (const auto child : _playbackBar->children()) {
+			if (const auto widget = qobject_cast<QWidget*>(child)) {
+				widget->update();
+			}
+		}
 	}
 
 	void repaintPlaybackBar() {
@@ -11714,6 +11738,7 @@ private:
 
 	void repaintBackdrop() {
 		_backdropDirty = true;
+		updatePlaybackBarColors();
 		update();
 		_view->update();
 		_queuePanel->update();
@@ -12094,6 +12119,7 @@ private:
 	QRect _queuePanelTarget;
 	PlayerSpring _queueSlide{ [this] { relayout(); } };
 	PlaybackBarColors _playbackColors = MakePlaybackBarColors();
+	QColor _playbackBarAccent;
 	const not_null<Ui::RpWidget*> _playbackBar;
 	bool _hasPlaybackTrack = false;
 	PlayerSpring _barSlide{ [this] {
