@@ -267,6 +267,15 @@ void ShowMusicSourceBox(
 }
 
 constexpr auto kRowHeight = 76;
+constexpr auto kAlbumTrackHeight = 56;
+constexpr auto kAlbumTrackLeadWidth = 40;
+constexpr auto kAlbumTrackLeadingInset = 8;
+constexpr auto kGroupedTrackTextGap = 12;
+constexpr auto kAlbumTrackDurationInset = 16;
+constexpr auto kAlbumTrackDurationColumn = 64;
+constexpr auto kAlbumTrackActionSize = 40;
+constexpr auto kTrackGroupInset = 8;
+constexpr auto kTrackGroupPadding = 6;
 constexpr auto kCoverFadeDuration = crl::time(320);
 constexpr auto kTypingDelay = crl::time(400);
 constexpr auto kArtSize = 56;
@@ -2229,9 +2238,11 @@ public:
 	TrackLikeButton(
 		QWidget *parent,
 		not_null<Window::SessionController*> controller,
-		Track track)
+		Track track,
+		bool roomy = false)
 	: AbstractButton(parent)
-	, _track(std::move(track)) {
+	, _track(std::move(track))
+	, _roomy(roomy) {
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
 		const auto refresh = [=] {
@@ -2248,18 +2259,42 @@ public:
 			auto p = QPainter(this);
 			auto hq = PainterHighQualityEnabler(p);
 			const auto liked = IsLiked(_track.id);
-			DrawHeart(p, QRectF(rect()).adjusted(5, 6, -5, -5), liked,
-				liked ? HeartColor() : QColor(st::windowSubTextFg->c));
+			auto icon = QRectF(rect()).adjusted(5, 6, -5, -5);
+			if (_roomy) {
+				const auto side = style::ConvertScale(22);
+				icon = QRectF(QPointF(), QSizeF(side, side));
+				icon.moveCenter(QRectF(rect()).center());
+				if (isOver() || isDown()) {
+					const auto inset = style::ConvertScale(3);
+					p.setPen(Qt::NoPen);
+					p.setBrush(isDown() ? st::windowBgRipple : st::windowBgOver);
+					p.drawEllipse(rect().adjusted(inset, inset, -inset, -inset));
+				}
+			}
+			DrawHeart(p, icon, liked, liked ? HeartColor() : QColor(st::windowSubTextFg->c));
 			if (hasFocus()) {
-				p.setPen(QPen(st::windowActiveTextFg->c, 2));
+				const auto line = _roomy ? style::ConvertScale(2) : 2;
+				p.setPen(QPen(st::windowActiveTextFg->c, line));
 				p.setBrush(Qt::NoBrush);
-				p.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 5, 5);
+				if (_roomy) {
+					p.drawEllipse(rect().adjusted(line, line, -line, -line));
+				} else {
+					p.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 5, 5);
+				}
 			}
 		}, lifetime());
 	}
 
+protected:
+	void onStateChanged(State, StateChangeSource) override {
+		if (_roomy) {
+			update();
+		}
+	}
+
 private:
 	Track _track;
+	const bool _roomy;
 
 };
 
@@ -2320,9 +2355,10 @@ void PaintHomeSurface(
 		double hover,
 		bool pressed,
 		bool focused,
-		bool selected = false) {
+		bool selected = false,
+		int corner = BoxParts::kCardRadius) {
 	const auto radius = std::min(
-		style::ConvertScale(BoxParts::kCardRadius),
+		style::ConvertScale(corner),
 		std::min(rect.width(), rect.height()) / 2);
 	const auto base = selected
 		? anim::color(st::windowBg->c, st::windowBgActive->c, .16)
@@ -2627,7 +2663,7 @@ private:
 };
 
 enum class RowMode {
-	Results, Queue, Context, Home, Album, ArtistPopular,
+	Results, Queue, Context, Home, Detail, AlbumTrack, ArtistPopular,
 	QueueCurrent, QueueUpcoming, QueueHistory,
 };
 
@@ -2637,8 +2673,8 @@ public:
 		if (_mode == RowMode::Home) {
 			_hoverFade.set(isOver() || isDown(), [=] { update(); });
 		}
-		if (_mode == RowMode::Home || _mode == RowMode::Album
-			|| _mode == RowMode::ArtistPopular) {
+		if (_mode == RowMode::Home || _mode == RowMode::Detail
+			|| _mode == RowMode::AlbumTrack || _mode == RowMode::ArtistPopular) {
 			update();
 		}
 	}
@@ -2657,19 +2693,20 @@ public:
 	: AbstractButton(parent)
 	, _track(track)
 	, _mode(mode)
-	, _titleFont(mode == RowMode::ArtistPopular
+	, _titleFont((mode == RowMode::ArtistPopular || mode == RowMode::AlbumTrack)
 		? style::font(
-			style::ConvertScale(15),
+			style::ConvertScale(mode == RowMode::AlbumTrack ? 16 : 15),
 			st::semiboldFont->flags(),
 			st::semiboldFont->family())
 		: st::semiboldFont)
+	, _trackNumber(mode == RowMode::AlbumTrack ? QString::number(index + 1) : QString())
 	, _queueIndex(index)
 	, _results(std::move(results))
 	, _homePlaybackControls(homePlaybackControls)
 	, _playlistId(std::move(playlistId)) {
 		resize(width(), mode == RowMode::ArtistPopular
 			? listMetric(48)
-			: listMetric(kRowHeight));
+			: listMetric(mode == RowMode::AlbumTrack ? kAlbumTrackHeight : kRowHeight));
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
 		if (mode == RowMode::Results) {
@@ -2684,26 +2721,29 @@ public:
 		const auto unavailable = !CanPlayTrack(_track);
 		const auto unavailableText = QString::fromUtf8(Mokagram::Lang::Tr("Недоступен для воспроизведения"));
 		if (_mode != RowMode::Home && _mode != RowMode::ArtistPopular
+			&& _mode != RowMode::AlbumTrack
 			&& _mode != RowMode::QueueCurrent && _mode != RowMode::QueueUpcoming
 			&& _mode != RowMode::QueueHistory
 			&& !_track.videoId.isEmpty() && _track.playbackCount > 0) {
 			_playsText = QString::fromUtf8(Mokagram::Lang::Tr("%1 просл."))
 				.arg(::Lang::FormatCountToShort(_track.playbackCount).string);
 		}
-		setAccessibleName(_track.title + u" - "_q + _track.artist
+		setAccessibleName((_trackNumber.isEmpty() ? QString() : _trackNumber + u". "_q)
+			+ _track.title + u" - "_q + _track.artist
 			+ (_playsText.isEmpty() ? QString() : u" · "_q + _playsText)
 			+ (unavailable ? u" · "_q + unavailableText : QString()));
 		if (unavailable) {
 			setDisabled(true);
 			setToolTip(unavailableText);
 		} else if (!IsTelegramTrack(_track)) {
-			_likeButton = Ui::CreateChild<TrackLikeButton>(this, controller, _track);
+			_likeButton = Ui::CreateChild<TrackLikeButton>(
+				this, controller, _track, mode == RowMode::AlbumTrack);
 		}
 		if (_mode != RowMode::Home) {
 			_equalizerTimer.setInterval(33);
 			connect(&_equalizerTimer, &QTimer::timeout, this, [=] {
 				_equalizerPhase += _equalizerClock.restart() / 1000.;
-				update(listArtRect());
+				update(listLeadingRect());
 			});
 			Media::Player::instance()->updatedNotifier(
 			) | rpl::on_next([=] { updateAnimation(); }, lifetime());
@@ -2715,7 +2755,7 @@ public:
 		} else if (_homePlaybackControls && !unavailable) {
 			HomePlaybackChanges() | rpl::on_next([=] { update(); }, lifetime());
 		}
-		{
+		if (mode != RowMode::AlbumTrack) {
 			if (const auto item = TrackMessage(track)) {
 				const auto document = item->media()->document();
 				_media = document->createMediaView();
@@ -2923,12 +2963,17 @@ private:
 	}
 
 	[[nodiscard]] int listMetric(int value) const {
-		return (_catalogStyle || _mode == RowMode::Album || _mode == RowMode::ArtistPopular)
+		return (_catalogStyle || _mode == RowMode::Detail
+			|| _mode == RowMode::AlbumTrack || _mode == RowMode::ArtistPopular)
 			? style::ConvertScale(value)
 			: value;
 	}
 
-	[[nodiscard]] QRect listArtRect() const {
+	[[nodiscard]] QRect listLeadingRect() const {
+		if (_mode == RowMode::AlbumTrack) {
+			const auto side = listMetric(kAlbumTrackLeadWidth);
+			return QRect(listMetric(kAlbumTrackLeadingInset), (height() - side) / 2, side, side);
+		}
 		if (_mode == RowMode::ArtistPopular) {
 			const auto side = listMetric(36);
 			return QRect(listMetric(8), (height() - side) / 2, side, side);
@@ -2936,7 +2981,7 @@ private:
 		const auto side = _catalogStyle
 			? style::ConvertScale(kCatalogArtSize)
 			: listMetric(kArtSize);
-		return QRect(listMetric(_mode == RowMode::Album ? 26 : 20),
+		return QRect(listMetric(_mode == RowMode::Detail ? 26 : 20),
 			(height() - side) / 2, side, side);
 	}
 
@@ -2944,13 +2989,17 @@ private:
 		if (_mode == RowMode::ArtistPopular) {
 			return width() - listMetric(8);
 		}
-		return width() - listMetric(_menuButton ? 72 : _mode == RowMode::Album ? 26 : 24);
+		if (_mode == RowMode::AlbumTrack) {
+			return width() - listMetric(kAlbumTrackDurationInset);
+		}
+		return width() - listMetric(_menuButton ? 72 : _mode == RowMode::Detail ? 26 : 24);
 	}
 
 	[[nodiscard]] QRect listTextRect(bool title) const {
-		if (_mode == RowMode::ArtistPopular) {
-			const auto art = listArtRect();
-			const auto left = art.x() + art.width() + listMetric(12);
+		const auto album = (_mode == RowMode::AlbumTrack);
+		if (album || _mode == RowMode::ArtistPopular) {
+			const auto art = listLeadingRect();
+			const auto left = art.x() + art.width() + listMetric(kGroupedTrackTextGap);
 			const auto right = heartRect().x() - listMetric(8);
 			const auto titleHeight = _titleFont->height;
 			const auto subtitleHeight = (isDisabled() || !_artistNames.empty())
@@ -2960,7 +3009,7 @@ private:
 			return QRect(left, title ? top : top + titleHeight,
 				std::max(right - left, 0), title ? titleHeight : subtitleHeight);
 		}
-		const auto left = listArtRect().right() + listMetric(16);
+		const auto left = listLeadingRect().right() + listMetric(16);
 		const auto right = IsTelegramTrack(_track)
 			? durationRight() - st::normalFont->width(FormatDuration(_track.durationMs)) - listMetric(14)
 			: heartRect().left() - listMetric(12);
@@ -3050,6 +3099,11 @@ private:
 			const auto inset = style::ConvertScale(8);
 			const auto side = style::ConvertScale(28);
 			return QRect(width() - inset - side, height() - inset - side, side, side);
+		}
+		if (_mode == RowMode::AlbumTrack) {
+			const auto side = listMetric(kAlbumTrackActionSize);
+			return QRect(durationRight() - listMetric(kAlbumTrackDurationColumn) - side,
+				(height() - side) / 2, side, side);
 		}
 		if (_mode == RowMode::ArtistPopular) {
 			return QRect(durationRight() - listMetric(96),
@@ -3159,15 +3213,21 @@ private:
 		}
 		const auto playing = selected;
 		const auto over = isOver() || isDown();
-		const auto detail = (_mode == RowMode::Album);
+		const auto detail = (_mode == RowMode::Detail);
+		const auto album = (_mode == RowMode::AlbumTrack);
 		const auto popular = (_mode == RowMode::ArtistPopular);
-		const auto inset = listMetric(popular ? 1 : detail ? BoxParts::kOuterSide : 8);
-		const auto verticalInset = listMetric(popular ? 1 : 4);
+		const auto inset = listMetric((album || popular) ? 1 : detail ? BoxParts::kOuterSide : 8);
+		const auto verticalInset = listMetric((album || popular) ? 1 : 4);
 		const auto bounds = rect().marginsRemoved({
 			inset, verticalInset, inset, verticalInset });
 		if (detail) {
 			PaintHomeSurface(p, bounds, isOver() && !isDisabled() ? 1. : 0.,
 				isDown() && !isDisabled(), hasFocus(), playing);
+		} else if (album) {
+			if (!isDisabled() && (playing || over || hasFocus())) {
+				PaintHomeSurface(p, bounds, isOver() ? 1. : 0.,
+					isDown(), hasFocus(), playing, 8);
+			}
 		} else {
 			if (popular ? (over && !isDisabled()) : (playing || over)) {
 				p.setPen(Qt::NoPen);
@@ -3183,7 +3243,7 @@ private:
 				p.drawRoundedRect(bounds, listMetric(8), listMetric(8));
 			}
 		}
-		const auto art = listArtRect();
+		const auto art = listLeadingRect();
 		if (_media) {
 			if (const auto image = _media->thumbnail()) {
 				_art = image->original();
@@ -3192,8 +3252,16 @@ private:
 			}
 		}
 		auto path = QPainterPath();
-		path.addRoundedRect(art, listMetric(8), listMetric(8));
-		if (!_art.isNull()) {
+		if (!album) {
+			path.addRoundedRect(art, listMetric(8), listMetric(8));
+		}
+		if (album) {
+			if (!playing) {
+				p.setFont(st::normalFont);
+				p.setPen(st::windowSubTextFg);
+				p.drawText(art, Qt::AlignCenter, _trackNumber);
+			}
+		} else if (!_art.isNull()) {
 			p.save();
 			p.setClipPath(path);
 			const auto ratio = devicePixelRatioF();
@@ -3219,8 +3287,8 @@ private:
 		if (playing) {
 			// Три столбика «играет».
 			p.setPen(Qt::NoPen);
-			p.setBrush(Qt::white);
-			const auto scale = [&](int value) { return popular ? listMetric(value) : value; };
+			p.setBrush(album ? st::windowActiveTextFg->c : QColor(Qt::white));
+			const auto scale = [&](int value) { return (album || popular) ? listMetric(value) : value; };
 			const auto base = art.center().y() + scale(9);
 			const auto left = art.center().x() - scale(10);
 			const auto step = scale(8);
@@ -3249,8 +3317,8 @@ private:
 		const auto titleRect = listTextRect(true);
 		auto subtitleRect = listTextRect(false);
 		p.setFont(_titleFont);
-		p.setPen((popular && isDisabled()) ? st::windowSubTextFg
-			: (playing && !detail && _mode != RowMode::QueueCurrent)
+		p.setPen(((album || popular) && isDisabled()) ? st::windowSubTextFg
+			: (playing && !album && !detail && _mode != RowMode::QueueCurrent)
 			? st::windowActiveTextFg
 			: st::windowFg);
 		p.drawText(
@@ -3259,7 +3327,7 @@ private:
 			_titleFont->elided(_track.title, titleRect.width()));
 		p.setFont(st::normalFont);
 		p.setPen(st::windowSubTextFg);
-		if ((popular && !isDisabled()) || (_moreArtists && CanPlayTrack(_track))) {
+		if (((album || popular) && !isDisabled()) || (_moreArtists && CanPlayTrack(_track))) {
 			if (!subtitleRect.isEmpty()) {
 				paintArtistLinks(p, subtitleRect);
 			}
@@ -3267,7 +3335,7 @@ private:
 		}
 		const auto item = TrackMessage(_track);
 		const auto subtitle = !CanPlayTrack(_track)
-			? (popular ? QString() : _track.artist + u" · "_q)
+			? ((album || popular) ? QString() : _track.artist + u" · "_q)
 				+ QString::fromUtf8(Mokagram::Lang::Tr("Недоступен для воспроизведения"))
 			: item
 			? _track.artist + u" · "_q + item->history()->peer->name()
@@ -3332,6 +3400,7 @@ private:
 	QString _playsText;
 	RowMode _mode;
 	style::font _titleFont;
+	QString _trackNumber;
 	const int _queueIndex;
 	bool _queueDragging = false;
 	std::shared_ptr<std::vector<Track>> _results;
@@ -5326,7 +5395,7 @@ protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		if (_layout == HomeLoadingLayout::TrackList) {
-			return s(56) + kTrackPlaceholders * s(kRowHeight);
+			return s(56) + 2 * s(kTrackGroupPadding) + kTrackPlaceholders * s(kAlbumTrackHeight);
 		}
 		return s(56) + s(kHomeCardDetailsHeight) + s(kHomeCardGap)
 			+ HomeShelfCardWidth(newWidth);
@@ -5403,23 +5472,35 @@ private:
 	void paintTrackPlaceholders(QPainter &p, const QRegion &dirty, int top) const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto side = s(BoxParts::kOuterSide);
-		const auto pitch = s(kRowHeight);
-		const auto artSize = s(kArtSize);
-		const auto left = s(26) + artSize + s(16);
-		const auto textWidth = std::min(std::max(width() - left - s(26), 0), s(400));
+		const auto pitch = s(kAlbumTrackHeight);
+		const auto padding = s(kTrackGroupPadding);
+		const auto rowLeft = side + s(kTrackGroupInset);
+		const auto leadWidth = s(kAlbumTrackLeadWidth);
+		const auto leadLeft = rowLeft + s(kAlbumTrackLeadingInset);
+		const auto left = leadLeft + leadWidth + s(kGroupedTrackTextGap);
+		const auto panel = QRect(side, top, std::max(width() - 2 * side, 0),
+			2 * padding + kTrackPlaceholders * pitch);
+		if (!dirty.intersects(panel)) {
+			return;
+		}
+		BoxParts::PaintCard(p, panel);
+		p.setBrush(st::windowBgOver);
+		const auto durationRight = panel.right() + 1 - s(kTrackGroupInset) - s(kAlbumTrackDurationInset);
+		const auto textRight = durationRight - s(kAlbumTrackDurationColumn) - s(kAlbumTrackActionSize) - s(8);
+		const auto textWidth = std::clamp(textRight - left, 0, s(320));
 		for (auto i = 0; i != kTrackPlaceholders; ++i) {
-			const auto rowTop = top + i * pitch;
-			const auto bounds = QRect(side, rowTop + s(4),
-				std::max(width() - 2 * side, 0), pitch - 2 * s(4));
-			if (!dirty.intersects(bounds)) continue;
-			BoxParts::PaintCard(p, bounds);
-			p.setBrush(st::windowBgOver);
-			p.drawRoundedRect(QRect(s(26), rowTop + (pitch - artSize) / 2,
-				artSize, artSize), s(8), s(8));
-			p.drawRoundedRect(QRect(left, rowTop + pitch / 2 - s(17),
-				textWidth * (3 - i) / 4, s(10)), s(5), s(5));
-			p.drawRoundedRect(QRect(left, rowTop + pitch / 2 + s(7),
-				textWidth / 3, s(8)), s(4), s(4));
+			const auto rowTop = top + padding + i * pitch;
+			if (!dirty.intersects(QRect(panel.x(), rowTop, panel.width(), pitch))) {
+				continue;
+			}
+			const auto center = rowTop + pitch / 2;
+			const auto radius = s(4);
+			p.drawRoundedRect(QRect(leadLeft + (leadWidth - s(12)) / 2,
+				center - s(4), s(12), s(8)), radius, radius);
+			p.drawRoundedRect(QRect(left, center - s(5),
+				textWidth * (4 - i) / 4, s(10)), radius, radius);
+			p.drawRoundedRect(QRect(durationRight - s(28),
+				center - s(4), s(28), s(8)), radius, radius);
 		}
 	}
 
@@ -8689,7 +8770,8 @@ protected:
 			? height() - layout.contentBottom
 			: 0;
 		_tabContent->setPadding(QMargins(0, 0, 0, bottomPadding));
-		const auto scrollWidth = artistPage
+		const auto albumPage = home && _homeAlbumOpen && !_homeAlbumIsTrack;
+		const auto scrollWidth = (artistPage || albumPage)
 			? std::min(layout.center.width(), s(1000))
 			: layout.center.width();
 		_tabScroll->setGeometry(
@@ -10181,18 +10263,22 @@ protected:
 			auto resultIndex = 0;
 			const auto count = (visibleLimit < 0)
 				? int(tracks.size()) : std::min(int(tracks.size()), visibleLimit);
-			const auto popular = (mode == RowMode::ArtistPopular);
+			const auto grouped = (mode == RowMode::ArtistPopular || mode == RowMode::AlbumTrack);
 			const auto s = [](int value) { return style::ConvertScale(value); };
 			const auto side = s(BoxParts::kOuterSide);
-			const auto list = popular
+			const auto list = grouped
 				? _tabList->add(object_ptr<Ui::VerticalLayout>(_tabList), QMargins(side, 0, side, 0))
 				: _tabList;
-			if (popular) {
+			if (grouped) {
 				list->paintOn([=](QPainter &p) { BoxParts::PaintCard(p, list->rect()); });
 			}
-			const auto hiddenArtist = popular
+			const auto hiddenArtist = (mode == RowMode::ArtistPopular)
 				? QStringView(_homeArtistProfile.name).trimmed()
+				: (mode == RowMode::AlbumTrack)
+				? QStringView(_homeAlbum.artist).trimmed()
 				: QStringView();
+			const auto inset = s(kTrackGroupInset);
+			const auto padding = s(kTrackGroupPadding);
 			for (auto i = 0; i != count; ++i) {
 				const auto index = CanPlayTrack(tracks[i]) ? resultIndex++ : -1;
 				const auto row = list->add(object_ptr<Row>(
@@ -10204,8 +10290,8 @@ protected:
 					playable,
 					index,
 					nullptr,
-					playlistId), popular
-						? QMargins(s(8), i == 0 ? s(6) : 0, s(8), i + 1 == count ? s(6) : 0)
+					playlistId), grouped
+						? QMargins(inset, i == 0 ? padding : 0, inset, i + 1 == count ? padding : 0)
 						: QMargins());
 				setResultTrackLinks(row, hiddenArtist);
 			}
@@ -10337,7 +10423,7 @@ protected:
 								});
 							})), QMargins(s(14), s(20), s(14), s(8)));
 						if (_homeArtistLikesOpen) {
-							if (!artistLikes.empty()) addRows(artistLikes, RowMode::Album);
+							if (!artistLikes.empty()) addRows(artistLikes, RowMode::Detail);
 							if (!likedReleases.empty()) {
 								_tabList->add(object_ptr<HomeMixedGrid>(
 									_tabList, _controller, std::vector<Track>(), likedReleases,
@@ -10389,7 +10475,7 @@ protected:
 					}
 				} else if (!_homeAlbumTracks.empty()) {
 					_tabList->add(object_ptr<HomeShelfHeader>(_tabList, tr("Треки")));
-					addRows(_homeAlbumTracks, RowMode::Album);
+					addRows(_homeAlbumTracks, _homeAlbumIsTrack ? RowMode::Detail : RowMode::AlbumTrack);
 				}
 				if (!_homeArtistAlbums.empty() || !_homeArtistTracks.empty()) {
 					_tabList->add(object_ptr<HomeShelfHeader>(
