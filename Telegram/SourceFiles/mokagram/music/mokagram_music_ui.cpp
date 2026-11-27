@@ -133,6 +133,8 @@
 #include <QtCore/QLocale>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QSignalBlocker>
+#include <QtCore/QVariantAnimation>
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
 #include <QtGui/QContextMenuEvent>
@@ -7968,6 +7970,19 @@ public:
 		}
 		_queueContent = _queueScroll->setOwnedWidget(
 			object_ptr<Ui::VerticalLayout>(_queueScroll));
+		const auto queueViewport = _queueScroll->viewport();
+		_queueEdgeFade = new QGraphicsOpacityEffect(queueViewport);
+		_queueEdgeFade->setOpacity(1.);
+		_queueEdgeFade->setEnabled(false);
+		queueViewport->setGraphicsEffect(_queueEdgeFade);
+		_queueScroll->scrollTopChanges() | rpl::on_next([=] {
+			updateQueueEdgeFade();
+		}, lifetime());
+		_queueSlide.setEasingCurve(QEasingCurve::InOutCubic);
+		connect(&_queueSlide, &QVariantAnimation::valueChanged, this, [=](const QVariant &value) {
+			_queueProgress = value.toDouble();
+			relayout();
+		});
 		const auto addLabel = [&](QString text, const style::FlatLabel &style, QMargins padding) {
 			return _queueContent->add(object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
 				_queueContent, object_ptr<Ui::FlatLabel>(_queueContent, std::move(text), style),
@@ -8669,8 +8684,7 @@ protected:
 			std::clamp(windowWidth / 4, s(280), s(360)));
 		const auto panelWidth = std::min(queueWidth, std::max((windowWidth - 3 * margin) / 2, 0));
 		const auto queueLeft = windowWidth - margin - panelWidth;
-		const auto queueProgress = _queueSlide.unitValue(_queuePanelOpen ? 1. : 0.);
-		const auto contentRight = windowWidth - margin - qRound((panelWidth + gap) * queueProgress);
+		const auto contentRight = windowWidth - margin - qRound((panelWidth + gap) * _queueProgress);
 		const auto contentWidth = std::max(contentRight - margin, 0);
 
 		const auto barHeight = s(kBarHeight);
@@ -8957,7 +8971,9 @@ protected:
 		if (_searchEmptySticker) {
 			_searchEmptySticker->setGeometry(searchHintGeometry(layout));
 		}
-		_tabContent->resizeToWidth(_tabScroll->width());
+		if (_tabContent->width() != _tabScroll->width()) {
+			_tabContent->resizeToWidth(_tabScroll->width());
+		}
 		updateHomeArtistBar();
 
 		// Навигация: ряд пилюль сверху по центру.
@@ -9090,12 +9106,11 @@ protected:
 
 	void layoutQueuePanel() {
 		const auto &target = _queuePanelTarget;
-		const auto progress = _queueSlide.unitValue(_queuePanelOpen ? 1. : 0.);
-		if (target.isEmpty() || (!_queuePanelOpen && progress <= 0.)) {
+		if (target.isEmpty() || (!_queuePanelOpen && _queueProgress <= 0.)) {
 			_queuePanel->hide();
 			return;
 		}
-		const auto offset = int(base::SafeRound((width() - target.x()) * (1. - progress)));
+		const auto offset = qRound((width() - target.x()) * (1. - _queueProgress));
 		const auto geometry = target.translated(offset, 0);
 		const auto resize = (_queuePanel->size() != target.size());
 		if (_queuePanel->geometry() != geometry) {
@@ -9126,17 +9141,37 @@ protected:
 			if (_queueContent->width() != _queueScroll->width()) {
 				_queueContent->resizeToWidth(_queueScroll->width());
 			}
+			updateQueueEdgeFade();
 		}
 		if (_queuePanel->isHidden()) {
 			_queuePanel->show();
 		}
 	}
 
+	void updateQueueEdgeFade() {
+		const auto height = _queueScroll->viewport()->height();
+		const auto depth = std::min(style::ConvertScale(14), height / 2);
+		const auto top = _queueScroll->scrollTop();
+		const auto above = top > 0;
+		const auto below = top < _queueScroll->scrollTopMax();
+		_queueEdgeFade->setEnabled(depth > 0 && (above || below));
+		if (!_queueEdgeFade->isEnabled()) return;
+
+		const auto fraction = depth / double(height);
+		auto mask = QLinearGradient(0., 0., 0., height);
+		mask.setColorAt(0., above ? Qt::transparent : Qt::black);
+		mask.setColorAt(fraction, Qt::black);
+		mask.setColorAt(1. - fraction, Qt::black);
+		mask.setColorAt(1., below ? Qt::transparent : Qt::black);
+		_queueEdgeFade->setOpacityMask(QBrush(mask));
+	}
+
 	void setQueuePanelOpen(bool open) {
 		if (_queuePanelOpen == open) {
 			return;
 		}
-		const auto from = _queuePanelOpen ? 1. : 0.;
+		const auto from = _queueProgress;
+		const auto to = open ? 1. : 0.;
 		_queuePanelOpen = open;
 		if (!open) {
 			stopQueueAdvance();
@@ -9149,7 +9184,15 @@ protected:
 				_queueToggle->setFocus();
 			}
 		}
-		_queueSlide.start(from, open ? 1. : 0., kSpatial);
+		{
+			const auto block = QSignalBlocker(&_queueSlide);
+			_queueSlide.stop();
+			_queueSlide.setDuration(std::max(120, qRound(360 * std::abs(to - from))));
+			_queueSlide.setStartValue(from);
+			_queueSlide.setEndValue(to);
+			_queueSlide.setCurrentTime(0);
+		}
+		_queueSlide.start();
 		relayout();
 		if (open) {
 			refreshQueuePanel();
@@ -11316,6 +11359,7 @@ protected:
 				: _queueHistory ? "Нет недавно прослушанных треков" : "Нет следующих треков"));
 		}
 		_queueContent->resizeToWidth(_queueScroll->width());
+		updateQueueEdgeFade();
 		if (!advance.outgoing.isNull()) {
 			_queueAdvanceListShift = (advance.nextTop >= 0 && _queueList->count())
 				? std::max(advance.nextTop - _queueList->y() - _queueList->widgetAt(0)->y(), 0)
@@ -12096,6 +12140,7 @@ private:
 	const not_null<Ui::ScrollArea*> _tabScroll;
 	const not_null<Ui::RpWidget*> _queuePanel;
 	const not_null<Ui::ScrollArea*> _queueScroll;
+	QGraphicsOpacityEffect *_queueEdgeFade = nullptr;
 	Ui::RpWidget *_queueTabBar = nullptr;
 	std::array<NavItem*, 2> _queueTabs = {};
 	PlayerSpring _queueTabSlide{ [this] { _queueTabBar->update(); } };
@@ -12117,7 +12162,8 @@ private:
 	bool _queueHistory = false;
 	bool _queuePanelOpen = false;
 	QRect _queuePanelTarget;
-	PlayerSpring _queueSlide{ [this] { relayout(); } };
+	QVariantAnimation _queueSlide;
+	double _queueProgress = 0.;
 	PlaybackBarColors _playbackColors = MakePlaybackBarColors();
 	QColor _playbackBarAccent;
 	const not_null<Ui::RpWidget*> _playbackBar;
