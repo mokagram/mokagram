@@ -9,6 +9,7 @@ mokaGram (27.11.26)
 - Make Music backgrounds, lyrics, navigation and track lists readable in the light theme.
 - Keep the chat folders sidebar behind the fullscreen music player when resizing the window.
 - Use a readable theme surface and accent for the chat translation bar.
+- Group Music search results and the Now Playing queue into readable track lists.
 
 mokaGram (26.11.26)
 

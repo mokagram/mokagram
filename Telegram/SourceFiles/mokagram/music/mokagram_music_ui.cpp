@@ -277,8 +277,9 @@ constexpr auto kGroupedTrackActionSize = 40;
 constexpr auto kCoverFadeDuration = crl::time(320);
 constexpr auto kTypingDelay = crl::time(400);
 constexpr auto kArtSize = 56;
-constexpr auto kCatalogRowHeight = 64;
-constexpr auto kCatalogArtSize = 48;
+constexpr auto kGroupedTrackMenuInset = 56;
+constexpr auto kMusicListMaxWidth = 1000;
+constexpr auto kMusicListGap = 8;
 constexpr auto kFeaturedArtistHeight = 96;
 constexpr auto kFeaturedArtistArtSize = 64;
 constexpr auto kFeaturedArtistButtonWidth = 112;
@@ -1906,6 +1907,10 @@ private:
 		: st::windowSubTextFg->c;
 }
 
+[[nodiscard]] QColor MusicSelectionColor() {
+	return anim::color(st::windowBgOver->c, st::windowBgActive->c, .30);
+}
+
 [[nodiscard]] QColor MusicCardColor() {
 	return IsLightMusicTheme()
 		? anim::color(st::windowBg->c, st::windowBgOver->c, .65)
@@ -2405,6 +2410,50 @@ void PaintMusicCard(QPainter &p, QRect rect) {
 	PaintHomeSurface(p, rect, 0., false, false);
 }
 
+class MusicTrackList final : public Ui::VerticalLayout {
+public:
+	explicit MusicTrackList(QWidget *parent) : VerticalLayout(parent) {
+		paintOn([this](QPainter &p) { PaintMusicCard(p, rect()); });
+	}
+};
+
+[[nodiscard]] MusicTrackList *AddMusicTrackList(Ui::VerticalLayout *parent, int top = 0) {
+	const auto side = style::ConvertScale(BoxParts::kOuterSide);
+	return parent->add(object_ptr<MusicTrackList>(parent), QMargins(side, top, side, 0));
+}
+
+void PaintTrackListState(QPainter &p, const Ui::AbstractButton &row, bool selected) {
+	const auto over = row.isOver();
+	const auto down = row.isDown();
+	const auto focused = row.hasFocus();
+	if (row.isDisabled() || !(selected || over || down || focused)) {
+		return;
+	}
+	const auto panelHeight = row.parentWidget()->height();
+	const auto first = (row.y() == 0);
+	const auto last = (row.y() + row.height() == panelHeight);
+	const auto radius = std::min(style::ConvertScale(BoxParts::kCardRadius), panelHeight / 2);
+	if (selected || over || down) {
+		const auto fill = HomeSurfaceColor(over ? 1. : 0., down, selected);
+		if (first || last) {
+			// The row clips the extended ends, leaving only the panel corners rounded.
+			const auto surface = row.rect().adjusted(0, first ? 0 : -radius, 0, last ? 0 : radius);
+			p.setPen(Qt::NoPen);
+			p.setBrush(fill);
+			p.drawRoundedRect(surface, radius, radius);
+		} else {
+			p.fillRect(row.rect(), fill);
+		}
+	}
+	if (focused) {
+		const auto inset = style::ConvertScale(4);
+		const auto corner = (first || last) ? std::max(radius - inset, 0) : style::ConvertScale(8);
+		p.setPen(QPen(st::windowActiveTextFg->c, style::ConvertScale(2)));
+		p.setBrush(Qt::NoBrush);
+		p.drawRoundedRect(row.rect().adjusted(inset, inset, -inset, -inset), corner, corner);
+	}
+}
+
 void PaintHomeCover(QPainter &p, const QRect &rect, const QImage &art) {
 	const auto radius = style::ConvertScale(BoxParts::kCardRadius - kHomeCardInset);
 	auto clip = QPainterPath();
@@ -2702,7 +2751,7 @@ enum class RowMode {
 	QueueCurrent, QueueUpcoming, QueueHistory,
 };
 
-[[nodiscard]] bool IsGroupedTrackRow(RowMode mode) {
+[[nodiscard]] bool IsDetailTrackRow(RowMode mode) {
 	return mode == RowMode::DetailTrack || mode == RowMode::AlbumTrack;
 }
 
@@ -2712,7 +2761,7 @@ public:
 		if (_mode == RowMode::Home) {
 			_hoverFade.set(isOver() || isDown(), [=] { update(); });
 		}
-		if (_mode == RowMode::Home || IsGroupedTrackRow(_mode)) {
+		if (_mode == RowMode::Home || _grouped) {
 			update();
 		}
 	}
@@ -2731,7 +2780,8 @@ public:
 	: AbstractButton(parent)
 	, _track(track)
 	, _mode(mode)
-	, _titleFont(IsGroupedTrackRow(mode)
+	, _grouped(dynamic_cast<MusicTrackList*>(parent) != nullptr)
+	, _titleFont(_grouped
 		? style::font(
 			style::ConvertScale(16),
 			st::semiboldFont->flags(),
@@ -2742,8 +2792,7 @@ public:
 	, _results(std::move(results))
 	, _homePlaybackControls(homePlaybackControls)
 	, _playlistId(std::move(playlistId)) {
-		const auto grouped = IsGroupedTrackRow(mode);
-		resize(width(), listMetric(grouped ? kGroupedTrackHeight : kRowHeight));
+		resize(width(), listMetric(_grouped ? kGroupedTrackHeight : kRowHeight));
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
 		if (mode == RowMode::Results) {
@@ -2757,7 +2806,7 @@ public:
 		}
 		const auto unavailable = !CanPlayTrack(_track);
 		const auto unavailableText = QString::fromUtf8(Mokagram::Lang::Tr("Недоступен для воспроизведения"));
-		if (_mode != RowMode::Home && !grouped
+		if (_mode != RowMode::Home && !IsDetailTrackRow(mode)
 			&& _mode != RowMode::QueueCurrent && _mode != RowMode::QueueUpcoming
 			&& _mode != RowMode::QueueHistory
 			&& !_track.videoId.isEmpty() && _track.playbackCount > 0) {
@@ -2773,7 +2822,7 @@ public:
 			setToolTip(unavailableText);
 		} else if (!IsTelegramTrack(_track)) {
 			_likeButton = Ui::CreateChild<TrackLikeButton>(
-				this, controller, _track, grouped);
+				this, controller, _track, _grouped);
 		}
 		if (_mode != RowMode::Home) {
 			_equalizerTimer.setInterval(33);
@@ -2929,16 +2978,6 @@ public:
 		layoutTextLinks();
 	}
 
-	// Строка лежит на цветном фоне плеера: подсветка белым с прозрачностью, а не серым.
-	void setOnGlass(bool glass) {
-		_glass = glass;
-		update();
-	}
-
-	void setCatalogStyle() {
-		_catalogStyle = true;
-		resize(width(), style::ConvertScale(kCatalogRowHeight));
-	}
 
 private:
 	void playRecent() const {
@@ -2999,35 +3038,35 @@ private:
 	}
 
 	[[nodiscard]] int listMetric(int value) const {
-		return (_catalogStyle || IsGroupedTrackRow(_mode))
+		return _grouped
 			? style::ConvertScale(value)
 			: value;
 	}
 
 	[[nodiscard]] QRect listLeadingRect() const {
-		if (IsGroupedTrackRow(_mode)) {
+		if (_grouped) {
 			const auto side = listMetric(kGroupedTrackLeadWidth);
 			return QRect(listMetric(kGroupedTrackLeadingInset), (height() - side) / 2, side, side);
 		}
-		const auto side = _catalogStyle
-			? style::ConvertScale(kCatalogArtSize)
-			: listMetric(kArtSize);
+		const auto side = listMetric(kArtSize);
 		return QRect(listMetric(20), (height() - side) / 2, side, side);
 	}
 
 	[[nodiscard]] int durationRight() const {
-		return width() - listMetric(IsGroupedTrackRow(_mode)
-			? kGroupedTrackDurationInset
-			: _menuButton ? 72 : 24);
+		const auto inset = _grouped
+			? (_menuButton ? kGroupedTrackMenuInset : kGroupedTrackDurationInset)
+			: (_menuButton ? 72 : 24);
+		return width() - listMetric(inset);
 	}
 
 	[[nodiscard]] QRect listTextRect(bool title) const {
-		if (IsGroupedTrackRow(_mode)) {
+		if (_grouped) {
 			const auto art = listLeadingRect();
 			const auto left = art.x() + art.width() + listMetric(kGroupedTrackTextGap);
 			const auto right = heartRect().x() - listMetric(8);
 			const auto titleHeight = _titleFont->height;
-			const auto subtitleHeight = (isDisabled() || !_artistNames.empty())
+			const auto subtitleHeight = (isDisabled() || !_artistNames.empty()
+				|| (!IsDetailTrackRow(_mode) && !_track.artist.isEmpty()))
 				? st::normalFont->height
 				: 0;
 			const auto top = (height() - titleHeight - subtitleHeight) / 2;
@@ -3040,7 +3079,7 @@ private:
 			: heartRect().left() - listMetric(12);
 		return QRect(
 			left,
-			height() / 2 + listMetric(title ? (_catalogStyle ? -20 : -24) : (_catalogStyle ? 0 : 2)),
+			height() / 2 + listMetric(title ? -24 : 2),
 			std::max(right - left, 0),
 			listMetric(title ? 22 : 20));
 	}
@@ -3125,7 +3164,7 @@ private:
 			const auto side = style::ConvertScale(28);
 			return QRect(width() - inset - side, height() - inset - side, side, side);
 		}
-		if (IsGroupedTrackRow(_mode)) {
+		if (_grouped) {
 			const auto side = listMetric(kGroupedTrackActionSize);
 			return QRect(durationRight() - listMetric(kGroupedTrackDurationColumn) - side,
 				(height() - side) / 2, side, side);
@@ -3219,34 +3258,6 @@ private:
 		popup();
 	}
 
-	void paintGroupedTrackState(QPainter &p, bool selected) const {
-		if (isDisabled() || !(selected || isOver() || isDown() || hasFocus())) {
-			return;
-		}
-		const auto panelHeight = parentWidget()->height();
-		const auto first = (y() == 0);
-		const auto last = (y() + height() == panelHeight);
-		const auto radius = std::min(listMetric(BoxParts::kCardRadius), panelHeight / 2);
-		if (selected || isOver() || isDown()) {
-			const auto fill = HomeSurfaceColor(isOver() ? 1. : 0., isDown(), selected);
-			if (first || last) {
-				// The widget clips the extended ends, leaving only the panel corners rounded.
-				const auto surface = rect().adjusted(0, first ? 0 : -radius, 0, last ? 0 : radius);
-				p.setPen(Qt::NoPen);
-				p.setBrush(fill);
-				p.drawRoundedRect(surface, radius, radius);
-			} else {
-				p.fillRect(rect(), fill);
-			}
-		}
-		if (hasFocus()) {
-			const auto inset = listMetric(4);
-			const auto corner = (first || last) ? std::max(radius - inset, 0) : listMetric(8);
-			p.setPen(QPen(st::windowActiveTextFg->c, listMetric(2)));
-			p.setBrush(Qt::NoBrush);
-			p.drawRoundedRect(rect().adjusted(inset, inset, -inset, -inset), corner, corner);
-		}
-	}
 
 	void paint(QRect area) {
 		auto p = QPainter(this);
@@ -3263,20 +3274,18 @@ private:
 		}
 		const auto playing = selected;
 		const auto over = isOver() || isDown();
-		const auto grouped = IsGroupedTrackRow(_mode);
+		const auto grouped = _grouped;
 		const auto album = (_mode == RowMode::AlbumTrack);
 		if (grouped) {
-			paintGroupedTrackState(p, playing);
+			PaintTrackListState(p, *this, playing);
 		} else {
 			const auto inset = listMetric(8);
 			const auto verticalInset = listMetric(4);
 			const auto bounds = rect().marginsRemoved({
 				inset, verticalInset, inset, verticalInset });
-			if (playing || over) {
+			if (!isDisabled() && (playing || over)) {
 				p.setPen(Qt::NoPen);
-				p.setBrush(_glass
-					? QColor(255, 255, 255, playing ? 34 : 20)
-					: st::windowBgOver->c);
+				p.setBrush(st::windowBgOver);
 				const auto radius = listMetric(12);
 				p.drawRoundedRect(bounds, radius, radius);
 			}
@@ -3371,7 +3380,7 @@ private:
 			_titleFont->elided(_track.title, titleRect.width()));
 		p.setFont(st::normalFont);
 		p.setPen(secondary);
-		if ((grouped && !isDisabled()) || (_moreArtists && CanPlayTrack(_track))) {
+		if ((IsDetailTrackRow(_mode) && !isDisabled()) || (_moreArtists && CanPlayTrack(_track))) {
 			if (!subtitleRect.isEmpty()) {
 				paintArtistLinks(p, subtitleRect);
 			}
@@ -3379,7 +3388,7 @@ private:
 		}
 		const auto item = TrackMessage(_track);
 		const auto subtitle = !CanPlayTrack(_track)
-			? (grouped ? QString() : _track.artist + u" · "_q)
+			? (IsDetailTrackRow(_mode) ? QString() : _track.artist + u" · "_q)
 				+ QString::fromUtf8(Mokagram::Lang::Tr("Недоступен для воспроизведения"))
 			: item
 			? _track.artist + u" · "_q + item->history()->peer->name()
@@ -3443,16 +3452,15 @@ private:
 	Track _track;
 	QString _playsText;
 	RowMode _mode;
+	const bool _grouped;
 	style::font _titleFont;
 	QString _trackNumber;
 	const int _queueIndex;
 	bool _queueDragging = false;
 	std::shared_ptr<std::vector<Track>> _results;
-	bool _catalogStyle = false;
 	bool _homePlaybackControls = true;
 	TrackLikeButton *_likeButton = nullptr;
 	HomeCardPlayButton *_playButton = nullptr;
-	bool _glass = false;
 	QImage _art;
 	QImage _scaledArt;
 	qint64 _scaledArtKey = 0;
@@ -4599,7 +4607,7 @@ public:
 	, _subtitle(std::move(subtitle))
 	, _artworkStyle(artworkStyle) {
 		resize(width(), style::ConvertScale(
-			play ? kFeaturedArtistHeight : kCatalogRowHeight));
+			play ? kFeaturedArtistHeight : kGroupedTrackHeight));
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
 		auto accessible = QStringList{ _title, _subtitle, std::move(type) };
@@ -4610,7 +4618,7 @@ public:
 			_play = Ui::CreateChild<Ui::RoundButton>(
 				this,
 				rpl::single(PlaylistText("Слушать")),
-				BoxParts::PillActive());
+				BoxParts::PillLight());
 			_play->setFocusPolicy(Qt::TabFocus);
 			_play->setClickedCallback([=] { play(_play); });
 		}
@@ -4638,6 +4646,10 @@ public:
 	}
 
 protected:
+	void onStateChanged(State, StateChangeSource) override {
+		update();
+	}
+
 	void resizeEvent(QResizeEvent *event) override {
 		AbstractButton::resizeEvent(event);
 		if (_play) {
@@ -4650,20 +4662,13 @@ protected:
 		auto p = QPainter(this);
 		const auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int value) { return style::ConvertScale(value); };
-		const auto bounds = rect().adjusted(s(8), s(4), -s(8), -s(4));
-		const auto radius = s(_play ? 22 : 12);
-		if (_play || isOver() || isDown()) {
-			p.setPen(Qt::NoPen);
-			p.setBrush((isOver() || isDown()) ? st::windowBgOver : st::windowBg);
-			p.drawRoundedRect(bounds, radius, radius);
+		if (_play) {
+			PaintHomeSurface(p, rect(), isOver() ? 1. : 0., isDown(), hasFocus());
+		} else {
+			PaintTrackListState(p, *this, false);
 		}
-		if (hasFocus()) {
-			p.setPen(QPen(st::windowActiveTextFg->c, s(2)));
-			p.setBrush(Qt::NoBrush);
-			p.drawRoundedRect(bounds, radius, radius);
-		}
-		const auto side = s(_play ? kFeaturedArtistArtSize : kCatalogArtSize);
-		const auto art = QRect(s(_play ? 24 : 20), (height() - side) / 2, side, side);
+		const auto side = s(_play ? kFeaturedArtistArtSize : kGroupedTrackLeadWidth);
+		const auto art = QRect(s(kGroupedTrackLeadingInset), (height() - side) / 2, side, side);
 		const auto release = (_artworkStyle == CatalogArtwork::Release);
 		if (release) {
 			if (_startBackdropLoad) {
@@ -4699,23 +4704,24 @@ protected:
 		}
 		p.restore();
 
-		const auto left = art.right() + s(16);
+		const auto left = art.x() + art.width() + s(kGroupedTrackTextGap);
 		const auto right = _play ? _play->x() : width();
 		const auto available = std::max(right - left - s(14), 0);
 		auto titleFont = st::semiboldFont->f;
-		if (_play) {
-			titleFont.setPixelSize(s(22));
-		}
+		const auto titleHeight = s(_play ? 26 : 20);
+		const auto subtitleHeight = _subtitle.isEmpty() ? 0 : s(18);
+		titleFont.setPixelSize(s(_play ? 22 : 16));
+		const auto top = (height() - titleHeight - subtitleHeight) / 2;
 		p.setFont(titleFont);
 		p.setPen(st::windowFg);
 		p.drawText(
-			QRect(left, height() / 2 - s(_play ? 25 : 20), available, s(_play ? 26 : 22)),
+			QRect(left, top, available, titleHeight),
 			Qt::AlignVCenter,
 			QFontMetrics(titleFont).elidedText(_title, Qt::ElideRight, available));
 		p.setFont(st::normalFont);
-		p.setPen(st::windowSubTextFg);
+		p.setPen(MusicSecondaryColor());
 		p.drawText(
-			QRect(left, height() / 2, available, s(20)),
+			QRect(left, top + titleHeight, available, subtitleHeight),
 			Qt::AlignVCenter,
 			st::normalFont->elided(_subtitle, available));
 	}
@@ -7373,18 +7379,18 @@ protected:
 		const auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int value) { return style::ConvertScale(value); };
 		const auto catalog = _category.has_value();
-		const auto rowHeight = catalog ? s(kCatalogRowHeight) : kRowHeight;
+		const auto rowHeight = s(kGroupedTrackHeight);
 		const auto featured = _category == SearchCategory::All;
-		const auto featuredHeight = featured ? s(kFeaturedArtistHeight) : 0;
-		const auto artSize = catalog ? s(kCatalogArtSize) : kArtSize;
+		const auto featuredHeight = featured ? s(kFeaturedArtistHeight) + s(kMusicListGap) : 0;
+		const auto artSize = s(kGroupedTrackLeadWidth);
 		const auto hasTrackActions = !_category
 			|| featured
 			|| _category == SearchCategory::Tracks;
 		const auto hasMenu = catalog || !_collection;
-		const auto durationRight = width() - s(hasMenu ? 72 : 24);
-		const auto actionsLeft = durationRight - s(78);
-		const auto textRight = hasTrackActions ? actionsLeft : width() - s(14);
-		const auto left = s(20) + artSize + s(16) - 1;
+		const auto durationRight = width() - s(hasMenu ? kGroupedTrackMenuInset : kGroupedTrackDurationInset);
+		const auto actionsLeft = durationRight - s(kGroupedTrackDurationColumn) - s(kGroupedTrackActionSize);
+		const auto textRight = hasTrackActions ? actionsLeft - s(8) : width() - s(14);
+		const auto left = s(kGroupedTrackLeadingInset) + artSize + s(kGroupedTrackTextGap);
 		const auto widths = std::array{ 184, 132, 216, 156, 248, 110, 196 };
 		const auto subWidths = std::array{ 84, 100, 68, 112, 90, 72, 128 };
 		constexpr auto kPulseDuration = crl::time(1700);
@@ -7402,16 +7408,16 @@ protected:
 			p.drawRoundedRect(QRect(x, center - height / 2, width, height),
 				height / 2., height / 2.);
 		};
+		PaintMusicCard(p, rect().adjusted(0, featuredHeight, 0, 0));
+		p.setBrush(base);
 		if (featured && event->rect().top() < featuredHeight) {
-			const auto center = featuredHeight / 2;
+			const auto center = s(kFeaturedArtistHeight) / 2;
 			const auto side = s(kFeaturedArtistArtSize);
-			const auto card = QRect(0, 0, width(), featuredHeight)
-				.adjusted(s(8), s(4), -s(8), -s(4));
-			p.setBrush(st::windowBg);
-			p.drawRoundedRect(card, s(22), s(22));
+			const auto card = QRect(0, 0, width(), s(kFeaturedArtistHeight));
+			PaintMusicCard(p, card);
 			p.setBrush(base);
-			p.drawEllipse(QRect(s(24), center - side / 2, side, side));
-			const auto textLeft = s(24) + side + s(16) - 1;
+			p.drawEllipse(QRect(s(kGroupedTrackLeadingInset), center - side / 2, side, side));
+			const auto textLeft = s(kGroupedTrackLeadingInset + kGroupedTrackTextGap) + side;
 			const auto buttonRight = width() - s(30);
 			const auto buttonLeft = buttonRight - s(kFeaturedArtistButtonWidth);
 			bar(textLeft, center - s(12), buttonLeft - s(14), 174, 14);
@@ -7424,22 +7430,22 @@ protected:
 		auto top = featuredHeight + first * rowHeight;
 		for (auto i = first; top <= event->rect().bottom(); ++i, top += rowHeight) {
 			const auto center = top + rowHeight / 2;
-			const auto art = QRect(s(20), center - artSize / 2, artSize, artSize);
+			const auto art = QRect(s(kGroupedTrackLeadingInset), center - artSize / 2, artSize, artSize);
 			if (_category == SearchCategory::Artists) {
 				p.drawEllipse(art);
 			} else {
 				p.drawRoundedRect(art, s(8), s(8));
 			}
 			const auto index = i % widths.size();
-			bar(left, center - s(catalog ? 9 : 13), textRight, widths[index], 10);
-			bar(left, center + s(catalog ? 10 : 12), textRight, subWidths[index], 8);
+			bar(left, center - s(8), textRight, widths[index], 10);
+			bar(left, center + s(9), textRight, subWidths[index], 8);
 			if (hasTrackActions && actionsLeft >= left + s(32)) {
 				bar(durationRight - s(36), center, durationRight, 36, 8);
 				if (catalog || _collection) {
-					bar(actionsLeft + s(8), center, durationRight, 12, 12);
+					bar(actionsLeft + s(kGroupedTrackActionSize / 2 - 6), center, durationRight, 12, 12);
 				}
 				if (hasMenu) {
-					bar(width() - s(40), center, width() - s(22), 16, 6);
+					bar(width() - s(40), center, width() - s(16), 16, 6);
 				}
 			}
 		}
@@ -7810,7 +7816,7 @@ public:
 			auto hq = PainterHighQualityEnabler(p);
 			p.fillRect(_homeArtistBar->rect(), st::boxBg);
 			const auto side = s(BoxParts::kOuterSide);
-			const auto inner = _homeArtistBar->rect().adjusted(side, 0, -side, 0);
+			const auto inner = _homeArtistBar->rect().adjusted(side, 0, -side, -s(kMusicListGap));
 			PaintMusicCard(p, inner);
 			const auto text = inner.adjusted(s(16), 0, -s(16), 0);
 			p.setFont(st::semiboldFont);
@@ -7989,6 +7995,7 @@ public:
 			repaintPlaybackBar();
 			_seek->update();
 			repaintBackdrop();
+			if (_tab == Tab::Search) relayout();
 		}, lifetime());
 		_coverOverlay->setAttribute(Qt::WA_TransparentForMouseEvents);
 		_coverOverlay->hide();
@@ -8430,7 +8437,8 @@ protected:
 					else if (next < int(_searchResultWidgets.size())) {
 						auto widget = _searchResultWidgets[next];
 						widget->setFocus();
-						_tabScroll->scrollToY(widget->y(), widget->y() + widget->height());
+						const auto top = widget->mapTo(_tabContent, QPoint()).y();
+						_tabScroll->scrollToY(top, top + widget->height());
 					}
 					return true;
 				}
@@ -8847,8 +8855,8 @@ protected:
 			? height() - layout.contentBottom
 			: 0;
 		_tabContent->setPadding(QMargins(0, 0, 0, bottomPadding));
-		const auto scrollWidth = (home && _homeAlbumOpen)
-			? std::min(layout.center.width(), s(1000))
+		const auto scrollWidth = ((home && _homeAlbumOpen) || _tab == Tab::Search || showsQueue())
+			? std::min(layout.center.width(), s(kMusicListMaxWidth))
 			: layout.center.width();
 		_tabScroll->setGeometry(
 			layout.center.x() + (layout.center.width() - scrollWidth) / 2,
@@ -9107,15 +9115,22 @@ protected:
 		if (!_searchFilterAvailable[int(SearchCategory::All)] && !skeleton) {
 			return;
 		}
+		const auto light = IsLightMusicTheme();
+		const auto selected = light ? MusicSelectionColor() : st::activeButtonBg->c;
+		const auto selectedHover = light
+			? anim::color(selected, st::windowFg->c, .06)
+			: st::activeButtonBgOver->c;
+		const auto selectedInk = light ? st::windowFg->c : st::activeButtonFg->c;
 		const auto sheet = u"QPushButton { background: %1; color: %2; border: %7px solid transparent; border-radius: %8px; } "
 			u"QPushButton:hover { background: %3; } QPushButton:pressed { background: %4; } "
 			u"QPushButton:checked { background: %4; color: %5; } "
 			u"QPushButton:checked:hover { background: %6; } "
-			u"QPushButton:focus { border-color: %4; } QPushButton:checked:focus { border-color: %5; }"_q
-			.arg(st::windowBg->c.name(), st::windowFg->c.name(), st::windowBgOver->c.name(),
-				st::activeButtonBg->c.name(), st::activeButtonFg->c.name(), st::activeButtonBgOver->c.name())
+			u"QPushButton:focus { border-color: %9; } QPushButton:checked:focus { border-color: %5; }"_q
+			.arg(st::boxBg->c.name(), st::windowFg->c.name(), st::windowBgOver->c.name(),
+				selected.name(), selectedInk.name(), selectedHover.name())
 			.arg(s(2))
-			.arg(s(16));
+			.arg(s(16))
+			.arg(st::windowActiveTextFg->c.name());
 		const auto wrap = catalogFiltersWrap(area.width());
 		auto x = left;
 		auto y = area.y() + catalogFiltersTop(area.width());
@@ -9263,7 +9278,8 @@ protected:
 		_trackArtistsMenu->popup(QCursor::pos());
 	}
 
-	void addCatalogArtist(const ArtistInfo &artist, bool featured) {
+	void addCatalogArtist(const ArtistInfo &artist, MusicTrackList *results = nullptr) {
+		const auto featured = (results == nullptr);
 		auto play = Fn<void(not_null<Ui::RoundButton*>)>();
 		if (featured) {
 			play = [=](not_null<Ui::RoundButton*> button) {
@@ -9281,8 +9297,10 @@ protected:
 				}));
 			};
 		}
-		_tabList->add(object_ptr<CatalogEntityRow>(
-			_tabList,
+		const auto list = featured ? _tabList : results;
+		const auto side = style::ConvertScale(BoxParts::kOuterSide);
+		list->add(object_ptr<CatalogEntityRow>(
+			list,
 			artist.name,
 			PlaylistText("Исполнитель"),
 			QString(),
@@ -9291,7 +9309,7 @@ protected:
 			crl::guard(this, [=] {
 				showArtistProfile(artist);
 			}),
-			std::move(play)));
+			std::move(play)), featured ? QMargins(side, 0, side, style::ConvertScale(kMusicListGap)) : QMargins());
 	}
 
 	void fillCatalogResults() {
@@ -9310,7 +9328,7 @@ protected:
 				}
 			}
 			if (featured) {
-				addCatalogArtist(*featured, true);
+				addCatalogArtist(*featured);
 			}
 		}
 
@@ -9322,11 +9340,14 @@ protected:
 		}
 		QueueState().results = *playable;
 		auto index = 0;
+		if (featured && _catalogItems.size() == 1) {
+			return;
+		}
+		const auto list = AddMusicTrackList(_tabList);
 		for (const auto &item : _catalogItems) {
 			if (const auto track = std::get_if<Track>(&item)) {
-				const auto row = _tabList->add(object_ptr<Row>(
-					_tabList, _controller, *track, index, RowMode::Results, playable, index));
-				row->setCatalogStyle();
+				const auto row = list->add(object_ptr<Row>(
+					list, _controller, *track, index, RowMode::Results, playable, index));
 				setResultTrackLinks(row);
 				++index;
 			} else if (const auto album = std::get_if<Album>(&item)) {
@@ -9341,8 +9362,8 @@ protected:
 					return QString();
 				}();
 				const auto playlist = (album->releaseKind == ReleaseKind::Unknown);
-				const auto row = _tabList->add(object_ptr<CatalogEntityRow>(
-					_tabList,
+				const auto row = list->add(object_ptr<CatalogEntityRow>(
+					list,
 					album->title,
 					album->artist,
 					type,
@@ -9354,7 +9375,7 @@ protected:
 					InstallAlbumContextMenu(row, _controller, *album);
 				}
 			} else if (const auto artist = std::get_if<ArtistInfo>(&item); artist && artist != featured) {
-				addCatalogArtist(*artist, false);
+				addCatalogArtist(*artist, list);
 			}
 		}
 	}
@@ -9759,7 +9780,10 @@ protected:
 
 	[[nodiscard]] NavColors navColors() {
 		const auto plainTrack = st::windowBgOver->c;
-		const auto plainSelected = st::windowActiveTextFg->c;
+		const auto light = IsLightMusicTheme();
+		const auto plainSelected = light
+			? MusicSelectionColor()
+			: st::windowActiveTextFg->c;
 		const auto detail = homeDetailAccent();
 		const auto accent = detail.isValid() ? detail : _accent;
 		if (!accent.isValid()) {
@@ -9768,7 +9792,7 @@ protected:
 		const auto plain = detail.isValid() ? 0. : _plainAnim.unitValue(_tab == Tab::Now ? 0. : 1.);
 		return {
 			anim::color(TintedNavTrack(accent), plainTrack, plain),
-			IsLightMusicTheme() ? plainSelected : anim::color(accent, plainSelected, plain),
+			light ? plainSelected : anim::color(accent, plainSelected, plain),
 		};
 	}
 
@@ -9980,7 +10004,7 @@ protected:
 		if (opacity <= 0.) return;
 
 		const auto width = _tabScroll->viewport()->width();
-		_homeArtistBar->setGeometry(0, 0, width, height);
+		_homeArtistBar->setGeometry(0, 0, width, height + s(kMusicListGap));
 		_homeArtistBarOpacity->setOpacity(opacity);
 		_homeArtistBar->raise();
 		_homeArtistBar->update();
@@ -10302,6 +10326,7 @@ protected:
 		const auto keep = (_rebuiltTab == _tab) ? _tabScroll->scrollTop() : 0;
 		_rebuiltTab = _tab;
 		_searchResultWidgets.clear();
+		_tabQueueList = nullptr;
 		_tabList->clear();
 		_homeBack->setVisible(_tab == Tab::Home && _homeAlbumOpen);
 		_tabNote.clear();
@@ -10350,16 +10375,8 @@ protected:
 			auto resultIndex = 0;
 			const auto count = (visibleLimit < 0)
 				? int(tracks.size()) : std::min(int(tracks.size()), visibleLimit);
-			const auto grouped = IsGroupedTrackRow(mode);
-			const auto s = [](int value) { return style::ConvertScale(value); };
-			const auto side = s(BoxParts::kOuterSide);
-			const auto list = grouped
-				? _tabList->add(object_ptr<Ui::VerticalLayout>(_tabList), QMargins(side, 0, side, 0))
-				: _tabList;
-			if (grouped) {
-				list->paintOn([=](QPainter &p) { PaintMusicCard(p, list->rect()); });
-			}
-			const auto hiddenArtist = grouped
+			const auto list = AddMusicTrackList(_tabList);
+			const auto hiddenArtist = IsDetailTrackRow(mode)
 				? QStringView(_homeArtistOpen ? _homeArtistProfile.name : _homeAlbum.artist).trimmed()
 				: QStringView();
 			for (auto i = 0; i != count; ++i) {
@@ -10781,7 +10798,9 @@ protected:
 				const auto category = _searchChats
 					? std::nullopt
 					: std::make_optional(_searchCategory);
-				_tabList->add(object_ptr<SearchSkeleton>(_tabList, _tabScroll, category));
+				const auto side = style::ConvertScale(BoxParts::kOuterSide);
+				_tabList->add(object_ptr<SearchSkeleton>(_tabList, _tabScroll, category),
+					QMargins(side, 0, side, 0));
 			} else if (!_searchChats && !_catalogItems.empty()) {
 				fillCatalogResults();
 			} else if (_searchTracks.empty()) {
@@ -10874,12 +10893,21 @@ protected:
 			if (_tabScroll->y() != computeLayout().scrollTop) {
 				relayout();
 			}
-			for (const auto child : _tabList->children()) {
-				if (auto widget = qobject_cast<QWidget*>(child); widget && widget->isEnabled()
-					&& (dynamic_cast<Row*>(widget)
-						|| dynamic_cast<CatalogEntityRow*>(widget))) {
+			const auto registerResult = [&](QWidget *widget) {
+				if (widget->isEnabled() && (dynamic_cast<Row*>(widget)
+					|| dynamic_cast<CatalogEntityRow*>(widget))) {
 					_searchResultWidgets.push_back(widget);
 					widget->installEventFilter(this);
+				}
+			};
+			for (auto i = 0; i != _tabList->count(); ++i) {
+				const auto widget = _tabList->widgetAt(i).get();
+				if (const auto group = dynamic_cast<MusicTrackList*>(widget)) {
+					for (auto j = 0; j != group->count(); ++j) {
+						registerResult(group->widgetAt(j));
+					}
+				} else {
+					registerResult(widget);
 				}
 			}
 		}
@@ -10906,15 +10934,19 @@ protected:
 		_tabNote.clear();
 		const auto playingId = PlayingTrack().id;
 		const auto [tracks, mode] = queueTracks(playingId);
-		fillQueueRows(_tabList, tracks, mode, 0, 1, {});
+		if (!_tabQueueList) {
+			_tabQueueList = AddMusicTrackList(_tabList, style::ConvertScale(kMusicListGap));
+		}
+		const auto list = _tabQueueList;
+		fillQueueRows(list, tracks, mode, 0, 1, {});
 		_tabContent->resizeToWidth(_tabScroll->width());
 		const auto current = mode == RowMode::Queue
 			? QueueState().index
 			: int(ranges::find(tracks, playingId, &Track::id) - begin(tracks));
-		if (current >= 0 && current < _tabList->count()) {
-			_tabScroll->scrollToY(_tabList->widgetAt(std::max(current - 1, 0))->y());
+		if (current >= 0 && current < list->count()) {
+			_tabScroll->scrollToY(list->y() + list->widgetAt(std::max(current - 1, 0))->y());
 		}
-		if (_tabList->count() == 0) {
+		if (list->count() == 0) {
 			_tabNote = QString::fromUtf8(Mokagram::Lang::Tr("Очередь пуста."));
 		}
 	}
@@ -11220,9 +11252,9 @@ protected:
 			if (!_tabNote.isEmpty()) {
 				p.setFont(PlayerStyle::kTrackArtist.font());
 				p.setPen(MusicSecondaryColor());
-				const auto noteWidth = std::max(layout.center.width() - s(20), 0);
+				const auto noteWidth = std::max(_tabScroll->width() - s(2 * BoxParts::kOuterSide), 0);
 				p.drawText(
-					QRect(layout.center.x() + s(10), layout.scrollTop + ((_tab == Tab::Playlists) ? s(64) : 0), noteWidth, s(80)),
+					QRect(_tabScroll->x() + s(BoxParts::kOuterSide), layout.scrollTop + ((_tab == Tab::Playlists) ? s(64) : 0), noteWidth, s(80)),
 					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
 					_tabNote);
 			}
@@ -11884,6 +11916,7 @@ private:
 	const not_null<Ui::RpWidget*> _coverOverlay;
 	Ui::PaddingWrap<Ui::VerticalLayout> *_tabContent = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
+	MusicTrackList *_tabQueueList = nullptr;
 	QPointer<HomeAlbumHeader> _homeAlbumHeader;
 	std::array<NavItem*, int(Tab::Count)> _nav = {};
 	PlayerSpring _navSlide{ [this] { update(computeLayout().nav); } };
