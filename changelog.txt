@@ -4,6 +4,7 @@ mokaGram (27.11.26)
 - Group album tracks into a numbered Material 3 list with aligned favorites and durations.
 - Use the same Material 3 track rows on single-track pages and in artist track lists.
 - Align the current track highlight with the rounded edges of the track list.
+- Center the pause icon in Music Home cards.
 
 mokaGram (26.11.26)
 

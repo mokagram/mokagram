@@ -2430,16 +2430,23 @@ void PaintHomeCardAction(
 	p.setPen(Qt::NoPen);
 	p.setBrush(current ? st::windowBgActive : st::windowBg);
 	p.drawEllipse(button);
-	const auto center = button.center();
 	const auto glyph = current ? st::windowFgActive->c : st::windowFg->c;
 	if (playing) {
+		const auto center = QRectF(button).center();
+		const auto barWidth = s(3);
+		const auto barHeight = s(12);
+		const auto halfGap = s(2) / 2.;
+		const auto radius = s(1);
+		const auto top = center.y() - barHeight / 2.;
 		p.setBrush(glyph);
-		p.drawRoundedRect(QRect(
-			center.x() - s(4), center.y() - s(6), s(3), s(12)), s(1), s(1));
-		p.drawRoundedRect(QRect(
-			center.x() + s(1), center.y() - s(6), s(3), s(12)), s(1), s(1));
+		p.drawRoundedRect(QRectF(
+			center.x() - halfGap - barWidth, top, barWidth, barHeight),
+			radius, radius);
+		p.drawRoundedRect(QRectF(
+			center.x() + halfGap, top, barWidth, barHeight),
+			radius, radius);
 	} else {
-		PaintHomePlayGlyph(p, center, glyph);
+		PaintHomePlayGlyph(p, button.center(), glyph);
 	}
 	p.restore();
 }
