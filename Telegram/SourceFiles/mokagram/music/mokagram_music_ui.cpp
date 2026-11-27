@@ -2806,6 +2806,10 @@ public:
 		}, lifetime());
 	}
 
+	[[nodiscard]] bool isQueueTrack(const QString &id, int index) const {
+		return _track.id == id && _queueIndex == index;
+	}
+
 	[[nodiscard]] bool matchesQueueTrack(const Track &track, RowMode mode, int index) const {
 		const auto fields = [](const Track &t) {
 			return std::tie(
@@ -7736,9 +7740,17 @@ public:
 			QMargins(s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace2),
 				s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace2)));
 		_queueNow = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
+		_queueNow->paintOn([=](QPainter &p) {
+			if (!_queueAdvanceExit.isNull()) {
+				const auto progress = _queueAdvance.unitValue(1.);
+				p.setOpacity(1. - progress);
+				p.drawPixmap(0, -qRound(_queueNow->height() * progress), _queueAdvanceExit);
+			}
+		});
 		_queueNextLabel = addLabel(PlaylistText("Далее в очереди"), sectionStyle,
 			QMargins(s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace12),
 				s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace2)));
+		_queueListSlot = _queueContent->count();
 		_queueList = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
 		const auto queueRowPad = s(PlayerStyle::kSpace8);
 		_queueEmpty = addLabel({}, st::boxDividerLabel, QMargins(queueRowPad, queueRowPad, queueRowPad, 0));
@@ -7750,6 +7762,7 @@ public:
 				return;
 			}
 			if (change.state == State::Started) {
+				stopQueueAdvance();
 				row->setQueueDragging(true);
 				return;
 			}
@@ -8827,6 +8840,7 @@ protected:
 			_queuePanel->update();
 		}
 		if (resize) {
+			stopQueueAdvance();
 			const auto s = [](int v) { return style::ConvertScale(v); };
 			using namespace PlayerStyle;
 			const auto tabsTop = s(kSpace12);
@@ -8861,6 +8875,9 @@ protected:
 		}
 		const auto from = _queuePanelOpen ? 1. : 0.;
 		_queuePanelOpen = open;
+		if (!open) {
+			stopQueueAdvance();
+		}
 		_queueToggle->setQueueOpen(open);
 		if (open) {
 			_queuePanel->raise();
@@ -10758,23 +10775,83 @@ protected:
 		}
 		Ui::PostponeCall(this, [=] {
 			if (std::exchange(_queuePanelRefreshPending, false) && _queuePanelOpen) {
-				refreshQueuePanel();
+				refreshQueuePanel(true);
 			}
 		});
 	}
 
-	void refreshQueuePanel() {
+	struct QueueAdvance {
+		QPixmap outgoing;
+		int consumed = 0;
+		int nextTop = -1;
+	};
+
+	[[nodiscard]] QueueAdvance prepareQueueAdvance(
+			const Track &playing,
+			std::span<const Track> tracks,
+			int first,
+			int step) {
+		const auto current = first - step;
+		const auto scrollTop = _queueScroll->scrollTop();
+		if (!PlayerMotionEnabled() || !_queuePanel->isVisible()
+			|| !_queueNow->count() || _queueNow->geometry().bottom() < scrollTop
+			|| current < 0 || current >= int(tracks.size())
+			|| tracks[current].id != playing.id
+			|| static_cast<Row*>(_queueNow->widgetAt(0).get())->isQueueTrack(playing.id, 0)) {
+			return {};
+		}
+		const auto visibleBottom = scrollTop + _queueScroll->height();
+		for (auto i = 0; i != _queueList->count(); ++i) {
+			const auto row = static_cast<Row*>(_queueList->widgetAt(i).get());
+			if (_queueList->y() + row->y() >= visibleBottom) {
+				break;
+			}
+			if (!row->isQueueTrack(playing.id, current)) {
+				continue;
+			}
+			auto result = QueueAdvance{ Ui::GrabWidget(_queueNow), i + 1 };
+			if (result.consumed < _queueList->count()
+				&& first >= 0 && first < int(tracks.size())) {
+				const auto next = static_cast<Row*>(_queueList->widgetAt(result.consumed).get());
+				if (next->isQueueTrack(tracks[first].id, first)) {
+					result.nextTop = _queueList->y() + next->y();
+				}
+			}
+			return result;
+		}
+		return {};
+	}
+
+	void applyQueueAdvance(double remaining) {
+		_queueNow->setVerticalShift(0, qRound(_queueNow->height() * remaining));
+		_queueContent->setVerticalShift(_queueListSlot, qRound(_queueAdvanceListShift * remaining));
+	}
+
+	void updateQueueAdvance() {
+		applyQueueAdvance(1. - _queueAdvance.unitValue(1.));
+		if (!_queueAdvance.animating()) {
+			_queueAdvanceExit = QPixmap();
+		}
+		_queueNow->update();
+	}
+
+	void stopQueueAdvance() {
+		if (!_queueAdvanceExit.isNull()) {
+			_queueAdvance.stop();
+			updateQueueAdvance();
+		}
+	}
+
+	void refreshQueuePanel(bool animateAdvance = false) {
 		_queuePanelRefreshPending = false;
 		++_queueLayoutRevision;
 		_queueReorder->cancel();
 		const auto terms = _queueSearch->getLastText().simplified().split(' ', Qt::SkipEmptyParts);
 		const auto playing = _queueHistory ? Track() : PlayingTrack();
 		const auto hasCurrent = !playing.id.isEmpty();
-		_queueNowLabel->toggle(hasCurrent, anim::type::instant);
-		_queueNextLabel->toggle(!_queueHistory, anim::type::instant);
-		fillQueueRows(_queueNow, std::span(&playing, hasCurrent ? 1 : 0),
-			RowMode::QueueCurrent, 0, 1, {});
+		auto advance = QueueAdvance();
 		if (_queueHistory) {
+			stopQueueAdvance();
 			auto recent = RecentItems();
 			std::vector<Track> tracks;
 			tracks.reserve(recent.size());
@@ -10786,23 +10863,52 @@ protected:
 			fillQueueRows(_queueList, tracks, RowMode::QueueHistory, 0, 1, terms);
 		} else {
 			const auto [tracks, mode] = queueTracks(playing.id);
-			if (mode == RowMode::Queue) {
-				_queueUpcomingFirst = std::max(QueueState().index + 1, 0);
-				fillQueueRows(_queueList, tracks, RowMode::QueueUpcoming,
-					_queueUpcomingFirst, 1, terms);
-				if (terms.empty()) {
+			const auto queued = (mode == RowMode::Queue);
+			const auto order = Core::App().settings().playerOrderMode();
+			const auto step = (queued || order == Media::OrderMode::Reverse) ? 1 : -1;
+			const auto queueIndex = QueueState().index;
+			const auto current = [&] {
+				if (queued && (!hasCurrent || (queueIndex >= 0
+					&& queueIndex < int(tracks.size()) && tracks[queueIndex].id == playing.id))) {
+					return queueIndex;
+				}
+				const auto at = ranges::find(tracks, playing.id, &Track::id);
+				return (at != end(tracks)) ? int(at - begin(tracks)) : -1;
+			}();
+			// Do not consume the selected row until playback actually starts.
+			const auto first = queued ? current + 1 : (current < 0 ? -1 : current + step);
+			if (animateAdvance && hasCurrent && terms.empty()) {
+				advance = prepareQueueAdvance(playing, tracks, first, step);
+			}
+			const auto firstValid = first >= 0 && first < int(tracks.size());
+			const auto keepAdvance = _queueAdvance.animating() && animateAdvance && terms.empty()
+				&& _queueNow->count()
+				&& static_cast<Row*>(_queueNow->widgetAt(0).get())->isQueueTrack(playing.id, 0)
+				&& (firstValid
+					? _queueList->count() && static_cast<Row*>(_queueList->widgetAt(0).get())
+						->isQueueTrack(tracks[first].id, first)
+					: !_queueList->count());
+			if (keepAdvance) {
+				applyQueueAdvance(0.);
+			} else {
+				stopQueueAdvance();
+			}
+			for (auto i = 0; i != advance.consumed; ++i) {
+				delete _queueList->widgetAt(0).get();
+			}
+			fillQueueRows(_queueList, tracks, queued ? RowMode::QueueUpcoming : RowMode::Context,
+				first, step, terms);
+			if (queued) {
+				_queueUpcomingFirst = first;
+				if (terms.empty() && current == queueIndex) {
 					_queueReorder->start();
 				}
-			} else {
-				const auto current = ranges::find(tracks, playing.id, &Track::id);
-				const auto order = Core::App().settings().playerOrderMode();
-				const auto step = (order == Media::OrderMode::Reverse) ? 1 : -1;
-				const auto first = (current == end(tracks))
-					? -1
-					: int(current - begin(tracks)) + step;
-				fillQueueRows(_queueList, tracks, RowMode::Context, first, step, terms);
 			}
 		}
+		_queueNowLabel->toggle(hasCurrent, anim::type::instant);
+		_queueNextLabel->toggle(!_queueHistory, anim::type::instant);
+		fillQueueRows(_queueNow, std::span(&playing, hasCurrent ? 1 : 0),
+			RowMode::QueueCurrent, 0, 1, {});
 		const auto empty = (_queueList->count() == 0);
 		_queueEmpty->toggle(empty, anim::type::instant);
 		if (empty) {
@@ -10810,6 +10916,16 @@ protected:
 				: _queueHistory ? "Нет недавно прослушанных треков" : "Нет следующих треков"));
 		}
 		_queueContent->resizeToWidth(_queueScroll->width());
+		if (!advance.outgoing.isNull()) {
+			_queueAdvanceListShift = (advance.nextTop >= 0 && _queueList->count())
+				? std::max(advance.nextTop - _queueList->y() - _queueList->widgetAt(0)->y(), 0)
+				: 0;
+			_queueAdvanceExit = std::move(advance.outgoing);
+			_queueAdvance.start(0., 1., kEffects);
+		}
+		if (_queueAdvance.animating() || !_queueAdvanceExit.isNull()) {
+			updateQueueAdvance();
+		}
 	}
 
 	[[nodiscard]] std::pair<const std::vector<Track>&, RowMode> queueTracks(
@@ -11577,6 +11693,10 @@ private:
 	Ui::SlideWrap<Ui::FlatLabel> *_queueNextLabel = nullptr;
 	Ui::VerticalLayout *_queueList = nullptr;
 	Ui::SlideWrap<Ui::FlatLabel> *_queueEmpty = nullptr;
+	int _queueListSlot = 0;
+	int _queueAdvanceListShift = 0;
+	QPixmap _queueAdvanceExit;
+	PlayerSpring _queueAdvance{ [this] { updateQueueAdvance(); } };
 	std::unique_ptr<Ui::VerticalLayoutReorder> _queueReorder;
 	int _queueLayoutRevision = 0;
 	int _queueUpcomingFirst = 0;

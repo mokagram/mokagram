@@ -1,3 +1,7 @@
+mokaGram (27.11.26)
+
+- Slide the next song into Now playing and shift the remaining queue up as playback advances.
+
 mokaGram (26.11.26)
 
 - Group gifts and story shortcuts in a rounded profile card.
