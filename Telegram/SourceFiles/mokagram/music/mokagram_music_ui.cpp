@@ -2835,8 +2835,8 @@ public:
 		if (_mode == RowMode::Results) {
 			updateResultTitleScroll();
 		}
-		if (_mode == RowMode::Home) {
-			_hoverFade.set(isOver() || isDown(), [=] { update(); });
+		if (_mode == RowMode::Home || _mode == RowMode::Results) {
+			_hoverFade.set(!isDisabled() && (isOver() || isDown()), [=] { update(); });
 		}
 		if (_mode == RowMode::Home || _grouped || _compactQueue) {
 			update();
@@ -3367,11 +3367,14 @@ private:
 				});
 			}
 			if (!_resultTitleTimer->isActive()) {
-				_resultTitleAt = crl::now();
+				_resultTitleAt = crl::now()
+					- (_hoverFade.value() > 0. ? _resultTitleElapsed : 0);
+				_resultTitleElapsed = 0;
 				_resultTitleTimer->start();
 				update(titleRect);
 			}
 		} else if (_resultTitleTimer && _resultTitleTimer->isActive()) {
+			_resultTitleElapsed = crl::now() - _resultTitleAt;
 			_resultTitleTimer->stop();
 			update(titleRect);
 		}
@@ -3406,9 +3409,14 @@ private:
 			const auto verticalInset = listMetric(4);
 			const auto bounds = rect().marginsRemoved({
 				inset, verticalInset, inset, verticalInset });
-			if (!isDisabled() && (playing || over)) {
+			const auto highlight = playing ? 1. : _mode == RowMode::Results
+				? _hoverFade.value()
+				: over ? 1. : 0.;
+			if (!isDisabled() && highlight > 0.) {
 				p.setPen(Qt::NoPen);
-				p.setBrush(st::windowBgOver);
+				auto color = st::windowBgOver->c;
+				color.setAlphaF(color.alphaF() * highlight);
+				p.setBrush(color);
 				const auto radius = listMetric(12);
 				p.drawRoundedRect(bounds, radius, radius);
 			}
@@ -3497,12 +3505,24 @@ private:
 			: (playing && !grouped && _mode != RowMode::QueueCurrent && !IsLightMusicTheme())
 			? st::windowActiveTextFg->c
 			: st::windowFg->c);
-		if (_resultTitleTimer && _resultTitleTimer->isActive()) {
+		const auto moving = _resultTitleTimer && _resultTitleTimer->isActive();
+		const auto titleBlend = (moving || _resultTitleElapsed > 0)
+			? _hoverFade.value()
+			: 0.;
+		if (titleBlend > 0.) {
+			p.save();
+			p.setOpacity(p.opacity() * titleBlend);
 			PaintMovingTitle(p, titleRect, _track.title, p.font(),
-				crl::now() - _resultTitleAt, devicePixelRatioF(), _resultTitlePath);
-		} else {
+				moving ? crl::now() - _resultTitleAt : _resultTitleElapsed,
+				devicePixelRatioF(), _resultTitlePath);
+			p.restore();
+		}
+		if (titleBlend < 1.) {
+			p.save();
+			p.setOpacity(p.opacity() * (1. - titleBlend));
 			p.drawText(titleRect, Qt::AlignVCenter | Qt::AlignLeft,
 				_titleFont->elided(_track.title, titleRect.width()));
+			p.restore();
 		}
 		p.setFont(st::normalFont);
 		p.setPen(secondary);
@@ -3574,6 +3594,7 @@ private:
 
 	QTimer *_resultTitleTimer = nullptr;
 	crl::time _resultTitleAt = 0;
+	crl::time _resultTitleElapsed = 0;
 	MovingTitlePath _resultTitlePath;
 	QTimer _equalizerTimer;
 	QElapsedTimer _equalizerClock;
@@ -7996,6 +8017,7 @@ public:
 				openHomeArtist(_homeArtistProfile, _homeArtistSeed);
 				return;
 			}
+			rememberNavigation();
 			animateHomeBackExit();
 			clearHomeSideGlow();
 			_homeAlbumOpen = false;
@@ -8292,7 +8314,6 @@ public:
 		}, lifetime());
 		_searchField = Ui::CreateChild<QLineEdit>(this);
 		_searchField->setFrame(false);
-		_searchField->installEventFilter(this);
 		_searchField->setAccessibleName(QString::fromUtf8(Mokagram::Lang::Tr("Поиск музыки")));
 		_searchIndicator = new SearchIndicator(_searchField);
 		_searchRetry = new QPushButton(QString::fromUtf8(Mokagram::Lang::Tr("Повторить")), this);
@@ -8586,6 +8607,7 @@ public:
 			repaintBackdrop();
 		}, lifetime());
 
+		qApp->installEventFilter(this);
 		setGeometry(parent->rect());
 		refresh();
 		rebuildTab();
@@ -8616,6 +8638,7 @@ public:
 		if (_tab != Tab::Home) {
 			setTab(Tab::Home);
 		} else if (_homeSection || _homeAlbumOpen) {
+			rememberNavigation();
 			resetHomeNavigation();
 			relayout();
 			rebuildTab();
@@ -8677,7 +8700,50 @@ protected:
 		RpWidget::hideEvent(event);
 	}
 	bool eventFilter(QObject *watched, QEvent *event) override {
-		if (_tab == Tab::Search && event->type() == QEvent::KeyPress) {
+		const auto type = event->type();
+		const auto mouse = type == QEvent::MouseButtonPress
+			|| type == QEvent::MouseButtonRelease || type == QEvent::MouseButtonDblClick;
+		if (type != QEvent::KeyPress && !mouse) {
+			return RpWidget::eventFilter(watched, event);
+		}
+		const auto widget = qobject_cast<QWidget*>(watched);
+		if (_closing || !isVisible() || !widget || (widget != this && !isAncestorOf(widget))
+			|| widget->window() != window()) {
+			return RpWidget::eventFilter(watched, event);
+		}
+		if (_tab != Tab::Search) {
+			if (mouse) {
+				const auto button = static_cast<QMouseEvent*>(event)->button();
+				if (button == Qt::BackButton || button == Qt::ForwardButton) {
+					if (type == QEvent::MouseButtonPress) {
+						stepNavigation(button == Qt::BackButton);
+					}
+					return true;
+				}
+			}
+			if (type == QEvent::KeyPress && !qobject_cast<QLineEdit*>(widget)
+				&& widget != _queueSearch && !_queueSearch->isAncestorOf(widget)) {
+				const auto key = static_cast<QKeyEvent*>(event);
+				if (key->modifiers() == Qt::NoModifier) {
+					Ui::AbstractButton *button = nullptr;
+					switch (key->key()) {
+					case Qt::Key_Space: button = _play.get(); break;
+					case Qt::Key_E: button = _next.get(); break;
+					case Qt::Key_Q: button = _previous.get(); break;
+					case Qt::Key_W: button = _queueToggle.get(); break;
+					case Qt::Key_L: button = _heart.get(); break;
+					default: break;
+					}
+					if (button) {
+						if (!key->isAutoRepeat() && !button->isDisabled()) {
+							button->clicked(Qt::NoModifier, Qt::LeftButton);
+						}
+						return true;
+					}
+				}
+			}
+		}
+		if (_tab == Tab::Search && type == QEvent::KeyPress) {
 			const auto key = static_cast<QKeyEvent*>(event);
 			if (watched == _searchField && key->key() == Qt::Key_Escape) {
 				if (!_searchField->text().isEmpty()) _searchField->clear();
@@ -8700,12 +8766,23 @@ protected:
 					return true;
 				}
 			}
-			if (current != _searchResultWidgets.end() && (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter)) {
-				auto press = QKeyEvent(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
-				auto release = QKeyEvent(QEvent::KeyRelease, Qt::Key_Space, Qt::NoModifier);
-				QCoreApplication::sendEvent(watched, &press);
-				QCoreApplication::sendEvent(watched, &release);
+			if (current != _searchResultWidgets.end() && key->key() == Qt::Key_Space) {
 				return true;
+			}
+			if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
+				if (watched == _searchField) {
+					if (_searchTimer.isActive()) runSearch();
+					else if (!_searchResultWidgets.empty() && !key->isAutoRepeat()) {
+						const auto first = static_cast<Ui::AbstractButton*>(_searchResultWidgets.front());
+						first->clicked(Qt::NoModifier, Qt::LeftButton);
+					}
+					return true;
+				} else if (current != _searchResultWidgets.end()) {
+					if (!key->isAutoRepeat()) {
+						static_cast<Ui::AbstractButton*>(widget)->clicked(Qt::NoModifier, Qt::LeftButton);
+					}
+					return true;
+				}
 			}
 		}
 		return RpWidget::eventFilter(watched, event);
@@ -8749,7 +8826,6 @@ protected:
 		const auto artist = track.artist.trimmed();
 		if (hover == InfoHover::Title || hover == InfoHover::BarTitle) {
 			setHover(InfoHover::None);
-			setTab(Tab::Home);
 			openHomeTrack(track);
 		} else if (!artist.isEmpty()) {
 			setHover(InfoHover::None);
@@ -9531,16 +9607,12 @@ protected:
 	}
 
 	void openCatalogCollection(Album album) {
-		_searchReturnScroll = _tabScroll->scrollTop();
-		setTab(Tab::Home);
-		_homeBackToSearch = true;
 		openHomeAlbum(std::move(album));
 	}
 
 	void setResultTrackLinks(not_null<Row*> row, QStringView hiddenArtist = {}) {
 		row->setTextLinks(
 			crl::guard(this, [=](Track track) {
-				setTab(Tab::Home);
 				openHomeTrack(std::move(track));
 			}),
 			crl::guard(this, [=](const Track &track, const QString &name) {
@@ -9550,14 +9622,6 @@ protected:
 	}
 
 	void showArtistProfile(ArtistInfo artist, Track track = {}) {
-		const auto fromSearch = (_tab == Tab::Search);
-		if (fromSearch) {
-			_searchReturnScroll = _tabScroll->scrollTop();
-		}
-		setTab(Tab::Home);
-		if (fromSearch) {
-			_homeBackToSearch = true;
-		}
 		openHomeArtist(std::move(artist), std::move(track));
 	}
 
@@ -9887,7 +9951,76 @@ protected:
 		++_artistLinkGeneration;
 		++_homeAlbumGeneration;
 	}
-	void setTab(Tab tab) {
+	struct NavigationPage {
+		Tab tab;
+		int scroll = 0;
+		int homeSection = 0;
+		bool homeBackToSearch = false;
+		int searchReturnScroll = 0;
+		QString playlist;
+		std::variant<std::monostate, Track, Album, std::pair<ArtistInfo, Track>> detail;
+	};
+
+	[[nodiscard]] NavigationPage navigationPage() const {
+		auto page = NavigationPage{
+			_tab, _tabScroll->scrollTop(), _homeSection,
+			_homeBackToSearch, _searchReturnScroll, _openedPlaylist, {},
+		};
+		if (_tab == Tab::Home && _homeAlbumOpen) {
+			if (_homeArtistOpen) {
+				page.detail = std::pair(_homeArtistProfile, _homeArtistSeed);
+			} else if (_homeAlbumIsTrack && !_homeAlbumTracks.empty()) {
+				page.detail = _homeAlbumTracks.front();
+			} else {
+				page.detail = _homeAlbum;
+			}
+		}
+		return page;
+	}
+
+	void rememberNavigation() {
+		if (_restoringNavigation) return;
+		_navigationBack.push_back(navigationPage());
+		_navigationForward.clear();
+		if (_navigationBack.size() > 64) {
+			_navigationBack.erase(_navigationBack.begin());
+		}
+	}
+
+	void stepNavigation(bool back) {
+		auto &from = back ? _navigationBack : _navigationForward;
+		auto &to = back ? _navigationForward : _navigationBack;
+		if (from.empty()) return;
+		to.push_back(navigationPage());
+		auto page = std::move(from.back());
+		from.pop_back();
+
+		_restoringNavigation = true;
+		setTab(page.tab);
+		if (page.tab == Tab::Home) {
+			resetHomeNavigation();
+			_homeSection = page.homeSection;
+			_homeBackToSearch = page.homeBackToSearch;
+			_searchReturnScroll = page.searchReturnScroll;
+			if (auto track = std::get_if<Track>(&page.detail)) {
+				openHomeTrack(std::move(*track));
+			} else if (auto album = std::get_if<Album>(&page.detail)) {
+				openHomeAlbum(std::move(*album));
+			} else if (auto artist = std::get_if<std::pair<ArtistInfo, Track>>(&page.detail)) {
+				openHomeArtist(std::move(artist->first), std::move(artist->second));
+			} else {
+				relayout();
+				rebuildTab();
+			}
+		} else if (page.tab == Tab::Playlists && _openedPlaylist != page.playlist) {
+			_openedPlaylist = std::move(page.playlist);
+			rebuildTab();
+		}
+		_tabScroll->scrollToY(page.scroll);
+		_restoringNavigation = false;
+	}
+
+	void setTab(Tab tab, bool record = true) {
 		if (_coverMorph.animating()) {
 			if (tab == Tab::Now) {
 				startCoverTransition(true);
@@ -9903,6 +10036,7 @@ protected:
 			}
 			return;
 		}
+		if (record) rememberNavigation();
 		stopHomeBackExit();
 		const auto from = _tab;
 		const auto animateTransition = _tab != Tab::Now
@@ -10465,7 +10599,20 @@ protected:
 		_homeScrollFade->setOpacityMask(QBrush(mask));
 	}
 
+	void beginHomeDetail() {
+		rememberNavigation();
+		const auto fromSearch = (_tab == Tab::Search);
+		if (fromSearch) {
+			_searchReturnScroll = _tabScroll->scrollTop();
+		}
+		setTab(Tab::Home, false);
+		if (fromSearch) {
+			_homeBackToSearch = true;
+		}
+	}
+
 	void openHomeArtist(ArtistInfo artist, Track track) {
+		beginHomeDetail();
 		if (!_homeReturnToArtist) {
 			_homeArtistFeedScroll = _tabScroll->scrollTop();
 			_homeArtistLikesOpen = false;
@@ -10529,6 +10676,7 @@ protected:
 	}
 
 	void openHomeTrack(Track track) {
+		beginHomeDetail();
 		_homeArtistOpen = false;
 		_homeAlbumReturnScroll = _tabScroll->scrollTop();
 		_homeAlbumOpen = true;
@@ -10547,6 +10695,7 @@ protected:
 	}
 
 	void openHomeAlbum(Album album) {
+		beginHomeDetail();
 		_homeReturnToArtist = _homeArtistOpen;
 		_homeArtistOpen = false;
 		_homeAlbumIsTrack = false;
@@ -11071,6 +11220,7 @@ protected:
 					: tr("Для вас");
 				_tabList->add(object_ptr<HomeSectionHeader>(
 					_tabList, title, crl::guard(this, [=] {
+						rememberNavigation();
 						_homeSection = 0;
 						rebuildTab();
 						_tabScroll->scrollToY(_homeFeedScroll);
@@ -11116,6 +11266,7 @@ protected:
 				_tabList->add(object_ptr<HomeShelfHeader>(
 					_tabList, title, crl::guard(this, [=] {
 						_homeFeedScroll = _tabScroll->scrollTop();
+						rememberNavigation();
 						_homeSection = id;
 						rebuildTab();
 						_tabScroll->scrollToY(0);
@@ -11135,6 +11286,7 @@ protected:
 				_tabList->add(object_ptr<HomeShelfHeader>(
 					_tabList, std::move(title), crl::guard(this, [=] {
 						_homeFeedScroll = _tabScroll->scrollTop();
+						rememberNavigation();
 						_homeSection = id;
 						rebuildTab();
 						_tabScroll->scrollToY(0);
@@ -11204,6 +11356,7 @@ protected:
 				_tabList->add(object_ptr<HomeShelfHeader>(
 					_tabList, title, crl::guard(this, [=] {
 						_homeFeedScroll = _tabScroll->scrollTop();
+						rememberNavigation();
 						_homeSection = 100 + 2 * i;
 						rebuildTab();
 						_tabScroll->scrollToY(0);
@@ -11299,6 +11452,7 @@ protected:
 			});
 			if (found != playlists.end()) {
 				_tabList->add(object_ptr<HomeSectionHeader>(_tabList, found->name, [=] {
+					rememberNavigation();
 					_openedPlaylist.clear();
 					rebuildTab();
 				}));
@@ -11316,6 +11470,7 @@ protected:
 				_openedPlaylist.clear();
 				_tabList->add(object_ptr<HomeSectionHeader>(_tabList, tr("Создать плейлист"), [=] {
 					PlaylistNameBox(_controller, tr("Создать плейлист"), {}, crl::guard(this, [=](QString name) {
+						rememberNavigation();
 						_openedPlaylist = CreatePlaylist(name);
 					}));
 				}, true));
@@ -11331,6 +11486,7 @@ protected:
 						style::ConvertScale(8)));
 				for (const auto &playlist : playlists) {
 					_tabList->add(object_ptr<PlaylistRow>(_tabList, _controller, playlist, [=](QString id) {
+						rememberNavigation();
 						_openedPlaylist = std::move(id);
 						rebuildTab();
 					}));
@@ -11352,7 +11508,6 @@ protected:
 				if (widget->isEnabled() && (dynamic_cast<Row*>(widget)
 					|| dynamic_cast<CatalogEntityRow*>(widget))) {
 					_searchResultWidgets.push_back(widget);
-					widget->installEventFilter(this);
 				}
 			};
 			for (auto i = 0; i != _tabList->count(); ++i) {
@@ -12477,6 +12632,9 @@ private:
 	bool _searchChats = false;
 	bool _lyricsMissing = false;
 	Tab _tab;
+	std::vector<NavigationPage> _navigationBack;
+	std::vector<NavigationPage> _navigationForward;
+	bool _restoringNavigation = false;
 	std::optional<Tab> _rebuiltTab;
 	bool _librarySyncLoading = false;
 	crl::time _librarySyncSucceeded = 0;
