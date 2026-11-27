@@ -1,6 +1,7 @@
 mokaGram (27.11.26)
 
 - Style shared media tabs as a rounded selector with readable labels in light and dark themes.
+- Keep light text readable on profile music cards by dimming bright collectible backgrounds.
 - Restore rounded hover highlights for the gifts and story shortcuts in My Profile.
 - Separate bot information from report and block actions in the profile.
 - Slide the next song into Now playing and shift the remaining queue up as playback advances.
@@ -10,6 +11,7 @@ mokaGram (27.11.26)
 - Show the current track title and album context in shared profile listening cards.
 - Use the same Material 3 track rows on single-track pages and in artist track lists.
 - Align the current track highlight with the rounded edges of the track list.
+- Fade the bottom edge of the Music Library while more tracks are below it.
 - Center the pause icon in Music Home cards.
 - Add icons for playback, speed and audio details in the music menu. Mark the selected speed and pitch setting.
 - Use unfilled text buttons for secondary Music section actions and align the artist actions on the trailing edge.
@@ -24,6 +26,7 @@ mokaGram (27.11.26)
 - Use theme colors in the chat lyrics sidebar and match the translation strip at the chat header corners.
 - Keep the profile screenshot title readable over animated artwork.
 - Use compact, aligned track rows in the music queue sidebar.
+- Fix Linux packaged builds when the changelog starts with unversioned development notes.
 
 mokaGram (26.11.26)
 
