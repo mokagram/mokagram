@@ -2563,6 +2563,13 @@ void AddWhenEditedForwardedAuthorActionHelper(
 			}
 		}
 	}
+	// Mokagram: open saved revisions even when the message hides its edit badge.
+	if (Mokagram::History::HasRevisions(item)) {
+		menu->addAction(
+			QString::fromUtf8(Mokagram::Lang::Tr("Что изменилось")),
+			[=] { Mokagram::History::ShowRevisions(controller, item); },
+			&st::menuIconEdit);
+	}
 	if (item->canLookupMessageAuthor()) {
 		if (insertSeparator && !menu->empty()) {
 			menu->addSeparator(&st::expandedMenuSeparator);

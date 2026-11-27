@@ -72,6 +72,9 @@ void OnBeforeEdit(
 
 // Призрак: исходное сообщение в памяти или локальная копия из архива.
 [[nodiscard]] bool IsGhost(not_null<const HistoryItem*> item);
+[[nodiscard]] HistoryItem *FindGhost(
+	not_null<Main::Session*> session,
+	FullMsgId original);
 // Самоуничтожающиеся фото, видео и голосовые не прячутся и не пропадают
 // после просмотра: ПК показывает их как обычные (history.keep_ttl).
 [[nodiscard]] bool KeepSelfDestruct();

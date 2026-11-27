@@ -17,6 +17,7 @@
 #include <QtCore/QByteArray>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace Mokagram::History {
@@ -41,6 +42,8 @@ struct Snapshot {
 	QByteArray tl; // MTPMessageMedia целиком (фото, голосовые и т.д.).
 	int64 replyTo = 0; // Id сообщения, на которое это ответ (0 = не ответ).
 	uint64 replyPeer = 0; // Чат того сообщения, 0 = тот же чат.
+	int64 revision = 0;
+	std::optional<QString> currentText;
 };
 
 struct Counts {
@@ -60,9 +63,12 @@ struct PageQuery {
 	int64 id = 0;          // Для правок одного сообщения, иначе 0.
 	int32 beforeEvent = 0; // Курсор (keyset), 0 = с самого свежего.
 	int64 beforeId = 0;
+	uint64 beforePeer = 0;
+	int64 beforeRevision = 0;
 	int64 minId = 0;       // Только id >= minId (для призраков), 0 = без границы.
 	int32 since = 0;       // Только события не раньше since, 0 = за всё время.
 	QString mediaLike;     // Маска подписи медиа для LIKE, пусто = любые.
+	QString text;
 	int limit = 50;
 };
 

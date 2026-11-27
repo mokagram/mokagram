@@ -80,6 +80,10 @@ constexpr auto kPageSize = 50;
 struct PageState {
 	int32 cursorEvent = 0;
 	int64 cursorId = 0;
+	uint64 cursorPeer = 0;
+	int64 cursorRevision = 0;
+	int generation = 0;
+	std::optional<QString> newer;
 	bool loading = false;
 	bool finished = false;
 };
@@ -87,6 +91,7 @@ struct PageState {
 struct HistoryFilter {
 	int period = 0; // 0 все, 1 сутки, 2 неделя, 3 месяц.
 	int type = 0;   // 0 все, 1 фото, 2 видео, 3 голосовые, 4 кружки, 5 файлы.
+	QString text;
 };
 
 using Key = std::pair<uint64, int64>;
@@ -268,6 +273,71 @@ void ConfirmAndRun(
 	}));
 }
 
+void AddTextDiff(
+		not_null<Ui::VerticalLayout*> card,
+		const QString &previous,
+		const QString &current) {
+	const auto add = [&](const QString &text, std::optional<QColor> color) {
+		const auto label = card->add(
+			object_ptr<Ui::FlatLabel>(card, text, st::boxLabel),
+			QMargins(18, style::ConvertScale(3), 18, style::ConvertScale(3)));
+		label->setSelectable(true);
+		label->setTextColorOverride(color);
+	};
+	if (previous == current) {
+		add(U(Mokagram::Lang::Tr("Текст не изменился")), std::nullopt);
+		return;
+	}
+	const auto before = previous.isEmpty() ? QStringList() : previous.split(u'\n');
+	const auto after = current.isEmpty() ? QStringList() : current.split(u'\n');
+	const auto beforeCount = int(before.size());
+	const auto afterCount = int(after.size());
+	const auto width = afterCount + 1;
+	const auto bounded = (int64(beforeCount + 1) * width <= 100000);
+	auto lcs = std::vector<int>(bounded ? (beforeCount + 1) * width : 0);
+	const auto length = [&](int oldLine, int newLine) -> int& {
+		return lcs[oldLine * width + newLine];
+	};
+	if (bounded) {
+		for (auto oldLine = beforeCount - 1; oldLine >= 0; --oldLine) {
+			for (auto newLine = afterCount - 1; newLine >= 0; --newLine) {
+				length(oldLine, newLine) = (before[oldLine] == after[newLine])
+					? 1 + length(oldLine + 1, newLine + 1)
+					: std::max(length(oldLine + 1, newLine), length(oldLine, newLine + 1));
+			}
+		}
+	}
+	auto chunks = std::vector<std::pair<QChar, QStringList>>();
+	const auto append = [&](QChar prefix, const QString &line) {
+		if (chunks.empty() || chunks.back().first != prefix) {
+			chunks.emplace_back(prefix, QStringList());
+		}
+		chunks.back().second.push_back(prefix + u"  "_q + line);
+	};
+	auto oldLine = 0;
+	auto newLine = 0;
+	while (oldLine < beforeCount || newLine < afterCount) {
+		if (bounded && oldLine < beforeCount && newLine < afterCount
+			&& before[oldLine] == after[newLine]) {
+			append(u' ', before[oldLine++]);
+			++newLine;
+		} else if (oldLine < beforeCount
+			&& (!bounded || newLine == afterCount
+				|| length(oldLine + 1, newLine) >= length(oldLine, newLine + 1))) {
+			append(u'-', before[oldLine++]);
+		} else {
+			append(u'+', after[newLine++]);
+		}
+	}
+	for (const auto &[prefix, lines] : chunks) {
+		add(lines.join(u'\n'), prefix == u'-'
+			? std::optional(st::boxTextFgError->c)
+			: prefix == u'+'
+			? std::optional(st::boxTextFgGood->c)
+			: std::nullopt);
+	}
+}
+
 void HistoryBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
@@ -289,8 +359,17 @@ void HistoryBox(
 			? (peerId ? U(Mokagram::Lang::Tr("Удалённые")) : U(Mokagram::Lang::Tr("Удалённые везде")))
 			: U(Mokagram::Lang::Tr("История правок")));
 	const auto selection = std::make_shared<Selection>();
-
+	auto search = static_cast<Ui::InputField*>(nullptr);
 	if (!messageId && deleted) {
+		search = content->add(
+			object_ptr<Ui::InputField>(
+				content,
+				st::defaultInputField,
+				Ui::InputField::Mode::NoNewlines,
+				rpl::single(U(Mokagram::Lang::Tr("Поиск по удалённым")))),
+			st::boxPadding);
+		search->setText(filter.text);
+
 		const auto periods = std::vector<QString>{
 			U(Mokagram::Lang::Tr("За всё время")), U(Mokagram::Lang::Tr("За сутки")), U(Mokagram::Lang::Tr("За неделю")), U(Mokagram::Lang::Tr("За месяц")) };
 		const auto types = std::vector<QString>{
@@ -306,6 +385,7 @@ void HistoryBox(
 			st::dialogsPickCancel);
 		AddButtonsRow(content, { periodButton, typeButton });
 		const auto reopen = [=](HistoryFilter next) {
+			next.text = search->getLastText().trimmed();
 			box->closeBox();
 			controller->show(Box(
 				HistoryBox,
@@ -402,6 +482,19 @@ void HistoryBox(
 		});
 	}
 
+	if (!deleted && !messageId
+		&& !Settings::Bool(u"history.save_edited"_q)) {
+		const auto enable = Ui::CreateChild<Ui::RoundButton>(
+			content.get(),
+			rpl::single(U(Mokagram::Lang::Tr("Сохранять прошлые версии правок"))),
+			st::dialogsPickButton);
+		AddButtonsRow(content, { enable });
+		enable->setClickedCallback([=] {
+			Settings::SetBool(u"history.save_edited"_q, true);
+			enable->hide();
+		});
+	}
+
 	const auto empty = content->add(
 		object_ptr<Ui::FlatLabel>(
 			content,
@@ -440,22 +533,34 @@ void HistoryBox(
 			return;
 		}
 		state->loading = true;
+		const auto generation = state->generation;
+		const auto query = search ? search->getLastText().trimmed() : QString();
 		store->loadPage(PageQuery{
 			.peer = peerId,
 			.kind = kind,
 			.id = messageId,
 			.beforeEvent = state->cursorEvent,
 			.beforeId = state->cursorId,
+			.beforePeer = state->cursorPeer,
+			.beforeRevision = state->cursorRevision,
 			.since = sinceEvent,
 			.mediaLike = mediaLike,
+			.text = query,
 			.limit = kPageSize,
 		}, [=](std::vector<Snapshot> rows) {
+			if (!weakList || !weakEmpty || state->generation != generation) {
+				return;
+			}
 			state->loading = false;
 			if (rows.size() < kPageSize) {
 				state->finished = true;
 			}
-			if (!weakList || !weakEmpty) {
-				return;
+			if (messageId && !state->cursorRevision && !rows.empty()) {
+				const auto item = session->data().message(
+					FullMsgId(PeerId(peerId), MsgId(messageId)));
+				state->newer = item
+					? std::optional(item->originalText().text)
+					: rows.front().currentText;
 			}
 			for (const auto &row : rows) {
 				auto head = FormatTime(row.event)
@@ -484,13 +589,40 @@ void HistoryBox(
 						head,
 						st::defaultSubsectionTitle),
 					QMargins(18, 14, 56, 0));
-				card->add(
-					object_ptr<Ui::FlatLabel>(
-						card,
-						body,
-						st::boxLabel),
-					QMargins(18, 6, 56, 14));
+				if (messageId && state->newer) {
+					AddTextDiff(card, row.text, *state->newer);
+				} else {
+					card->add(
+						object_ptr<Ui::FlatLabel>(card, body, st::boxLabel),
+						QMargins(18, 6, 56, 14));
+				}
+				if (messageId) {
+					state->newer = row.text;
+				} else if (!deleted) {
+					const auto compare = Ui::CreateChild<Ui::RoundButton>(
+						card.get(),
+						rpl::single(U(Mokagram::Lang::Tr("Что изменилось"))),
+						st::dialogsPickCancel);
+					AddButtonsRow(card, { compare });
+					compare->setClickedCallback([=] {
+						ShowRevisionsBox(controller, row.peer, row.id);
+					});
+				}
 				if (deleted) {
+					const auto original = FullMsgId(PeerId(row.peer), MsgId(row.id));
+					if (!query.isEmpty() && FindGhost(session, original)) {
+						const auto jump = Ui::CreateChild<Ui::RoundButton>(
+							card.get(),
+							rpl::single(U(Mokagram::Lang::Tr("Перейти к сообщению"))),
+							st::dialogsPickCancel);
+						AddButtonsRow(card, { jump });
+						jump->setClickedCallback([=] {
+							if (const auto item = FindGhost(session, original)) {
+								box->closeBox();
+								controller->showMessage(item);
+							}
+						});
+					}
 					selection->removers[key] = parts.collapse;
 					AddCheck(card, false, [=](bool on) {
 						selection->set(key, on);
@@ -502,11 +634,15 @@ void HistoryBox(
 			if (!rows.empty()) {
 				state->cursorEvent = rows.back().event;
 				state->cursorId = rows.back().id;
+				state->cursorPeer = rows.back().peer;
+				state->cursorRevision = rows.back().revision;
 			}
 			weakEmpty->setText(list->count()
 				? QString()
 				: (deleted
-					? U(Mokagram::Lang::Tr("Здесь пока нет удалённых сообщений."))
+					? U(Mokagram::Lang::Tr(query.isEmpty()
+						? "Здесь пока нет удалённых сообщений."
+						: "Ничего не найдено"))
 					: U(Mokagram::Lang::Tr("Здесь пока нет сохранённых правок."))));
 			weakEmpty->setVisible(!list->count());
 		});
@@ -518,6 +654,24 @@ void HistoryBox(
 		rpl::single(U(Mokagram::Lang::Tr("Показать ещё"))),
 		st::dialogsPickCancel);
 	more->setClickedCallback(loadMore);
+	if (search) {
+		const auto timer = new QTimer(search);
+		timer->setSingleShot(true);
+		QObject::connect(timer, &QTimer::timeout, search, loadMore);
+		search->changes() | rpl::on_next([=] {
+			const auto generation = state->generation + 1;
+			*state = PageState();
+			state->generation = generation;
+			selection->picked.clear();
+			selection->setters.clear();
+			selection->removers.clear();
+			selection->changed.fire({});
+			list->clear();
+			empty->setText(U(Mokagram::Lang::Tr("Загрузка...")));
+			empty->show();
+			timer->start(250);
+		}, search->lifetime());
+	}
 	if (messageId) {
 		AddButtonsRow(content, { more });
 		return;

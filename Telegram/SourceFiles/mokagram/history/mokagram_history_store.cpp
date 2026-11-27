@@ -169,6 +169,24 @@ void Exec(sqlite3 *db, const char *sql) {
 }
 
 // При ошибке оставляем базу и журнал нетронутыми для восстановления.
+void ContainsText(sqlite3_context *context, int, sqlite3_value **args) {
+	const auto read = [](sqlite3_value *value) {
+		const auto text = sqlite3_value_text16(value);
+		return QStringView(
+			static_cast<const char16_t*>(text),
+			sqlite3_value_bytes16(value) / int(sizeof(char16_t)));
+	};
+	const auto body = read(args[0]);
+	const auto query = read(args[1]);
+	sqlite3_result_int(context, body.contains(query, Qt::CaseInsensitive));
+}
+
+void RegisterSearch(sqlite3 *db) {
+	sqlite3_create_function_v2(
+		db, "contains_text", 2, SQLITE_UTF16 | SQLITE_DETERMINISTIC,
+		nullptr, ContainsText, nullptr, nullptr, nullptr);
+}
+
 [[nodiscard]] sqlite3 *OpenWriter(const QString &path) {
 	auto db = (sqlite3*)nullptr;
 	const auto utf8 = path.toUtf8();
@@ -178,6 +196,7 @@ void Exec(sqlite3 *db, const char *sql) {
 		SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
 		nullptr) == SQLITE_OK
 		&& CreateSchema(db)) {
+		RegisterSearch(db);
 		return db;
 	}
 	if (db) {
@@ -201,6 +220,7 @@ void Exec(sqlite3 *db, const char *sql) {
 		}
 		return nullptr;
 	}
+	RegisterSearch(db);
 	Exec(db, "PRAGMA cache_size=-4096; PRAGMA mmap_size=33554432;");
 	return db;
 }
@@ -744,11 +764,17 @@ void Store::loadPage(
 		PageQuery query,
 		Fn<void(std::vector<Snapshot>)> done) {
 	const auto weak = base::make_weak(this);
-	_impl->reader.post([=](sqlite3 *db) {
+	const auto singleMessage = (query.kind == Kind::Edited && query.id);
+	auto read = [=](sqlite3 *db) {
 		auto result = std::vector<Snapshot>();
 		auto sql = QByteArray(
-			"SELECT peer,topic,id,kind,date,event,from_id,text,ents,media,tl,reply_to,reply_peer"
-			" FROM msg WHERE (?1=0 OR peer=?1) AND kind=?2");
+			"SELECT peer,topic,id,kind,date,event,from_id,text,ents,media,tl,reply_to,reply_peer,rev");
+		if (singleMessage) {
+			sql += ", (SELECT text FROM seen WHERE peer=msg.peer AND id=msg.id)";
+		}
+		sql += query.peer
+			? " FROM msg WHERE peer=?1 AND kind=?2"
+			: " FROM msg INDEXED BY msg_by_event WHERE kind=?2";
 		if (query.since) {
 			sql += " AND event>=?8";
 		}
@@ -762,9 +788,16 @@ void Store::loadPage(
 			sql += " AND id>=?7";
 		}
 		if (query.beforeEvent) {
-			sql += " AND (event < ?3 OR (event = ?3 AND id < ?4))";
+			sql += singleMessage
+				? " AND rev < ?11"
+				: " AND (event,id,peer,rev) < (?3,?4,?10,?11)";
 		}
-		sql += " ORDER BY event DESC, id DESC, rev DESC LIMIT ?6";
+		if (!query.text.isEmpty()) {
+			sql += " AND (contains_text(text,?12) OR contains_text(media,?12))";
+		}
+		sql += singleMessage
+			? " ORDER BY rev DESC LIMIT ?6"
+			: " ORDER BY event DESC, id DESC, peer DESC, rev DESC LIMIT ?6";
 		auto stmt = Statement(db, sql.constData());
 		if (stmt.ok()) {
 			stmt.bind(1, int64(query.peer));
@@ -782,6 +815,13 @@ void Store::loadPage(
 			if (!query.mediaLike.isEmpty()) {
 				stmt.bind(9, query.mediaLike);
 			}
+			if (query.beforeEvent) {
+				stmt.bind(10, int64(query.beforePeer));
+				stmt.bind(11, query.beforeRevision);
+			}
+			if (!query.text.isEmpty()) {
+				stmt.bind(12, query.text);
+			}
 			while (stmt.step()) {
 				auto &row = result.emplace_back();
 				row.peer = uint64(stmt.int64At(0));
@@ -797,6 +837,11 @@ void Store::loadPage(
 				row.tl = stmt.blobAt(10);
 				row.replyTo = stmt.int64At(11);
 				row.replyPeer = uint64(stmt.int64At(12));
+				row.revision = stmt.int64At(13);
+				if (singleMessage
+					&& sqlite3_column_type(stmt.get(), 14) != SQLITE_NULL) {
+					row.currentText = stmt.textAt(14);
+				}
 			}
 		}
 		crl::on_main(weak, [=, result = std::move(result)]() mutable {
@@ -804,7 +849,13 @@ void Store::loadPage(
 				done(std::move(result));
 			}
 		});
-	});
+	};
+	if (query.kind == Kind::Edited) {
+		// The writer sees queued edits before a newly opened history box.
+		_impl->writer.post(std::move(read));
+	} else {
+		_impl->reader.post(std::move(read));
+	}
 }
 
 rpl::producer<> Store::changes() const {

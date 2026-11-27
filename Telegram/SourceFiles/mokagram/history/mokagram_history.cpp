@@ -766,7 +766,9 @@ constexpr auto kSeenChunk = 150;
 constexpr auto kSeenRecent = 5000;
 
 void JournalNow(not_null<HistoryItem*> item, bool replace) {
-	if (!Eligible(item, Kind::Deleted) || !IsServerMsgId(item->id)) {
+	if ((!Eligible(item, Kind::Deleted)
+		&& !(replace && Eligible(item, Kind::Edited)))
+		|| !IsServerMsgId(item->id)) {
 		return;
 	}
 	StoreFor(&item->history()->session()).journal(
@@ -876,6 +878,20 @@ bool IsGhost(not_null<const HistoryItem*> item) {
 	const auto ghosts = GhostsIfExist(&item->history()->session());
 	return ghosts
 		&& ghosts->items.contains(const_cast<HistoryItem*>(item.get()));
+}
+
+HistoryItem *FindGhost(not_null<Main::Session*> session, FullMsgId original) {
+	const auto history = session->data().historyLoaded(original.peer);
+	const auto ghosts = GhostsIfExist(session);
+	if (!history || !ghosts) {
+		return nullptr;
+	}
+	const auto state = ghosts->histories.find(history);
+	if (state == end(ghosts->histories)) {
+		return nullptr;
+	}
+	const auto item = state->second.byOrigin.find(original.msg.bare);
+	return (item != end(state->second.byOrigin)) ? item->second : nullptr;
 }
 
 void RemoveGhost(not_null<HistoryItem*> item) {
