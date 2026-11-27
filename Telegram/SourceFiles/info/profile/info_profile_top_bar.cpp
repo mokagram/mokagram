@@ -137,8 +137,12 @@ namespace {
 // Mokagram: the profile badge uses the compact toast from swrm.
 class MokaBadgeToast final : public Ui::RpWidget {
 public:
-	MokaBadgeToast(not_null<Ui::RpWidget*> parent, QString text)
+	MokaBadgeToast(
+		not_null<Ui::RpWidget*> parent,
+		not_null<Ui::RpWidget*> badge,
+		QString text)
 	: Ui::RpWidget(parent)
+	, _badge(badge)
 	, _text(std::move(text)) {
 		hide();
 		setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -149,17 +153,8 @@ public:
 		setGraphicsEffect(shadow);
 		_font.setPixelSize(style::ConvertScale(14));
 		_font.setWeight(QFont::Medium);
-		parent->sizeValue() | rpl::on_next([=](QSize size) {
-			const auto inset = style::ConvertScale(16);
-			const auto metrics = QFontMetrics(_font);
-			const auto width = std::max(0, std::min({
-				metrics.horizontalAdvance(_text) + style::ConvertScale(26),
-				style::ConvertScale(384),
-				size.width() - 2 * inset,
-			}));
-			const auto height = metrics.height() + style::ConvertScale(20);
-			setGeometry(size.width() - inset - width,
-				size.height() - inset - height, width, height);
+		parent->sizeValue() | rpl::on_next([=] {
+			updatePosition();
 		}, lifetime());
 	}
 
@@ -167,6 +162,7 @@ public:
 		const auto from = _fade.value(isVisible() ? 1. : 0.);
 		_hovered = hovered;
 		if (hovered) {
+			updatePosition();
 			show();
 			raise();
 		}
@@ -202,6 +198,34 @@ protected:
 	}
 
 private:
+	void updatePosition() {
+		if (!_badge) {
+			return;
+		}
+		const auto parent = parentWidget();
+		const auto inset = style::ConvertScale(8);
+		const auto size = parent->size();
+		const auto metrics = QFontMetrics(_font);
+		const auto width = std::max(0, std::min({
+			metrics.horizontalAdvance(_text) + style::ConvertScale(26),
+			style::ConvertScale(384),
+			size.width() - 2 * inset,
+		}));
+		const auto height = metrics.height() + style::ConvertScale(20);
+		const auto anchor = parent->mapFromGlobal(_badge->mapToGlobal(
+			QPoint(_badge->width() / 2, 0)));
+		const auto x = std::clamp(
+			anchor.x() - width / 2,
+			inset,
+			std::max(inset, size.width() - width - inset));
+		const auto below = anchor.y() + _badge->height() + inset;
+		const auto y = (below + height <= size.height() - inset)
+			? below
+			: std::max(inset, anchor.y() - height - inset);
+		setGeometry(x, y, width, height);
+	}
+
+	QPointer<Ui::RpWidget> _badge;
 	QString _text;
 	QFont _font;
 	bool _hovered = false;
@@ -664,6 +688,7 @@ TopBar::TopBar(
 			}
 			const auto toast = QPointer(new MokaBadgeToast(
 				controller->widget(),
+				badge,
 				details->description.text));
 			badge->setAttribute(Qt::WA_TransparentForMouseEvents, false);
 			QObject::connect(badge, &QObject::destroyed, toast.data(), [=] {
