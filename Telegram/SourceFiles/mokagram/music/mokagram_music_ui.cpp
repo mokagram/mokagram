@@ -3096,10 +3096,6 @@ protected:
 		if (_likeButton) {
 			_likeButton->setGeometry(heartRect());
 		}
-		if (_compactQueue && !isDisabled()) {
-			setToolTip(_titleFont->width(_track.title) > listTextRect(true).width()
-				? _track.title : QString());
-		}
 		if (_playButton) {
 			_playButton->layoutOnCover(width());
 		}
@@ -7510,7 +7506,10 @@ private:
 			if (Ui::CountContrast(colors.track, inactive) < 4.5) {
 				inactive = ContrastingForeground(colors.track);
 			}
-			active = ContrastingForeground(colors.selected);
+			const auto nearWhite = std::min({
+				colors.selected.red(), colors.selected.green(), colors.selected.blue(),
+			}) >= 224;
+			active = nearWhite ? QColor(Qt::black) : QColor(Qt::white);
 		}
 		p.setPen(anim::color(
 			inactive,
