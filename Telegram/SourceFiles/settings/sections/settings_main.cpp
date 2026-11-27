@@ -298,35 +298,37 @@ void Cover::initViewers() {
 		updatePhoneText();
 	}, lifetime());
 
-	Info::Profile::UsernameValue(
-		_user
-	) | rpl::on_next([=](const TextWithEntities &value) {
-		_username->setMarkedText(Ui::Text::Link(value.text.isEmpty()
-			? tr::marked(tr::lng_settings_username_add(tr::now))
-			: value, 1), Core::TextContext({ .session = &_user->session() }));
-		refreshGeometry(width());
-	}, lifetime());
-
-	_username->overrideLinkClickHandler([=] {
+	// Mokagram: copy the displayed tag instead of a profile link.
+	const auto copyUsername = [=] {
 		if (_controller->showFrozenError()) {
 			return;
 		}
 		const auto username = _user->username();
 		if (username.isEmpty()) {
 			_controller->show(Box(UsernamesBox, _user));
-		} else {
-			if (!Mokagram::Streamer::SetClipboard(
-					Mokagram::Streamer::Field::Username,
-					_user->session().createInternalLinkFull(username))) {
-				return;
-			}
-			_controller->showToast({
-				.text = { tr::lng_username_copied(tr::now) },
-				.iconLottie = u"toast/voip_invite"_q,
-				.iconLottieSize = st::toastLottieIconSize,
-			});
+			return;
 		}
-	});
+		if (!Mokagram::Streamer::SetClipboard(
+				Mokagram::Streamer::Field::Username,
+				'@' + username)) {
+			return;
+		}
+		_controller->showToast({
+			.text = { QString::fromUtf8(Mokagram::Lang::Tr(
+				"Имя пользователя скопировано в буфер обмена")) },
+			.iconLottie = u"toast/voip_invite"_q,
+			.iconLottieSize = st::toastLottieIconSize,
+		});
+	};
+	Info::Profile::UsernameValue(
+		_user
+	) | rpl::on_next([=](const TextWithEntities &value) {
+		_username->setMarkedText(Ui::Text::Link(value.text.isEmpty()
+			? tr::marked(tr::lng_settings_username_add(tr::now))
+			: value, 1), Core::TextContext({ .session = &_user->session() }));
+		_username->setLink(1, std::make_shared<LambdaClickHandler>(copyUsername));
+		refreshGeometry(width());
+	}, lifetime());
 }
 
 void Cover::updatePhoneText() {

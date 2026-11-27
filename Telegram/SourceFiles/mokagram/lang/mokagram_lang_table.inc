@@ -540,6 +540,7 @@
 	{ "Им можно писать что угодно. Добавляется в меню чата («Угрозы: не проверять»), здесь можно править: айди или @юзернеймы через запятую.", "You can write anything to them. Added from the chat menu (\"Threats: do not check\"), here you can edit: IDs or @usernames separated by commas." },
 	{ "Импорт настроек", "Settings import" },
 	{ "Имя и фамилия", "First and last name" },
+	{ "Имя пользователя скопировано в буфер обмена", "Username copied to clipboard" },
 	{ "Имя сниппета: буквы, цифры и _", "Snippet name: letters, digits and _" },
 	{ "Имя, например rm", "Name, for example rm" },
 	{ "Инструменты", "Tools" },

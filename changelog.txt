@@ -1,6 +1,7 @@
 mokaGram (26.11.26)
 
 - Group gifts and story shortcuts in a rounded profile card.
+- Copy the @username from the settings profile card and confirm it with a toast.
 - Keep the selected collectible's pattern and matching avatar ring in the color preview.
 - Restyle the Profile / Name switch as a themed pill.
 - Smooth the transition between Profile and Name in the color preview.
