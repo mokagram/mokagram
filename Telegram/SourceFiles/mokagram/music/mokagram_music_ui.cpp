@@ -6319,7 +6319,8 @@ private:
 		const auto y = height() / 2.;
 		const auto end = width() * _progress;
 		const auto phase = _wavePhase;
-		const auto amplitude = st::motionWaveAmplitude * _waveAmp;
+		const auto amplitude = st::motionWaveAmplitude
+			* std::max(_waveAmp, _wavePlaying ? .65 : 0.);
 		p.setPen(QPen(_colors->inactiveTrack, st::motionWaveStroke,
 			Qt::SolidLine, Qt::RoundCap));
 		p.drawLine(QPointF(std::min(end + st::motionWaveGap, double(width())), y),
