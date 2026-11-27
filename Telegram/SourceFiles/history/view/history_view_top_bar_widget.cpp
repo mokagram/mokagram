@@ -552,26 +552,45 @@ void TopBarWidget::paintEvent(QPaintEvent *e) {
 	{
 		auto hq = PainterHighQualityEnabler(p);
 		// Под скруглёнными углами шапки виден цвет плашки ниже (как музыка в профиле).
-		auto stripBelow = false;
+		auto stripBelow = QColor();
 		if (const auto parent = parentWidget()) {
-			for (const auto child : parent->children()) {
-				const auto w = qobject_cast<QWidget*>(child);
-				if (w && w != this && w->property("moka-strip").toBool()
-					&& w->isVisible()
-					&& w->y() >= y() + height() - 2) {
-					stripBelow = true;
+			// Mokagram: use the first strip's surface, including in the light palette.
+			const auto findStrip = [&](QWidget *container, int top) {
+				for (const auto child : container->children()) {
+					const auto w = qobject_cast<QWidget*>(child);
+					if (w && w->isVisible() && w->height() > 0
+						&& std::abs(w->y() - top) <= st::lineWidth) {
+						const auto color = w->property("moka-strip-background").value<QColor>();
+						if (color.isValid()) {
+							return color;
+						}
+					}
+				}
+				return QColor();
+			};
+			const auto bottom = y() + height();
+			stripBelow = findStrip(parent, bottom);
+			if (!stripBelow.isValid()) {
+				for (const auto child : parent->children()) {
+					const auto w = qobject_cast<QWidget*>(child);
+					if (w && w->isVisible() && w->property("moka-strip-stack").toBool()
+						&& std::abs(w->y() - bottom) <= st::lineWidth) {
+						stripBelow = findStrip(w, 0);
+						break;
+					}
 				}
 			}
 		}
+		const auto radius = style::ConvertScale(22);
 		p.fillRect(
-			QRect(0, st::topBarHeight - 22, width(), 22),
-			st::topBarBg->c.darker(stripBelow ? 135 : 112));
+			QRect(0, st::topBarHeight - radius, width(), radius),
+			stripBelow.isValid() ? stripBelow : st::topBarBg->c.darker(112));
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::topBarBg);
 		p.drawRoundedRect(
-			QRectF(0, -22, width(), st::topBarHeight + 22),
-			22,
-			22);
+			QRectF(0, -radius, width(), st::topBarHeight + radius),
+			radius,
+			radius);
 	}
 	if (slidingTop < 0) {
 		p.translate(0, slidingTop + st::topBarHeight);

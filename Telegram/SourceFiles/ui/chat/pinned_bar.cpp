@@ -30,8 +30,13 @@ PinnedBar::PinnedBar(
 , _customEmojiPaused(std::move(customEmojiPaused)) {
 	_wrap.hide(anim::type::instant);
 	_shadow->hide();
-
-
+	// Mokagram: publish the strip surface on the wrapper in the chat layout.
+	const auto updateStripPalette = [=] {
+		_wrap.setProperty("moka-strip-background", st::topBarBg->c.darker(135));
+		_wrap.entity()->update();
+	};
+	updateStripPalette();
+	style::PaletteChanged() | rpl::on_next(updateStripPalette, lifetime());
 
 	_wrap.entity()->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
@@ -39,31 +44,33 @@ PinnedBar::PinnedBar(
 		auto p = QPainter(_wrap.entity());
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
-		p.setBrush(st::topBarBg->c.darker(135));
+		p.setBrush(_wrap.property("moka-strip-background").value<QColor>());
 		const auto bar = _wrap.entity();
-		bar->setProperty("moka-strip", true);
 		// Если ниже стоит ещё одна плашка (перевод), в углах виден её цвет.
-		auto below = false;
-		if (const auto parent = bar->parentWidget()) {
+		auto below = QColor();
+		if (const auto parent = _wrap.parentWidget()) {
 			for (const auto child : parent->children()) {
 				const auto w = qobject_cast<QWidget*>(child);
-				if (w && w != bar && w->property("moka-strip").toBool()
-					&& w->isVisible()
-					&& w->y() >= bar->y() + bar->height() - 2) {
-					below = true;
+				if (w && w != &_wrap && w->isVisible() && w->height() > 0
+					&& std::abs(w->y() - _wrap.y() - _wrap.height()) <= st::lineWidth) {
+					below = w->property("moka-strip-background").value<QColor>();
+					if (below.isValid()) {
+						break;
+					}
 				}
 			}
 		}
-		if (below) {
+		const auto radius = style::ConvertScale(22);
+		if (below.isValid()) {
 			// Под скруглёнными углами виден цвет плашки перевода.
 			p.fillRect(
-				QRect(0, bar->height() - 22, bar->width(), 22),
-				st::topBarBg->c.darker(175));
+				QRect(0, bar->height() - radius, bar->width(), radius),
+				below);
 		}
 		p.drawRoundedRect(
-			QRectF(bar->rect()).adjusted(0, -22, 0, 0),
-			22,
-			22);
+			QRectF(bar->rect()).adjusted(0, -radius, 0, 0),
+			radius,
+			radius);
 	}, lifetime());
 
 	if (customEmojiPausedChanges) {

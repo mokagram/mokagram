@@ -281,7 +281,6 @@ void TranslateBar::setup(not_null<History*> history) {
 	};
 	const auto button = static_cast<Ui::AbstractButton*>(_wrap.entity());
 	button->resize(0, st::historyTranslateBarHeight);
-	button->setProperty("moka-strip", true);
 	// Mokagram: keep the strip on a tonal surface in the active chat palette.
 	const auto stripBackground = [] {
 		return anim::color(st::topBarBg->c, st::windowFg->c, .035);
@@ -328,6 +327,7 @@ void TranslateBar::setup(not_null<History*> history) {
 		st::historyTranslateSettings);
 	settings->setClickedCallback([=] { showMenu(createMenu(settings)); });
 	const auto updateStripPalette = [=] {
+		_wrap.setProperty("moka-strip-background", stripBackground());
 		const auto ink = stripForeground();
 		label->setTextColorOverride(ink);
 		settings->setIconColorOverride(ink);

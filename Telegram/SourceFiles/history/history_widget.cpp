@@ -533,6 +533,8 @@ HistoryWidget::HistoryWidget(
 , _topShadow(this) {
 	setAcceptDrops(true);
 	setVisualTabOrder(true);
+	// Mokagram: expose the adjoining strip surface to the chat header.
+	_topBars->setProperty("moka-strip-stack", true);
 
 	// Mokagram: панель ввода рисуется слоем поверх ленты, чтобы
 	// переписка была видна под скруглёнными углами и по бокам баббла.
@@ -10285,6 +10287,7 @@ void HistoryWidget::setupTranslateBar() {
 		_translateBarHeight = height;
 		updateHistoryGeometry();
 		updateControlsGeometry();
+		_topBar->update(); // Mokagram: redraw the seam when the strip opens or closes.
 		_topDelta = 0;
 	}, _translateBar->lifetime());
 
