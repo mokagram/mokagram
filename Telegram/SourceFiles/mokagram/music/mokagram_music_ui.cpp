@@ -8437,18 +8437,15 @@ public:
 			}
 		});
 		_coverTitleTimer.setTimerType(Qt::PreciseTimer);
-		_coverTitleTimer.setInterval(16);
+		// Request frames more often than a 60 Hz display presents them.
+		_coverTitleTimer.setInterval(8);
 		connect(&_coverTitleTimer, &QTimer::timeout, this, [=] {
-			const auto now = crl::now();
-			const auto delta = std::min<crl::time>(now - _titleTickAt, 32);
-			_titleTickAt = now;
+			advanceTitleClock();
 			const auto layout = computeLayout();
 			if (_coverTitleMoves && _hover != InfoHover::Title) {
-				_titleElapsed[0] += delta;
 				update(metadataLines(layout.info, false).title);
 			}
 			if (_barTitleMoves && _hover != InfoHover::BarTitle) {
-				_titleElapsed[1] += delta;
 				const auto title = metadataLines(barInfoRect(layout), true).title;
 				if (_tab == Tab::Home) {
 					_playbackBar->update(title.translated(-_playbackBar->pos()));
@@ -8663,6 +8660,7 @@ protected:
 	enum class InfoHover { None, Title, Artist, Cover, BarCover, BarTitle, BarArtist };
 	void setHover(InfoHover hover) {
 		if (_hover != hover) {
+			if (_coverTitleTimer.isActive()) advanceTitleClock();
 			_hover = hover;
 			setCursor((hover == InfoHover::None)
 				? style::cur_default
@@ -8901,6 +8899,18 @@ protected:
 			QRect(area.x(), top + titleHeight + gap, area.width(), artistHeight),
 		};
 	}
+	void advanceTitleClock() {
+		const auto now = crl::now();
+		const auto delta = now - _titleTickAt;
+		_titleTickAt = now;
+		if (_coverTitleMoves && _hover != InfoHover::Title) {
+			_titleElapsed[0] += delta;
+		}
+		if (_barTitleMoves && _hover != InfoHover::BarTitle) {
+			_titleElapsed[1] += delta;
+		}
+	}
+
 	void updateCoverTitleScroll() {
 		using namespace PlayerStyle;
 		const auto layout = computeLayout();
@@ -8945,9 +8955,22 @@ protected:
 		const auto speed = style::ConvertScale(38) / 1000.;
 		const auto distance = textWidth + style::ConvertScale(36);
 		const auto pause = 1100.;
-		const auto cycle = pause + distance / speed;
-		const auto elapsed = current ? std::fmod(double(_titleElapsed[compact]), cycle) : 0.;
-		const auto offset = std::max(elapsed - pause, 0.) * speed;
+		const auto ramp = 300.;
+		const auto travel = distance / speed + ramp;
+		const auto cycle = pause + travel;
+		const auto sinceTick = (_coverTitleTimer.isActive() && _hover != hover)
+			? crl::now() - _titleTickAt
+			: 0;
+		const auto elapsed = current
+			? std::fmod(double(_titleElapsed[compact] + sinceTick), cycle)
+			: 0.;
+		const auto time = std::max(elapsed - pause, 0.);
+		const auto remaining = travel - time;
+		const auto offset = (time < ramp)
+			? speed * time * time / (2. * ramp)
+			: (remaining < ramp)
+			? distance - speed * remaining * remaining / (2. * ramp)
+			: speed * (time - ramp / 2.);
 		const auto color = p.pen().color();
 		const auto dpr = devicePixelRatioF();
 		auto text = QImage(
@@ -8959,11 +8982,16 @@ protected:
 			auto layer = QPainter(&text);
 			auto hq = PainterHighQualityEnabler(layer);
 			const auto baseline = (rect.height() + metrics.ascent() - metrics.descent()) / 2.;
-			auto glyphs = QPainterPath();
-			glyphs.addText(QPointF(0., baseline), font, title);
-			if (font.underline()) {
-				glyphs.addRect(QRectF(0., baseline + metrics.underlinePos(), textWidth, metrics.lineWidth()));
+			auto &cached = _titlePaths[compact];
+			if (cached.title != title || cached.font != font || cached.baseline != baseline) {
+				cached = { title, font, baseline, QPainterPath() };
+				cached.path.addText(QPointF(0., baseline), font, title);
+				if (font.underline()) {
+					cached.path.addRect(QRectF(
+						0., baseline + metrics.underlinePos(), textWidth, metrics.lineWidth()));
+				}
 			}
+			const auto &glyphs = cached.path;
 			layer.translate(-offset, 0.);
 			layer.fillPath(glyphs, color);
 			if (distance - offset < rect.width()) {
@@ -8972,9 +9000,10 @@ protected:
 			}
 			layer.resetTransform();
 			layer.setCompositionMode(QPainter::CompositionMode_DestinationIn);
-			const auto feather = std::min(style::ConvertScale(14), rect.width() / 2);
+			const auto feather = std::min<double>(style::ConvertScale(14), rect.width() / 2.);
 			auto mask = QLinearGradient(0., 0., rect.width(), 0.);
-			mask.setColorAt(0., offset > 0. ? Qt::transparent : Qt::black);
+			mask.setColorAt(0., QColor(0, 0, 0, qRound(
+				255. * (1. - std::clamp(std::min(offset, distance - offset) / feather, 0., 1.)))));
 			mask.setColorAt(feather / double(rect.width()), Qt::black);
 			mask.setColorAt(1. - feather / double(rect.width()), Qt::black);
 			mask.setColorAt(1., Qt::transparent);
@@ -12562,6 +12591,13 @@ private:
 	AudioMsgId _playbackArtworkFor;
 	std::shared_ptr<Data::DocumentMedia> _playbackArtworkMedia;
 	rpl::lifetime _playbackArtworkLifetime;
+	struct TitlePath {
+		QString title;
+		QFont font;
+		qreal baseline = 0.;
+		QPainterPath path;
+	};
+	mutable std::array<TitlePath, 2> _titlePaths;
 	QTimer _coverTitleTimer;
 	std::array<crl::time, 2> _titleElapsed = {};
 	crl::time _titleTickAt = 0;
