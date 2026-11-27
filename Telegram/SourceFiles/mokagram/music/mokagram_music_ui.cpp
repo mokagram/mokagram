@@ -7853,6 +7853,25 @@ public:
 			_tabScroll->scrollToY(_homeAlbumReturnScroll);
 		}));
 		_homeBack->hide();
+		const auto makeArtistEdge = [=](bool bottom) {
+			const auto edge = Ui::CreateChild<Ui::RpWidget>(_tabScroll->viewport());
+			edge->setAttribute(Qt::WA_TransparentForMouseEvents);
+			edge->paintOn([=](QPainter &p) {
+				paintBackgroundPart(p, edge->rect(), edge->mapTo(this, QPoint()));
+			});
+			auto mask = QLinearGradient(0., bottom ? 1. : 0., 0., bottom ? 0. : 1.);
+			mask.setCoordinateMode(QGradient::ObjectBoundingMode);
+			mask.setColorAt(0., Qt::black);
+			mask.setColorAt(1., Qt::transparent);
+			const auto effect = new QGraphicsOpacityEffect(edge);
+			effect->setOpacity(1.);
+			effect->setOpacityMask(QBrush(mask));
+			edge->setGraphicsEffect(effect);
+			edge->hide();
+			return edge;
+		};
+		_homeArtistTopEdge = makeArtistEdge(false);
+		_homeArtistBottomEdge = makeArtistEdge(true);
 		_homeArtistBar = Ui::CreateChild<Ui::RpWidget>(_tabScroll->viewport());
 		_homeArtistBar->setAttribute(Qt::WA_TransparentForMouseEvents);
 		_homeArtistBarOpacity = new QGraphicsOpacityEffect(_homeArtistBar);
@@ -7861,7 +7880,7 @@ public:
 		_homeArtistBar->paintOn([=](QPainter &p) {
 			const auto s = [](int value) { return style::ConvertScale(value); };
 			auto hq = PainterHighQualityEnabler(p);
-			p.fillRect(_homeArtistBar->rect(), st::boxBg);
+			paintBackgroundPart(p, _homeArtistBar->rect(), _homeArtistBar->mapTo(this, QPoint()));
 			const auto side = s(BoxParts::kOuterSide);
 			const auto inner = _homeArtistBar->rect().adjusted(side, 0, -side, -s(kMusicListGap));
 			PaintMusicCard(p, inner);
@@ -10106,23 +10125,37 @@ protected:
 	void updateHomeArtistBar() {
 		if (_tab != Tab::Home || !_homeArtistOpen || !_homeAlbumHeader) {
 			_homeArtistBar->hide();
+			_homeArtistTopEdge->hide();
+			_homeArtistBottomEdge->hide();
 			return;
 		}
 
 		const auto s = [](int value) { return style::ConvertScale(value); };
 		const auto height = s(56);
-		const auto remaining = _homeAlbumHeader->height() - _tabScroll->scrollTop();
+		const auto scrollTop = _tabScroll->scrollTop();
+		const auto remaining = _homeAlbumHeader->height() - scrollTop;
 		const auto ratio = std::clamp((2 * height - remaining) / double(height), 0., 1.);
 		const auto opacity = ratio * ratio * (3. - 2. * ratio);
 		_homeAlbumHeader->setArtistIdentityOpacity(1. - opacity);
-		_homeArtistBar->setVisible(opacity > 0.);
-		if (opacity <= 0.) return;
-
-		const auto width = _tabScroll->viewport()->width();
-		_homeArtistBar->setGeometry(0, 0, width, height + s(kMusicListGap));
-		_homeArtistBarOpacity->setOpacity(opacity);
-		_homeArtistBar->raise();
-		_homeArtistBar->update();
+		const auto viewport = _tabScroll->viewport()->size();
+		const auto barHeight = (opacity > 0.) ? height + s(kMusicListGap) : 0;
+		const auto fadeHeight = std::clamp((viewport.height() - barHeight) / 2, 0, s(28));
+		const auto placeEdge = [&](Ui::RpWidget *edge, int y, bool clipped) {
+			edge->setGeometry(0, y, viewport.width(), fadeHeight);
+			edge->setVisible(clipped && fadeHeight > 0);
+			edge->raise();
+		};
+		placeEdge(_homeArtistTopEdge, int(base::SafeRound(barHeight * opacity)),
+			scrollTop > 0);
+		placeEdge(_homeArtistBottomEdge, viewport.height() - fadeHeight,
+			scrollTop < _tabScroll->scrollTopMax());
+		_homeArtistBar->setVisible(barHeight > 0);
+		if (barHeight > 0) {
+			_homeArtistBar->setGeometry(0, 0, viewport.width(), barHeight);
+			_homeArtistBarOpacity->setOpacity(opacity);
+			_homeArtistBar->raise();
+			_homeArtistBar->update();
+		}
 	}
 
 	void openHomeArtist(ArtistInfo artist, Track track) {
@@ -11635,6 +11668,9 @@ private:
 		update();
 		_view->update();
 		_queuePanel->update();
+		_homeArtistBar->update();
+		_homeArtistTopEdge->update();
+		_homeArtistBottomEdge->update();
 	}
 
 	void repaintAnimatedBackdrop(crl::time now, bool finished = false) {
@@ -12028,6 +12064,8 @@ private:
 		}
 	} };
 	Ui::RpWidget *_homeArtistBar = nullptr;
+	Ui::RpWidget *_homeArtistTopEdge = nullptr;
+	Ui::RpWidget *_homeArtistBottomEdge = nullptr;
 	QGraphicsOpacityEffect *_homeArtistBarOpacity = nullptr;
 	const not_null<RoundGlyph*> _filter;
 	base::unique_qptr<Ui::PopupMenu> _filterMenu;
