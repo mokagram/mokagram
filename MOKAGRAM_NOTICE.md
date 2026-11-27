@@ -73,3 +73,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Third-party waffle photographs
+
+The photographs below were cut out and resized. The resulting images use
+[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
+
+- `tyanka_waffle_heart.png`: [Waffel.jpg](https://commons.wikimedia.org/wiki/File:Waffel.jpg) by Rainer Zenz.
+- `tyanka_waffle_belgian.png`: [Waffle DSC00575.jpg](https://commons.wikimedia.org/wiki/File:Waffle_DSC00575.jpg) by David Monniaux.

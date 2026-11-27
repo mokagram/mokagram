@@ -7,12 +7,24 @@
 
 class HistoryItem;
 
+namespace Mokagram::Music {
+struct Track;
+} // namespace Mokagram::Music
+
 namespace Mokagram::TyankaHikka {
+
+enum class WaffleBark {
+	Double,
+	Single,
+	Triple,
+	Alternate,
+};
 
 void Start();
 void Finish();
 [[nodiscard]] bool IsArtist(const QString &name);
 void Unlock();
+void PlayWaffleBarks(const Music::Track &track, WaffleBark bark);
 void OnOwnMessage();
 void OnIncomingMessage(not_null<HistoryItem*> item);
 

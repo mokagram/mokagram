@@ -148,6 +148,7 @@
 #include <QtCore/QPointer>
 #include <array>
 #include <cmath>
+#include <numbers>
 #include <tuple>
 
 namespace Mokagram::Music {
@@ -4964,6 +4965,76 @@ private:
 	return facts.join(u" · "_q);
 }
 
+[[nodiscard]] bool WaffleMotionEnabled() {
+	return !anim::Disabled() && !PowerSaving::On(PowerSaving::kAnimations);
+}
+
+class WaffleButton final : public HomeTonalControl {
+public:
+	WaffleButton(QWidget *parent, QImage image, int index)
+	: HomeTonalControl(parent)
+	, _image(std::move(image))
+	, _index(index) {
+		setAccessibleName(PlaylistText("Вафля %1").arg(index + 1));
+	}
+
+	void floatAt(crl::time now) {
+		constexpr auto kFloatPeriod = crl::time(6200);
+		_phase = (now % kFloatPeriod) * (2. * std::numbers::pi / kFloatPeriod);
+		update();
+	}
+
+protected:
+	void onStateChanged(State was, StateChangeSource source) override {
+		HomeTonalControl::onStateChanged(was, source);
+		if (!((was ^ state()) & StateFlag::Down)) return;
+		if (!WaffleMotionEnabled()) {
+			_press.stop();
+			return;
+		}
+		const auto down = isDown();
+		const auto current = _press.value(down ? 0. : 1.);
+		const auto from = (!down && isOver()) ? std::max(current, .5) : current;
+		_press.start([this] { update(); }, from, down ? 1. : 0.,
+			down ? 100 : 160, anim::easeOutQuint);
+	}
+
+	void paintEvent(QPaintEvent *) override {
+		auto p = QPainter(this);
+		const auto hq = PainterHighQualityEnabler(p);
+		const auto animated = WaffleMotionEnabled();
+		const auto press = animated ? _press.value(isDown() ? 1. : 0.) : 0.;
+		const auto phase = _phase + 1.7 * _index;
+		const auto inset = style::ConvertScale(8);
+		const auto available = rect().size() - QSize(2 * inset, 2 * inset);
+		const auto size = QSizeF(_image.size()).scaled(available, Qt::KeepAspectRatio);
+		p.save();
+		p.translate(QRectF(rect()).center());
+		if (animated) {
+			p.translate(0., style::ConvertScale(4) * std::sin(phase));
+		}
+		p.rotate((_index % 2 ? 8. : -8.) + (animated ? 4. * std::cos(phase) : 0.));
+		p.scale(1. - .08 * press, 1. - .18 * press);
+		if (isDown() || isOver()) p.setOpacity(isDown() ? .84 : .94);
+		p.drawImage(QRectF(-size.width() / 2., -size.height() / 2.,
+			size.width(), size.height()), _image);
+		p.restore();
+		if (hasFocus()) {
+			const auto stroke = style::ConvertScale(2);
+			p.setPen(QPen(st::windowFg->c, stroke));
+			p.setBrush(Qt::NoBrush);
+			p.drawRoundedRect(rect().adjusted(stroke, stroke, -stroke, -stroke),
+				inset, inset);
+		}
+	}
+
+private:
+	const QImage _image;
+	const int _index;
+	double _phase = 0.;
+	Ui::Animations::Simple _press;
+};
+
 class HomeAlbumHeader final : public Ui::RpWidget {
 public:
 	HomeAlbumHeader(
@@ -4976,7 +5047,8 @@ public:
 		bool isArtist,
 		QString bannerUrl,
 		Fn<void()> openArtist,
-		Fn<void()> bannerReady)
+		Fn<void()> bannerReady,
+		const Track *waffleTrack)
 	: RpWidget(parent)
 	, _album(std::move(album))
 	, _isArtist(isArtist)
@@ -5059,6 +5131,9 @@ public:
 				if (bannerReady) bannerReady();
 			}));
 		}
+		if (waffleTrack) {
+			setupWaffles(*waffleTrack);
+		}
 	}
 
 	void setArtistIdentityOpacity(double opacity) {
@@ -5075,11 +5150,37 @@ public:
 	}
 
 protected:
+	void showEvent(QShowEvent *e) override {
+		RpWidget::showEvent(e);
+		updateWaffleMotion();
+	}
+
+	void hideEvent(QHideEvent *e) override {
+		if (_waffleMotion.animating()) {
+			_waffleMotion.stop();
+		}
+		RpWidget::hideEvent(e);
+	}
+
 	void resizeEvent(QResizeEvent *e) override {
 		RpWidget::resizeEvent(e);
 		_layout = geometryForWidth(width());
 		_cover->setGeometry(_layout.art);
 		if (_artist) _artist->setGeometry(_layout.author);
+		if (_waffles.front()) {
+			const auto side = waffleSide(width());
+			const auto edge = style::ConvertScale(BoxParts::kOuterSide);
+			for (auto i = 0; i != int(_waffles.size()); ++i) {
+				const auto button = _waffles[i];
+				if (side > 0) {
+					const auto left = (i < 2) ? edge : width() - edge - side;
+					const auto center = _layout.card.height() * (1 + 2 * (i % 2)) / 4;
+					button->setGeometry(left, center - side / 2, side, side);
+				}
+				button->setVisible(side > 0);
+			}
+			updateWaffleMotion();
+		}
 	}
 
 	int resizeGetHeight(int newWidth) override {
@@ -5163,6 +5264,56 @@ protected:
 	}
 
 private:
+	void setupWaffles(const Track &track) {
+		using Bark = TyankaHikka::WaffleBark;
+		static constexpr auto kWaffles = std::to_array<std::pair<const char*, Bark>>({
+			{ ":/gui/art/tyanka_waffle_rect.png", Bark::Double },
+			{ ":/gui/art/tyanka_waffle_heart.png", Bark::Single },
+			{ ":/gui/art/tyanka_waffle_round.png", Bark::Triple },
+			{ ":/gui/art/tyanka_waffle_belgian.png", Bark::Alternate },
+		});
+		_waffleTrack = track;
+		for (auto i = 0; i != int(kWaffles.size()); ++i) {
+			const auto [resource, bark] = kWaffles[i];
+			const auto button = _waffles[i] = Ui::CreateChild<WaffleButton>(
+				this, QImage(QString::fromLatin1(resource)), i);
+			button->hide();
+			button->setClickedCallback([this, bark] {
+				TyankaHikka::PlayWaffleBarks(_waffleTrack, bark);
+			});
+		}
+		_waffleMotion.init([this](crl::time now) {
+			if (!visibleRegion().isEmpty()) {
+				for (const auto waffle : _waffles) waffle->floatAt(now);
+			}
+			return true;
+		});
+		anim::Disables() | rpl::on_next([this] { updateWaffleMotion(); }, lifetime());
+		PowerSaving::Changes() | rpl::on_next([this] { updateWaffleMotion(); }, lifetime());
+		connect(qApp, &QGuiApplication::applicationStateChanged, this, [this] {
+			updateWaffleMotion();
+		});
+	}
+
+	void updateWaffleMotion() {
+		if (!_waffles.front()) return;
+		const auto run = _waffles.front()->isVisible() && WaffleMotionEnabled()
+			&& QGuiApplication::applicationState() == Qt::ApplicationActive;
+		if (run && !_waffleMotion.animating()) {
+			_waffleMotion.start();
+		} else if (!run && _waffleMotion.animating()) {
+			_waffleMotion.stop();
+			for (const auto waffle : _waffles) waffle->update();
+		}
+	}
+
+	[[nodiscard]] int waffleSide(int width) const {
+		const auto s = [](int v) { return style::ConvertScale(v); };
+		return (!_waffles.front() || width < s(560))
+			? 0
+			: std::clamp((width - s(440)) / 2 - s(20), s(48), s(80));
+	}
+
 	struct HeaderLayout {
 		QRect card;
 		QRect banner;
@@ -5178,7 +5329,8 @@ private:
 
 	[[nodiscard]] HeaderLayout geometryForWidth(int width) const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto side = s(BoxParts::kOuterSide);
+		const auto waffle = waffleSide(width);
+		const auto side = s(BoxParts::kOuterSide) + (waffle ? waffle + s(8) : 0);
 		const auto cardWidth = std::max(width - 2 * side, 0);
 		const auto inset = std::min(s(16), cardWidth / 2);
 		const auto left = side + inset;
@@ -5312,6 +5464,9 @@ private:
 	int _authorWidth = 0;
 	int _avatarSpace = 0;
 	double _identityOpacity = 1.;
+	Track _waffleTrack;
+	std::array<WaffleButton*, 4> _waffles = {};
+	Ui::Animations::Basic _waffleMotion;
 };
 
 class HomeArtistLikesCard final : public HomeTonalControl {
@@ -11183,6 +11338,11 @@ protected:
 						}
 					});
 				}
+				// https://soundcloud.com/tyankahikka/ahegao
+				const auto waffleTrack = _homeAlbumIsTrack && count == 1
+					&& _homeAlbumTracks.front().id == u"2413072539"_q
+					? &_homeAlbumTracks.front()
+					: nullptr;
 				const auto albumHeader = _tabList->add(object_ptr<HomeAlbumHeader>(
 					_tabList, _homeAlbum, facts, avatar, _homeAlbumIsTrack,
 					crl::guard(this, [=](QImage image, QRect source) {
@@ -11193,7 +11353,7 @@ protected:
 						updateHomeArtistBar();
 						_queuePanel->update();
 						update();
-					})), QMargins(0, 0, 0, style::ConvertScale(8)));
+					}), waffleTrack), QMargins(0, 0, 0, style::ConvertScale(8)));
 				_homeAlbumHeader = albumHeader;
 				if (!_homeAlbumIsTrack && !_homeArtistOpen) InstallAlbumContextMenu(albumHeader, _controller, _homeAlbum);
 

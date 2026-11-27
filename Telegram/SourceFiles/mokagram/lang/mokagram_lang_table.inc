@@ -1258,6 +1258,7 @@
 	{ "Одно «ваф» при отправке сообщения и два «ваф» при входящем в открытом чате.", "Play one woof when you send a message and two when a message arrives in the open chat." },
 	{ "Тянка хикка включена. Аудиофайл не найден.", "Tyanka Hikka mode is on. The audio file is missing." },
 	{ "Режим «Тянка хикка» включён", "Tyanka Hikka mode is on" },
+	{ "Вафля %1", "Waffle %1" },
 	{ "Показать в чате", "Show in chat" },
 	{ "Отправить плагин", "Send plugin" },
 	{ "треков: %1", "tracks: %1" },

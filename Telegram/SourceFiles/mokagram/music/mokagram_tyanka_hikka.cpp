@@ -4,6 +4,7 @@
 #include "mokagram/music/mokagram_tyanka_hikka.h"
 
 #include "base/timer.h"
+#include "base/weak_ptr.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "history/history_item.h"
@@ -38,6 +39,15 @@ constexpr auto kBarks = std::to_array<ClipTiming>({
 	{ 50720, 50970 },
 	{ 55180, 55490 },
 });
+
+[[nodiscard]] std::unique_ptr<Media::Audio::Track> LoadBark(
+		const QString &path,
+		int index) {
+	const auto timing = kBarks[index];
+	auto bark = Media::Audio::Current().createTrack();
+	bark->fillFromFile(path, timing.start, timing.end - timing.start);
+	return bark->failed() ? nullptr : std::move(bark);
+}
 
 [[nodiscard]] QString SettingKey() {
 	return u"player.tyanka_hikka"_q;
@@ -80,11 +90,12 @@ void RegisterSetting(bool unlocked) {
 	});
 }
 
-class Mode final {
+class Mode final : public base::has_weak_ptr {
 public:
 	Mode()
 	: _unlocked(QFile::exists(UnlockPath()))
-	, _nextBarkTimer([this] { playNextBark(); }) {
+	, _nextBarkTimer([this] { playNextBark(); })
+	, _waffleBarkTimer([this] { playNextWaffleBark(); }) {
 		RegisterSetting(_unlocked);
 		Settings::BoolValue(SettingKey()) | rpl::on_next([this](bool enabled) {
 			setEnabled(_unlocked && enabled);
@@ -121,6 +132,39 @@ public:
 		}
 	}
 
+	void playWaffle(const Music::Track &track, WaffleBark bark) {
+		if (!Core::App().settings().notificationsVolume()) {
+			return;
+		}
+		switch (bark) {
+		case WaffleBark::Double: _waffleBark = 0; _waffleCount = 2; break;
+		case WaffleBark::Single: _waffleBark = 1; _waffleCount = 1; break;
+		case WaffleBark::Triple: _waffleBark = 2; _waffleCount = 3; break;
+		case WaffleBark::Alternate: _waffleBark = 2; _waffleCount = 1; break;
+		}
+		if (_waffleBarkTimer.isActive() || _waffleLoading) {
+			return;
+		}
+		if (_wafflePath.isEmpty()) {
+			_wafflePath = TrackPath();
+			if (_wafflePath.isEmpty()) {
+				_waffleLoading = true;
+				Music::Download(track, [weak = base::make_weak(this)](
+						const QString &path, const QString &error) {
+					if (const auto self = weak.get()) {
+						self->_waffleLoading = false;
+						if (error.isEmpty() && !path.isEmpty()) {
+							self->_wafflePath = path;
+							self->playNextWaffleBark();
+						}
+					}
+				});
+				return;
+			}
+		}
+		playNextWaffleBark();
+	}
+
 private:
 	void setEnabled(bool enabled) {
 		_enabled = enabled;
@@ -150,11 +194,8 @@ private:
 
 		auto &bark = _barks[_nextBark];
 		if (!bark) {
-			const auto timing = kBarks[_nextBark];
-			bark = Media::Audio::Current().createTrack();
-			bark->fillFromFile(_path, timing.start, timing.end - timing.start);
-			if (bark->failed()) {
-				bark.reset();
+			bark = LoadBark(_path, _nextBark);
+			if (!bark) {
 				_path.clear();
 				_pendingBarks = 0;
 				return;
@@ -166,6 +207,26 @@ private:
 		_nextBarkTimer.callOnce(bark->getLengthMs() + kBarkGap);
 	}
 
+	void playNextWaffleBark() {
+		if (!_waffleCount || !Core::App().settings().notificationsVolume()) {
+			_waffleCount = 0;
+			return;
+		}
+		auto &bark = _waffleBarks[_waffleBark];
+		if (!bark) {
+			bark = LoadBark(_wafflePath, _waffleBark);
+			if (!bark) {
+				_wafflePath.clear();
+				_waffleCount = 0;
+				return;
+			}
+		}
+		--_waffleCount;
+		_waffleBark = (_waffleBark + 1) % kBarks.size();
+		bark->playOnce();
+		_waffleBarkTimer.callOnce(bark->getLengthMs() + kBarkGap);
+	}
+
 	bool _unlocked = false;
 	bool _enabled = false;
 	QString _path;
@@ -173,6 +234,12 @@ private:
 	size_t _nextBark = 0;
 	std::array<std::unique_ptr<Media::Audio::Track>, kBarks.size()> _barks;
 	base::Timer _nextBarkTimer;
+	QString _wafflePath;
+	bool _waffleLoading = false;
+	int _waffleBark = 0;
+	int _waffleCount = 0;
+	std::array<std::unique_ptr<Media::Audio::Track>, kBarks.size()> _waffleBarks;
+	base::Timer _waffleBarkTimer;
 	rpl::lifetime _lifetime;
 };
 
@@ -197,6 +264,12 @@ bool IsArtist(const QString &name) {
 void Unlock() {
 	if (Instance) {
 		Instance->unlock();
+	}
+}
+
+void PlayWaffleBarks(const Music::Track &track, WaffleBark bark) {
+	if (Instance) {
+		Instance->playWaffle(track, bark);
 	}
 }
 

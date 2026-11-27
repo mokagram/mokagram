@@ -6,6 +6,10 @@
     <file alias="art/business_logo.png">../../art/business_logo.png</file>
     <file alias="art/affiliate_logo.png">../../art/affiliate_logo.png</file>
     <file alias="art/mokagram_music_hint.png">../../art/mokagram_music_hint.png</file>
+    <file alias="art/tyanka_waffle_rect.png">../../art/tyanka_waffle_rect.png</file>
+    <file alias="art/tyanka_waffle_round.png">../../art/tyanka_waffle_round.png</file>
+    <file alias="art/tyanka_waffle_heart.png">../../art/tyanka_waffle_heart.png</file>
+    <file alias="art/tyanka_waffle_belgian.png">../../art/tyanka_waffle_belgian.png</file>
     <!-- Mokagram: supplied golden frame for message screenshots. -->
     <file alias="art/mokagram_ramka.jpg">../../art/mokagram_ramka.jpg</file>
     <file alias="art/moka_support_ozon.png">../../art/moka_support_ozon.png</file>
