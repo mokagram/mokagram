@@ -7559,7 +7559,12 @@ constexpr auto kHomeSideGlowMin = 96;
 	return std::max((width - style::ConvertScale(kMusicListMaxWidth)) / 2, 0);
 }
 
-void PaintHomeSideGlow(QPainter &p, QRect band, QColor tint, bool light) {
+void PaintHomeSideGlow(
+		QPainter &p,
+		QRect band,
+		QColor tint,
+		bool light,
+		double pulse) {
 	const auto side = HomeSideGlowWidth(band.width());
 	const auto minimum = style::ConvertScale(kHomeSideGlowMin);
 	if (side <= minimum || band.isEmpty() || !tint.alpha()) {
@@ -7567,7 +7572,8 @@ void PaintHomeSideGlow(QPainter &p, QRect band, QColor tint, bool light) {
 	}
 	const auto strength = std::min(
 		(side - minimum) / double(style::ConvertScale(64)), 1.);
-	tint.setAlphaF(tint.alphaF() * strength * (light ? .16 : .30));
+	const auto opacity = light ? (.16 + .08 * pulse) : (.30 + .14 * pulse);
+	tint.setAlphaF(tint.alphaF() * strength * opacity);
 	auto glow = QRadialGradient(QPointF(.5, .5), .5);
 	glow.setCoordinateMode(QGradient::ObjectMode);
 	glow.setColorAt(0., tint);
@@ -8359,8 +8365,15 @@ public:
 			const auto now = crl::now();
 			const auto elapsed = std::min((now - _ambientAt) / 1000., 0.1);
 			_ambientAt = now;
-			if (animatesBackdrop()) {
+			const auto backdrop = animatesBackdrop();
+			if (backdrop || _homeSideGlowPulsing) {
+				const auto previous = int(_backgroundPulse * 100.);
 				updateBackdropEnergy(elapsed);
+				if (_homeSideGlowPulsing && int(_backgroundPulse * 100.) != previous) {
+					repaintHomeSideGlow();
+				}
+			}
+			if (backdrop) {
 				repaintAnimatedBackdrop(now);
 			}
 			if (_seek->waveAnimating()) {
@@ -8461,6 +8474,7 @@ protected:
 	}
 	void hideEvent(QHideEvent *event) override {
 		_homeSideGlowFade.stop();
+		_homeSideGlowPulsing = false;
 		_searchHintMenu.hide();
 		_ambientTimer.stop();
 		_canvas.setVisible(false);
@@ -8994,6 +9008,9 @@ protected:
 		RpWidget::resizeEvent(e);
 		scheduleHomeMoreIfNeeded();
 		_coverOverlay->setGeometry(rect());
+		if (_tab == Tab::Home) {
+			updateAmbientTimer();
+		}
 		if (e->size() != e->oldSize() && _coverMorph.animating()) {
 			if (!prepareCoverTransition(layout)) {
 				_coverMorph.stop();
@@ -9867,6 +9884,13 @@ protected:
 		return anim::color(from, to, _homeSideGlowFade.value(1.));
 	}
 
+	void repaintHomeSideGlow() {
+		const auto side = HomeSideGlowWidth(width());
+		const auto top = _tabScroll->y();
+		update(QRect(0, top, side, height() - top));
+		update(QRect(width() - side, top, side, height() - top));
+	}
+
 	void setHomeSideGlow(QColor accent) {
 		const auto target = accent.isValid() ? accent : QColor(Qt::transparent);
 		if (_homeSideGlow == target) {
@@ -9879,13 +9903,11 @@ protected:
 			&& HomeSideGlowWidth(width()) > style::ConvertScale(kHomeSideGlowMin)
 			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)
 			&& Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
-			_homeSideGlowFade.start([=] {
-				const auto side = HomeSideGlowWidth(width());
-				const auto top = _tabScroll->y();
-				update(QRect(0, top, side, height() - top));
-				update(QRect(width() - side, top, side, height() - top));
-			}, 0., 1., 250, anim::easeOutCubic);
+			_homeSideGlowFade.start(
+				[=] { repaintHomeSideGlow(); },
+				0., 1., 250, anim::easeOutCubic);
 		}
+		updateAmbientTimer();
 	}
 
 	void clearHomeSideGlow() {
@@ -11307,7 +11329,8 @@ protected:
 		if (_tab == Tab::Home && _homeAlbumOpen
 			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
 			PaintHomeSideGlow(p, QRect(0, layout.scrollTop, width(),
-				layout.contentBottom - layout.scrollTop), homeSideGlowColor(), IsLightMusicTheme());
+				layout.contentBottom - layout.scrollTop), homeSideGlowColor(),
+				IsLightMusicTheme(), _homeSideGlowPulsing ? _backgroundPulse : 0.);
 		}
 		if (_tab == Tab::Search && showCatalogFilterSkeleton()) {
 			auto color = st::windowSubTextFg->c;
@@ -12160,12 +12183,22 @@ private:
 			&& Mokagram::Settings::Bool(u"player.dynamic_background"_q);
 	}
 	void updateAmbientTimer() {
-		const auto wave = _seek->waveAnimating();
-		const auto needed = !_closing && isVisible()
-			&& (animatesBackdrop() || wave)
+		const auto active = !_closing && isVisible()
 			&& QGuiApplication::applicationState() == Qt::ApplicationActive
 			&& !PowerSaving::On(PowerSaving::kAnimations);
-		const auto interval = wave ? kSeekFrameInterval : kBackdropFrameInterval;
+		const auto homePulse = active && _isPlaying && !anim::Disabled()
+			&& _tab == Tab::Home && _homeAlbumOpen && _homeSideGlow.alpha()
+			&& HomeSideGlowWidth(width()) > style::ConvertScale(kHomeSideGlowMin)
+			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)
+			&& Mokagram::Settings::Bool(u"player.dynamic_background"_q);
+		if (_homeSideGlowPulsing != homePulse) {
+			_homeSideGlowPulsing = homePulse;
+			_backgroundBass = _backgroundPulse = 0.;
+			repaintHomeSideGlow();
+		}
+		const auto wave = _seek->waveAnimating();
+		const auto needed = active && (animatesBackdrop() || homePulse || wave);
+		const auto interval = (wave || homePulse) ? kSeekFrameInterval : kBackdropFrameInterval;
 		if (needed && (!_ambientTimer.isActive() || _ambientTimer.interval() != interval)) {
 			_ambientAt = crl::now();
 			_ambientTimer.start(interval);
@@ -12173,6 +12206,7 @@ private:
 			_ambientTimer.stop();
 		}
 	}
+	bool _homeSideGlowPulsing = false;
 	QTimer _ambientTimer;
 	crl::time _ambientAt = 0;
 	Media::Clip::ReaderPointer _motionCover;

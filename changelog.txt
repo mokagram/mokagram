@@ -11,6 +11,7 @@ mokaGram (27.11.26)
 - Use a readable theme surface and accent for the chat translation bar.
 - Group Music search results and the Now Playing queue into readable track lists.
 - Tint the wide side margins of Music detail pages with a more visible cover-color glow and a soft transition.
+- Pulse the side glow of Music detail pages with bass hits during playback.
 - Use theme colors in the chat lyrics sidebar and match the translation strip at the chat header corners.
 - Keep the profile screenshot title readable over animated artwork.
 - Use compact, aligned track rows in the music queue sidebar.
