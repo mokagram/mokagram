@@ -729,7 +729,14 @@ TopBar::TopBar(
 				if (toast) {
 					toast->hide();
 				}
-				controller->showSettings(::Settings::MokagramImportantId());
+				Ui::PostponeCall(this, [=] {
+					// Mokagram: keep the profile layer visible during the section slide.
+					controller->showSettings(
+						::Settings::MokagramImportantId(),
+						Window::SectionShow(
+							anim::type::normal,
+							anim::activation::background));
+				});
 			});
 			QObject::connect(badge, &QObject::destroyed, toast.data(), [=] {
 				toast->hide();
