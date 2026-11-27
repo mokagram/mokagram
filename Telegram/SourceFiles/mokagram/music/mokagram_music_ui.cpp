@@ -7551,7 +7551,7 @@ void PaintHomeSideGlow(QPainter &p, QRect band, QColor tint, bool light) {
 	}
 	const auto strength = std::min(
 		(side - minimum) / double(style::ConvertScale(64)), 1.);
-	tint.setAlphaF(tint.alphaF() * strength * (light ? .08 : .15));
+	tint.setAlphaF(tint.alphaF() * strength * (light ? .16 : .30));
 	auto glow = QRadialGradient(QPointF(.5, .5), .5);
 	glow.setCoordinateMode(QGradient::ObjectMode);
 	glow.setColorAt(0., tint);
