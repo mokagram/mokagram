@@ -1728,7 +1728,10 @@ Widget *AddCardWidget(Ui::VerticalBlocks blocks, object_ptr<Widget> widget) {
 	return raw;
 }
 
-void AddCardNote(Ui::VerticalBlocks blocks, Ui::VerticalBlocks::Text text) {
+void AddCardNote(
+		Ui::VerticalBlocks blocks,
+		Ui::VerticalBlocks::Text text,
+		Ui::Text::MarkedContext context = {}) {
 	static const auto centered = [] {
 		auto result = st::defaultDividerLabel.label;
 		result.align = style::al_top;
@@ -1754,7 +1757,7 @@ void AddCardNote(Ui::VerticalBlocks blocks, Ui::VerticalBlocks::Text text) {
 		if (value.empty()) {
 			return false;
 		}
-		label->setMarkedText(value);
+		label->setMarkedText(value, context);
 		return true;
 	});
 	if (text.shown) {
@@ -1764,6 +1767,16 @@ void AddCardNote(Ui::VerticalBlocks blocks, Ui::VerticalBlocks::Text text) {
 			rpl::mappers::_1 && rpl::mappers::_2);
 	}
 	wrap->toggleOn(std::move(filled), anim::type::instant);
+}
+
+// Mokagram: Use the same verification emoji as the badge beside the name.
+[[nodiscard]] TextWithEntities VerificationNote(const Ui::BotVerifyDetails *info) {
+	if (!info || info->description.empty()) {
+		return {};
+	}
+	return info->iconId
+		? Data::SingleCustomEmoji(info->iconId).append(' ').append(info->description)
+		: info->description;
 }
 
 class DetailsFiller {
@@ -3138,8 +3151,9 @@ void DetailsFiller::addMainApp(not_null<UserData*> user) {
 			user,
 			Data::PeerUpdate::Flag::VerifyInfo)
 	) | rpl::map([=](TextWithEntities text, auto) {
-		if (const auto verify = user->botVerifyDetails()) {
-			text = text.append(u"\n\n"_q).append(verify->description);
+		const auto verification = VerificationNote(user->botVerifyDetails());
+		if (!verification.empty()) {
+			text = text.append(u"\n\n"_q).append(verification);
 		}
 		return text;
 	});
@@ -3163,6 +3177,9 @@ void DetailsFiller::addMainApp(not_null<UserData*> user) {
 	AddCardNote(_blocks, {
 		.text = std::move(textProducer),
 		.setup = std::move(setup),
+	}, {
+		.customEmojiFactory = user->owner().customEmojiManager().factory(
+			Data::CustomEmojiManager::SizeTag::Normal),
 	});
 }
 
@@ -3251,13 +3268,15 @@ void DetailsFiller::addBotVerify() {
 		peer,
 		Data::PeerUpdate::Flag::VerifyInfo
 	) | rpl::map([=] {
-		const auto info = peer->botVerifyDetails();
-		return info ? info->description : TextWithEntities();
+		return VerificationNote(peer->botVerifyDetails());
 	});
 
 	AddCardNote(_blocks, {
 		.text = std::move(description),
 		.shown = std::move(shown),
+	}, {
+		.customEmojiFactory = peer->owner().customEmojiManager().factory(
+			Data::CustomEmojiManager::SizeTag::Normal),
 	});
 }
 
