@@ -1534,11 +1534,11 @@ Type MainId() {
 	return Main::Id();
 }
 
-// Mokagram: страница «Настройки mokaGram» для кнопки поиска в шапке.
 Type MokagramImportantId() {
 	return MokagramImportant::Id();
 }
 
+// Mokagram: страница «Настройки mokaGram» для кнопки поиска в шапке.
 Type MokagramSettingsId() {
 	return MokagramSettings::Id();
 }
