@@ -12551,6 +12551,7 @@ private:
 		update();
 		_playbackBar->update();
 		_queuePanel->update();
+		if (!_plainAnim.animating()) updateCoverTitleScroll();
 	} };
 	PlayerSpring _infoFade{ [this] {
 		update();
