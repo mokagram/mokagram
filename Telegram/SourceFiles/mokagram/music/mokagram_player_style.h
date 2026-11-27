@@ -20,6 +20,17 @@ struct TextStyle {
 	[[nodiscard]] int lineHeight() const {
 		return style::ConvertScale(leading);
 	}
+
+	[[nodiscard]] QFont musicFont(bool underline = false) const {
+		auto result = font()->f;
+		result.setFamilies({
+			QStringLiteral("Nunito"), QStringLiteral("Adwaita Sans"),
+			QStringLiteral("Noto Sans"), result.family(),
+		});
+		result.setWeight(emphasized ? QFont::Medium : QFont::Normal);
+		result.setUnderline(underline);
+		return result;
+	}
 };
 
 inline constexpr auto kTrackTitle = TextStyle{ 22, 30, true };

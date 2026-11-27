@@ -975,7 +975,7 @@ void LyricsView::tick() {
 }
 
 [[nodiscard]] QFont LyricsView::lineFont() const {
-	return (_big ? PlayerStyle::kLyrics : PlayerStyle::kCompactLyrics).font()->f;
+	return (_big ? PlayerStyle::kLyrics : PlayerStyle::kCompactLyrics).musicFont();
 }
 
 [[nodiscard]] const LyricsView::LineLayout &LyricsView::layoutOf(int index) {
@@ -990,7 +990,7 @@ void LyricsView::tick() {
 	using namespace PlayerStyle;
 	const auto width = textWidth();
 	const auto build = [&](const QString &text, TextStyle style) {
-		auto result = std::make_unique<QTextLayout>(text, style.font());
+		auto result = std::make_unique<QTextLayout>(text, style.musicFont());
 		auto option = QTextOption(_big ? Qt::AlignLeft : Qt::AlignHCenter);
 		option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
 		result->setTextOption(option);

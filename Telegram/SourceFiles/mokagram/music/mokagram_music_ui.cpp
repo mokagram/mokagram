@@ -7280,7 +7280,7 @@ private:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
-		const auto font = PlayerStyle::kControlLabel.font();
+		const auto font = PlayerStyle::kControlLabel.musicFont();
 		p.setFont(font);
 		auto inactive = isOver() ? st::windowFg->c : MusicSecondaryColor();
 		auto active = st::windowFg->c;
@@ -7304,7 +7304,7 @@ private:
 		p.drawText(
 			inner,
 			(centered ? Qt::AlignHCenter : Qt::AlignLeft) | Qt::AlignVCenter,
-			font->elided(_text, inner.width()));
+			QFontMetrics(font).elidedText(_text, Qt::ElideRight, inner.width()));
 		if (hasFocus()) {
 			p.setPen(QPen(background.isValid() ? inactive : st::windowFg->c, s(1)));
 			p.setBrush(Qt::NoBrush);
@@ -8436,9 +8436,26 @@ public:
 				_seek->advanceWave(elapsed);
 			}
 		});
-		_coverTitleTimer.setInterval(33);
+		_coverTitleTimer.setTimerType(Qt::PreciseTimer);
+		_coverTitleTimer.setInterval(16);
 		connect(&_coverTitleTimer, &QTimer::timeout, this, [=] {
-			update(metadataLines(computeLayout().info, false).title);
+			const auto now = crl::now();
+			const auto delta = std::min<crl::time>(now - _titleTickAt, 32);
+			_titleTickAt = now;
+			const auto layout = computeLayout();
+			if (_coverTitleMoves && _hover != InfoHover::Title) {
+				_titleElapsed[0] += delta;
+				update(metadataLines(layout.info, false).title);
+			}
+			if (_barTitleMoves && _hover != InfoHover::BarTitle) {
+				_titleElapsed[1] += delta;
+				const auto title = metadataLines(barInfoRect(layout), true).title;
+				if (_tab == Tab::Home) {
+					_playbackBar->update(title.translated(-_playbackBar->pos()));
+				} else {
+					update(title);
+				}
+			}
 		});
 		_seek->waveAnimationChanges(
 		) | rpl::on_next([=] { updateAmbientTimer(); }, lifetime());
@@ -8539,7 +8556,7 @@ protected:
 		_searchHintMenu.hide();
 		_ambientTimer.stop();
 		_coverTitleTimer.stop();
-		_coverTitleScrollAt = 0;
+		_titleElapsed = {};
 		_canvas.setVisible(false);
 		_upcomingCanvas.refresh({}, {}, {}, false);
 		_preparedBackdrop = QImage();
@@ -8884,30 +8901,39 @@ protected:
 			QRect(area.x(), top + titleHeight + gap, area.width(), artistHeight),
 		};
 	}
-	[[nodiscard]] static QFont coverTitleFont(bool underline = false) {
-		auto result = PlayerStyle::kTrackTitle.font()->f;
-		result.setFamilies({ u"Nunito"_q, u"Adwaita Sans"_q, u"Noto Sans"_q, result.family() });
-		result.setWeight(QFont::Medium);
-		result.setUnderline(underline);
-		return result;
-	}
-
 	void updateCoverTitleScroll() {
-		const auto rect = metadataLines(computeLayout().info, false).title;
-		const auto scroll = (_tab == Tab::Now) && isVisible() && !rect.isEmpty()
-			&& QFontMetricsF(coverTitleFont()).horizontalAdvance(_title) > rect.width();
-		if (scroll) {
-			if (!_coverTitleScrollAt) _coverTitleScrollAt = crl::now();
-			if (!_coverTitleTimer.isActive()) _coverTitleTimer.start();
+		using namespace PlayerStyle;
+		const auto layout = computeLayout();
+		const auto coverTitle = metadataLines(layout.info, false).title;
+		const auto barTitle = metadataLines(barInfoRect(layout), true).title;
+		const auto moves = [&](QRect rect, TextStyle style) {
+			return !rect.isEmpty()
+				&& QFontMetricsF(style.musicFont()).horizontalAdvance(_title) > rect.width();
+		};
+		_coverTitleMoves = _tab == Tab::Now && moves(coverTitle, kTrackTitle);
+		_barTitleMoves = layout.barShown && !layout.ultra && !layout.compact
+			&& moves(barTitle, kCompactTitle);
+		if (isVisible() && (_coverTitleMoves || _barTitleMoves)) {
+			if (!_coverTitleTimer.isActive()) {
+				_titleTickAt = crl::now();
+				_coverTitleTimer.start();
+			}
 		} else {
 			_coverTitleTimer.stop();
-			_coverTitleScrollAt = 0;
+			_titleElapsed = {};
 		}
 	}
 
-	void paintCoverTitle(QPainter &p, QRect rect, const QString &title, bool current) {
+	void paintMovingTitle(
+			QPainter &p,
+			QRect rect,
+			const QString &title,
+			bool compact,
+			bool current) const {
 		if (rect.isEmpty() || title.isEmpty()) return;
-		const auto font = coverTitleFont(current && _hover == InfoHover::Title);
+		using namespace PlayerStyle;
+		const auto hover = compact ? InfoHover::BarTitle : InfoHover::Title;
+		const auto font = (compact ? kCompactTitle : kTrackTitle).musicFont(current && _hover == hover);
 		const auto metrics = QFontMetricsF(font);
 		const auto textWidth = metrics.horizontalAdvance(title);
 		p.setFont(font);
@@ -8915,24 +8941,46 @@ protected:
 			p.drawText(rect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, title);
 			return;
 		}
-		const auto gap = style::ConvertScale(36);
+
 		const auto speed = style::ConvertScale(38) / 1000.;
-		const auto distance = textWidth + gap;
+		const auto distance = textWidth + style::ConvertScale(36);
 		const auto pause = 1100.;
 		const auto cycle = pause + distance / speed;
-		const auto elapsed = current && _coverTitleScrollAt
-			? std::fmod(double(crl::now() - _coverTitleScrollAt), cycle)
-			: 0.;
+		const auto elapsed = current ? std::fmod(double(_titleElapsed[compact]), cycle) : 0.;
 		const auto offset = std::max(elapsed - pause, 0.) * speed;
-		const auto baseline = QRectF(rect).center().y() + (metrics.ascent() - metrics.descent()) / 2.;
-		p.save();
-		p.setClipRect(rect, Qt::IntersectClip);
-		const auto x = rect.x() - offset;
-		p.drawText(QPointF(x, baseline), title);
-		if (x + distance < rect.x() + rect.width()) {
-			p.drawText(QPointF(x + distance, baseline), title);
+		const auto color = p.pen().color();
+		const auto dpr = devicePixelRatioF();
+		auto text = QImage(
+			QSize(int(std::ceil(rect.width() * dpr)), int(std::ceil(rect.height() * dpr))),
+			QImage::Format_ARGB32_Premultiplied);
+		text.setDevicePixelRatio(dpr);
+		text.fill(Qt::transparent);
+		{
+			auto layer = QPainter(&text);
+			auto hq = PainterHighQualityEnabler(layer);
+			const auto baseline = (rect.height() + metrics.ascent() - metrics.descent()) / 2.;
+			auto glyphs = QPainterPath();
+			glyphs.addText(QPointF(0., baseline), font, title);
+			if (font.underline()) {
+				glyphs.addRect(QRectF(0., baseline + metrics.underlinePos(), textWidth, metrics.lineWidth()));
+			}
+			layer.translate(-offset, 0.);
+			layer.fillPath(glyphs, color);
+			if (distance - offset < rect.width()) {
+				layer.translate(distance, 0.);
+				layer.fillPath(glyphs, color);
+			}
+			layer.resetTransform();
+			layer.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+			const auto feather = std::min(style::ConvertScale(14), rect.width() / 2);
+			auto mask = QLinearGradient(0., 0., rect.width(), 0.);
+			mask.setColorAt(0., offset > 0. ? Qt::transparent : Qt::black);
+			mask.setColorAt(feather / double(rect.width()), Qt::black);
+			mask.setColorAt(1. - feather / double(rect.width()), Qt::black);
+			mask.setColorAt(1., Qt::transparent);
+			layer.fillRect(QRect(QPoint(), rect.size()), mask);
 		}
-		p.restore();
+		p.drawImage(rect.topLeft(), text);
 	}
 	[[nodiscard]] QRect barInfoRect(const Layout &layout) const {
 		const auto shown = _coverMorph.animating()
@@ -8950,12 +8998,12 @@ protected:
 		}
 		using namespace PlayerStyle;
 		const auto hitRect = [](QRect line, TextStyle style, const QString &text) {
-			line.setWidth(std::min(line.width(), style.font()->width(text)));
+			line.setWidth(std::min(line.width(), QFontMetrics(style.musicFont()).horizontalAdvance(text)));
 			return line;
 		};
 		const auto lines = metadataLines(layout.info, false);
 		auto title = lines.title;
-		title.setWidth(std::min(title.width(), QFontMetrics(coverTitleFont()).horizontalAdvance(_title)));
+		title.setWidth(std::min(title.width(), QFontMetrics(kTrackTitle.musicFont()).horizontalAdvance(_title)));
 		const auto artist = hitRect(lines.artist, kTrackArtist, _artist);
 		if (_tab != Tab::Now
 			&& !layout.ultra
@@ -11586,7 +11634,7 @@ protected:
 		if ((_tab != Tab::Now || (showsQueue() && !_queuePanelOpen))
 			&& !(_tab == Tab::Home && _homeAlbumOpen)) {
 			if (!_tabNote.isEmpty()) {
-				p.setFont(PlayerStyle::kTrackArtist.font());
+				p.setFont(PlayerStyle::kTrackArtist.musicFont());
 				p.setPen(MusicSecondaryColor());
 				const auto noteWidth = std::max(_tabScroll->width() - s(2 * BoxParts::kOuterSide), 0);
 				p.drawText(
@@ -11596,7 +11644,7 @@ protected:
 			}
 			if (_tab == Tab::Search && _searchEmptySticker) {
 				const auto sticker = _searchEmptySticker->geometry();
-				p.setFont(PlayerStyle::kTrackArtist.font());
+				p.setFont(PlayerStyle::kTrackArtist.musicFont());
 				p.setPen(MusicSecondaryColor());
 				p.drawText(QRect(layout.center.x() + s(10), sticker.bottom() + s(12),
 					std::max(layout.center.width() - s(20), 0), s(44)),
@@ -11706,15 +11754,15 @@ protected:
 				return;
 			}
 			p.setPen(QColor(255, 255, 255, int(255 * opacity)));
-			paintCoverTitle(p, lines.title, title, current);
+			paintMovingTitle(p, lines.title, title, false, current);
 			const auto artistHover = current && _hover == InfoHover::Artist;
-			const auto font = kTrackArtist.font()->underline(artistHover);
+			const auto font = kTrackArtist.musicFont(artistHover);
 			p.setFont(font);
 			p.setPen(QColor(255, 255, 255, int((artistHover ? 255 : 210) * opacity)));
 			p.drawText(
 				lines.artist,
 				Qt::AlignLeft | Qt::AlignVCenter,
-				font->elided(artist, lines.artist.width()));
+				QFontMetrics(font).elidedText(artist, Qt::ElideRight, lines.artist.width()));
 		};
 		drawInfo(_wasTitle, _wasArtist, 1. - fade, false);
 		drawInfo(_title, _artist, fade, true);
@@ -11753,14 +11801,9 @@ protected:
 			// Без маленькой обложки текст сдвигается влево на её место.
 			const auto info = barInfoRect(layout);
 			const auto lines = metadataLines(info, true);
-			auto font = kCompactTitle.font()->underline(_hover == InfoHover::BarTitle);
-			p.setFont(font);
 			p.setPen(_playbackColors.onSurface);
-			p.drawText(
-				lines.title,
-				Qt::AlignLeft | Qt::AlignVCenter,
-				font->elided(_title, lines.title.width()));
-			font = kCompactArtist.font()->underline(_hover == InfoHover::BarArtist);
+			paintMovingTitle(p, lines.title, _title, true, true);
+			const auto font = kCompactArtist.musicFont(_hover == InfoHover::BarArtist);
 			p.setFont(font);
 			p.setPen(_hover == InfoHover::BarArtist
 				? _playbackColors.onSurface
@@ -11768,11 +11811,11 @@ protected:
 			p.drawText(
 				lines.artist,
 				Qt::AlignLeft | Qt::AlignVCenter,
-				font->elided(_artist, lines.artist.width()));
+				QFontMetrics(font).elidedText(_artist, Qt::ElideRight, lines.artist.width()));
 		}
 
 		// Время по сторонам полосы перемотки.
-		p.setFont(kTimeLabel.font());
+		p.setFont(kTimeLabel.musicFont());
 		p.setPen(_playbackColors.onSurfaceVariant);
 		p.drawText(layout.timeNow, Qt::AlignRight | Qt::AlignVCenter, _timeNow);
 		p.drawText(layout.timeTotal, Qt::AlignLeft | Qt::AlignVCenter, _timeTotal);
@@ -12112,7 +12155,7 @@ private:
 				_infoFade.stop();
 				_infoFade.start(0., 1., kSlowEffects);
 			}
-			if (_title != track.title) _coverTitleScrollAt = 0;
+			if (_title != track.title) _titleElapsed = {};
 			_title = track.title;
 			_artist = track.artist;
 			_coverKey = coverKey;
@@ -12519,7 +12562,10 @@ private:
 	std::shared_ptr<Data::DocumentMedia> _playbackArtworkMedia;
 	rpl::lifetime _playbackArtworkLifetime;
 	QTimer _coverTitleTimer;
-	crl::time _coverTitleScrollAt = 0;
+	std::array<crl::time, 2> _titleElapsed = {};
+	crl::time _titleTickAt = 0;
+	bool _coverTitleMoves = false;
+	bool _barTitleMoves = false;
 	QPixmap _coverWas;
 	qint64 _coverKey = 0;
 	QString _title;
@@ -13787,14 +13833,14 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 				st::menuIconSoundOn.paintInCenter(p, art);
 			}
 			const auto track = PlayingTrack();
-			const auto big = PlayerStyle::kTrackTitle.font();
+			const auto big = PlayerStyle::kTrackTitle.musicFont();
 			p.setFont(big);
 			p.setPen(st::windowFg);
 			const auto textWidth = metadataWidth(current);
 			p.drawText(
 				QRect(inset, titleTop(), textWidth, kTrackTitle.lineHeight()),
 				Qt::AlignLeft | Qt::AlignVCenter,
-				big->elided(track.title, textWidth));
+				QFontMetrics(big).elidedText(track.title, Qt::ElideRight, textWidth));
 		};
 		info->paintOn([=](QPainter &p) {
 			if (fade->animation.animating() && !fade->was.isNull()) {
@@ -13821,7 +13867,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		artistButton->setAccessibleName(artistHint);
 		artistButton->paintOn([=](QPainter &p) {
 			const auto active = artistButton->isOver() || artistButton->isDown();
-			const auto font = PlayerStyle::kTrackArtist.font()->underline(active);
+			const auto font = PlayerStyle::kTrackArtist.musicFont(active);
 			p.setFont(font);
 			p.setPen(active
 				? st::windowFg
@@ -13829,13 +13875,13 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 			p.drawText(
 				artistButton->rect(),
 				Qt::AlignLeft | Qt::AlignVCenter,
-				font->elided(PlayingTrack().artist, artistButton->width()));
+				QFontMetrics(font).elidedText(PlayingTrack().artist, Qt::ElideRight, artistButton->width()));
 		});
 		const auto updateArtistButton = [=] {
 			const auto current = instance->current(AudioMsgId::Type::Song);
 			const auto textWidth = metadataWidth(current);
-			const auto font = kTrackArtist.font();
-			const auto artistWidth = std::min(textWidth, font->width(PlayingTrack().artist));
+			const auto font = QFontMetrics(kTrackArtist.musicFont());
+			const auto artistWidth = std::min(textWidth, font.horizontalAdvance(PlayingTrack().artist));
 			artistButton->setGeometry(
 				inset,
 				titleTop() + kTrackTitle.lineHeight() + s(kSpace2),
@@ -13886,7 +13932,7 @@ void ShowPlayerBox(not_null<Window::SessionController*> controller) {
 		times->resize(times->width(), PlayerStyle::kTimeLabel.lineHeight());
 		const auto position = std::make_shared<std::pair<QString, QString>>();
 		times->paintOn([=](QPainter &p) {
-			p.setFont(PlayerStyle::kTimeLabel.font());
+			p.setFont(PlayerStyle::kTimeLabel.musicFont());
 			p.setPen(st::windowSubTextFg);
 			p.drawText(times->rect(), Qt::AlignLeft | Qt::AlignVCenter, position->first);
 			p.drawText(times->rect(), Qt::AlignRight | Qt::AlignVCenter, position->second);
