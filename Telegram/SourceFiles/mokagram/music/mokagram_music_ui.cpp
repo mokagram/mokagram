@@ -2422,6 +2422,11 @@ public:
 	return parent->add(object_ptr<MusicTrackList>(parent), QMargins(side, top, side, 0));
 }
 
+class CompactQueueList final : public Ui::VerticalLayout {
+public:
+	using VerticalLayout::VerticalLayout;
+};
+
 void PaintTrackListState(QPainter &p, const Ui::AbstractButton &row, bool selected) {
 	const auto over = row.isOver();
 	const auto down = row.isDown();
@@ -2761,7 +2766,7 @@ public:
 		if (_mode == RowMode::Home) {
 			_hoverFade.set(isOver() || isDown(), [=] { update(); });
 		}
-		if (_mode == RowMode::Home || _grouped) {
+		if (_mode == RowMode::Home || _grouped || _compactQueue) {
 			update();
 		}
 	}
@@ -2781,6 +2786,7 @@ public:
 	, _track(track)
 	, _mode(mode)
 	, _grouped(dynamic_cast<MusicTrackList*>(parent) != nullptr)
+	, _compactQueue(dynamic_cast<CompactQueueList*>(parent) != nullptr)
 	, _titleFont(_grouped
 		? style::font(
 			style::ConvertScale(16),
@@ -2792,7 +2798,7 @@ public:
 	, _results(std::move(results))
 	, _homePlaybackControls(homePlaybackControls)
 	, _playlistId(std::move(playlistId)) {
-		resize(width(), listMetric(_grouped ? kGroupedTrackHeight : kRowHeight));
+		resize(width(), listMetric((_grouped || _compactQueue) ? kGroupedTrackHeight : kRowHeight));
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
 		if (mode == RowMode::Results) {
@@ -2822,7 +2828,7 @@ public:
 			setToolTip(unavailableText);
 		} else if (!IsTelegramTrack(_track)) {
 			_likeButton = Ui::CreateChild<TrackLikeButton>(
-				this, controller, _track, _grouped);
+				this, controller, _track, _grouped || _compactQueue);
 		}
 		if (_mode != RowMode::Home) {
 			_equalizerTimer.setInterval(33);
@@ -3014,6 +3020,10 @@ protected:
 		if (_likeButton) {
 			_likeButton->setGeometry(heartRect());
 		}
+		if (_compactQueue && !isDisabled()) {
+			setToolTip(_titleFont->width(_track.title) > listTextRect(true).width()
+				? _track.title : QString());
+		}
 		if (_playButton) {
 			_playButton->layoutOnCover(width());
 		}
@@ -3038,12 +3048,16 @@ private:
 	}
 
 	[[nodiscard]] int listMetric(int value) const {
-		return _grouped
+		return (_grouped || _compactQueue)
 			? style::ConvertScale(value)
 			: value;
 	}
 
 	[[nodiscard]] QRect listLeadingRect() const {
+		if (_compactQueue) {
+			const auto side = listMetric(36);
+			return QRect(listMetric(8), (height() - side) / 2, side, side);
+		}
 		if (_grouped) {
 			const auto side = listMetric(kGroupedTrackLeadWidth);
 			return QRect(listMetric(kGroupedTrackLeadingInset), (height() - side) / 2, side, side);
@@ -3053,17 +3067,17 @@ private:
 	}
 
 	[[nodiscard]] int durationRight() const {
-		const auto inset = _grouped
+		const auto inset = _compactQueue ? 12 : _grouped
 			? (_menuButton ? kGroupedTrackMenuInset : kGroupedTrackDurationInset)
 			: (_menuButton ? 72 : 24);
 		return width() - listMetric(inset);
 	}
 
 	[[nodiscard]] QRect listTextRect(bool title) const {
-		if (_grouped) {
+		if (_grouped || _compactQueue) {
 			const auto art = listLeadingRect();
-			const auto left = art.x() + art.width() + listMetric(kGroupedTrackTextGap);
-			const auto right = heartRect().x() - listMetric(8);
+			const auto left = art.x() + art.width() + listMetric(_compactQueue ? 8 : kGroupedTrackTextGap);
+			const auto right = heartRect().x() - listMetric(_compactQueue ? 4 : 8);
 			const auto titleHeight = _titleFont->height;
 			const auto subtitleHeight = (isDisabled() || !_artistNames.empty()
 				|| (!IsDetailTrackRow(_mode) && !_track.artist.isEmpty()))
@@ -3164,9 +3178,10 @@ private:
 			const auto side = style::ConvertScale(28);
 			return QRect(width() - inset - side, height() - inset - side, side, side);
 		}
-		if (_grouped) {
-			const auto side = listMetric(kGroupedTrackActionSize);
-			return QRect(durationRight() - listMetric(kGroupedTrackDurationColumn) - side,
+		if (_grouped || _compactQueue) {
+			const auto side = listMetric(_compactQueue ? 32 : kGroupedTrackActionSize);
+			const auto durationColumn = listMetric(_compactQueue ? 44 : kGroupedTrackDurationColumn);
+			return QRect(durationRight() - durationColumn - side,
 				(height() - side) / 2, side, side);
 		}
 		const auto durationWidth = st::normalFont->width(FormatDuration(_track.durationMs));
@@ -3274,7 +3289,7 @@ private:
 		}
 		const auto playing = selected;
 		const auto over = isOver() || isDown();
-		const auto grouped = _grouped;
+		const auto grouped = _grouped || _compactQueue;
 		const auto album = (_mode == RowMode::AlbumTrack);
 		if (grouped) {
 			PaintTrackListState(p, *this, playing);
@@ -3453,6 +3468,7 @@ private:
 	QString _playsText;
 	RowMode _mode;
 	const bool _grouped;
+	const bool _compactQueue;
 	style::font _titleFont;
 	QString _trackNumber;
 	const int _queueIndex;
@@ -7927,7 +7943,7 @@ public:
 		_queueNowLabel = addLabel(PlaylistText("Сейчас играет"), sectionStyle,
 			QMargins(s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace2),
 				s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace2)));
-		_queueNow = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
+		_queueNow = _queueContent->add(object_ptr<CompactQueueList>(_queueContent));
 		_queueNow->paintOn([=](QPainter &p) {
 			if (!_queueAdvanceExit.isNull()) {
 				const auto progress = _queueAdvance.unitValue(1.);
@@ -7939,7 +7955,7 @@ public:
 			QMargins(s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace12),
 				s(PlayerStyle::kSpace8), s(PlayerStyle::kSpace2)));
 		_queueListSlot = _queueContent->count();
-		_queueList = _queueContent->add(object_ptr<Ui::VerticalLayout>(_queueContent));
+		_queueList = _queueContent->add(object_ptr<CompactQueueList>(_queueContent));
 		const auto queueRowPad = s(PlayerStyle::kSpace8);
 		_queueEmpty = addLabel({}, st::boxDividerLabel, QMargins(queueRowPad, queueRowPad, queueRowPad, 0));
 		_queueReorder = std::make_unique<Ui::VerticalLayoutReorder>(_queueList, _queueScroll);
@@ -7975,7 +7991,7 @@ public:
 			result.textBg = result.textBgActive = st::boxBg;
 			const auto side = s(PlayerStyle::kSpace16);
 			result.textMargins = QMargins(side, top, side, std::max(height - line - top, 0));
-			result.placeholderFgActive = st::windowSubTextFg;
+			result.placeholderFg = result.placeholderFgActive = st::windowSubTextFg;
 			result.placeholderScale = 0.;
 			result.placeholderShift = 0;
 			result.placeholderFont = result.style.font;
