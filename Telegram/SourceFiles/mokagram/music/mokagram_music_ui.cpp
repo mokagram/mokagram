@@ -272,7 +272,7 @@ constexpr auto kGroupedTrackLeadWidth = 40;
 constexpr auto kGroupedTrackLeadingInset = 16;
 constexpr auto kGroupedTrackTextGap = 12;
 constexpr auto kGroupedTrackDurationInset = 24;
-constexpr auto kGroupedTrackDurationColumn = 64;
+constexpr auto kGroupedTrackDurationColumn = 44;
 constexpr auto kGroupedTrackActionSize = 40;
 constexpr auto kCoverFadeDuration = crl::time(320);
 constexpr auto kTypingDelay = crl::time(400);
@@ -2480,17 +2480,7 @@ void PaintHomeCover(QPainter &p, const QRect &rect, const QImage &art) {
 		art.bottom() - s(8) - size + 1, size, size);
 }
 
-void PaintHomePlayGlyph(QPainter &p, QPoint center, QColor color) {
-	const auto s = [](int v) { return style::ConvertScale(v); };
-	const QPoint points[] = {
-		center + QPoint(-s(4), -s(7)),
-		center + QPoint(s(7), 0),
-		center + QPoint(-s(4), s(7)),
-	};
-	p.setPen(Qt::NoPen);
-	p.setBrush(color);
-	p.drawPolygon(points, 3);
-}
+void PaintIslandGlyph(QPainter &p, const char *svg, QPointF center, int size, QColor color);
 
 void PaintHomeCardAction(
 		QPainter &p,
@@ -2512,23 +2502,8 @@ void PaintHomeCardAction(
 	p.setBrush(current ? st::windowBgActive : st::windowBg);
 	p.drawEllipse(button);
 	const auto glyph = current ? st::windowFgActive->c : st::windowFg->c;
-	if (playing) {
-		const auto center = QRectF(button).center();
-		const auto barWidth = s(3);
-		const auto barHeight = s(12);
-		const auto halfGap = s(2) / 2.;
-		const auto radius = s(1);
-		const auto top = center.y() - barHeight / 2.;
-		p.setBrush(glyph);
-		p.drawRoundedRect(QRectF(
-			center.x() - halfGap - barWidth, top, barWidth, barHeight),
-			radius, radius);
-		p.drawRoundedRect(QRectF(
-			center.x() + halfGap, top, barWidth, barHeight),
-			radius, radius);
-	} else {
-		PaintHomePlayGlyph(p, button.center(), glyph);
-	}
+	using namespace Mokagram::Music::IslandGlyphs;
+	PaintIslandGlyph(p, playing ? kGlyphPause : kGlyphPlay, QRectF(button).center(), s(16), glyph);
 	p.restore();
 }
 
@@ -3291,7 +3266,11 @@ private:
 		const auto over = isOver() || isDown();
 		const auto grouped = _grouped || _compactQueue;
 		const auto album = (_mode == RowMode::AlbumTrack);
-		if (grouped) {
+		if (_compactQueue) {
+			if (!isDisabled() && (playing || over || hasFocus())) {
+				PaintHomeSurface(p, rect(), isOver() ? 1. : 0., isDown(), hasFocus(), playing);
+			}
+		} else if (_grouped) {
 			PaintTrackListState(p, *this, playing);
 		} else {
 			const auto inset = listMetric(8);
@@ -4396,12 +4375,12 @@ protected:
 		auto hq = PainterHighQualityEnabler(p);
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		PaintHomeSurface(p, rect(), isOver() ? 1. : 0., isDown(), hasFocus());
-		p.setPen(QPen(st::windowFg->c, s(2), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-		p.setBrush(Qt::NoBrush);
-		const auto center = rect().center();
-		const auto sign = _forward ? 1 : -1;
-		p.drawPolyline(QPolygon({ center + QPoint(-sign * s(4), -s(8)),
-			center + QPoint(sign * s(4), 0), center + QPoint(-sign * s(4), s(8)) }));
+		// Lucide chevron-right, https://lucide.dev/icons/chevron-right (ISC).
+		constexpr auto chevron = R"svg(<svg viewBox="0 0 24 24" fill="none"><path d="m9 18 6-6-6-6" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>)svg";
+		const auto center = QRectF(rect()).center();
+		p.translate(center);
+		if (!_forward) p.scale(-1., 1.);
+		PaintIslandGlyph(p, chevron, QPointF(), s(24), st::windowFg->c);
 	}
 
 private:
@@ -4964,7 +4943,33 @@ protected:
 			path.addRoundedRect(layout.card, radius, radius);
 			p.save();
 			p.setClipPath(path);
+			const auto bottom = layout.banner.y() + layout.banner.height();
+			const auto fadeHeight = std::min(s(32), layout.banner.height());
+			const auto band = QRect(layout.banner.x(), bottom - fadeHeight,
+				layout.banner.width(), fadeHeight);
+			p.save();
+			p.setClipRect(layout.banner.adjusted(0, 0, 0, -fadeHeight), Qt::IntersectClip);
 			paintArtwork(p, layout.banner, _banner);
+			p.restore();
+
+			const auto dpr = devicePixelRatioF();
+			auto fade = QImage(QSize(
+				int(std::ceil(band.width() * dpr)),
+				int(std::ceil(band.height() * dpr))),
+				QImage::Format_ARGB32_Premultiplied);
+			fade.setDevicePixelRatio(dpr);
+			fade.fill(Qt::transparent);
+			{
+				auto layer = QPainter(&fade);
+				layer.setRenderHint(QPainter::SmoothPixmapTransform);
+				paintArtwork(layer, layout.banner.translated(-band.topLeft()), _banner);
+				layer.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+				auto alpha = QLinearGradient(0., 0., 0., fadeHeight);
+				alpha.setColorAt(0., Qt::black);
+				alpha.setColorAt(1., Qt::transparent);
+				layer.fillRect(QRect(QPoint(), band.size()), alpha);
+			}
+			p.drawImage(band.topLeft(), fade);
 			p.restore();
 		}
 
@@ -5071,9 +5076,9 @@ private:
 			const auto detailsHeight = kindHeight + titleHeight + titleGap + metadataHeight;
 			const auto row = compact ? artSide + s(16) + detailsHeight
 				: std::max(artSide, detailsHeight);
-			const auto textTop = compact ? body + artSide + s(16) : body + row - detailsHeight;
+			const auto textTop = compact ? body + artSide + s(16) : body + (row - detailsHeight) / 2;
 			result.art = QRect(compact ? left + (available - artSide) / 2 : left,
-				compact ? body : body + row - artSide, artSide, artSide);
+				compact ? body : body + (row - artSide) / 2, artSide, artSide);
 			result.kind = QRect(textLeft, textTop, textWidth, kindHeight);
 			result.title = QRect(textLeft, textTop + kindHeight, textWidth, titleHeight);
 			const auto metadataTop = textTop + kindHeight + titleHeight + titleGap;
@@ -7853,26 +7858,12 @@ public:
 			_tabScroll->scrollToY(_homeAlbumReturnScroll);
 		}));
 		_homeBack->hide();
-		const auto makeArtistEdge = [=](bool bottom) {
-			const auto edge = Ui::CreateChild<Ui::RpWidget>(_tabScroll->viewport());
-			edge->setAttribute(Qt::WA_TransparentForMouseEvents);
-			edge->paintOn([=](QPainter &p) {
-				paintBackgroundPart(p, edge->rect(), edge->mapTo(this, QPoint()));
-			});
-			auto mask = QLinearGradient(0., bottom ? 1. : 0., 0., bottom ? 0. : 1.);
-			mask.setCoordinateMode(QGradient::ObjectBoundingMode);
-			mask.setColorAt(0., Qt::black);
-			mask.setColorAt(1., Qt::transparent);
-			const auto effect = new QGraphicsOpacityEffect(edge);
-			effect->setOpacity(1.);
-			effect->setOpacityMask(QBrush(mask));
-			edge->setGraphicsEffect(effect);
-			edge->hide();
-			return edge;
-		};
-		_homeArtistTopEdge = makeArtistEdge(false);
-		_homeArtistBottomEdge = makeArtistEdge(true);
-		_homeArtistBar = Ui::CreateChild<Ui::RpWidget>(_tabScroll->viewport());
+		const auto viewport = _tabScroll->viewport();
+		_homeScrollFade = new QGraphicsOpacityEffect(viewport);
+		_homeScrollFade->setOpacity(1.);
+		_homeScrollFade->setEnabled(false);
+		viewport->setGraphicsEffect(_homeScrollFade);
+		_homeArtistBar = Ui::CreateChild<Ui::RpWidget>(this);
 		_homeArtistBar->setAttribute(Qt::WA_TransparentForMouseEvents);
 		_homeArtistBarOpacity = new QGraphicsOpacityEffect(_homeArtistBar);
 		_homeArtistBarOpacity->setOpacity(0.);
@@ -7880,9 +7871,11 @@ public:
 		_homeArtistBar->paintOn([=](QPainter &p) {
 			const auto s = [](int value) { return style::ConvertScale(value); };
 			auto hq = PainterHighQualityEnabler(p);
-			paintBackgroundPart(p, _homeArtistBar->rect(), _homeArtistBar->mapTo(this, QPoint()));
 			const auto side = s(BoxParts::kOuterSide);
 			const auto inner = _homeArtistBar->rect().adjusted(side, 0, -side, -s(kMusicListGap));
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::boxBg);
+			p.drawRoundedRect(inner, s(BoxParts::kCardRadius), s(BoxParts::kCardRadius));
 			PaintMusicCard(p, inner);
 			const auto text = inner.adjusted(s(16), 0, -s(16), 0);
 			p.setFont(st::semiboldFont);
@@ -8097,9 +8090,9 @@ public:
 			scheduleHomeMoreIfNeeded();
 		});
 		_tabScroll->scrollTopChanges() | rpl::on_next([=](int top) {
-			if (_tab == Tab::Home && _homeAlbumOpen) {
+			if (_tab == Tab::Home) {
 				updateHomeArtistBar();
-				update();
+				if (_homeAlbumOpen) update();
 			}
 			if (!_rebuildingTab) {
 				scheduleHomeMoreIfNeeded();
@@ -8696,14 +8689,19 @@ protected:
 		const auto top = result.nav.y() + result.nav.height() + gap;
 		const auto areaBottom = result.contentBottom;
 		const auto areaHeight = std::max(areaBottom - top, 0);
-		result.queuePanel = QRect(windowWidth - margin - queueWidth, top, queueWidth, areaHeight);
+		const auto panelWidth = std::min(queueWidth, std::max((windowWidth - 3 * margin) / 2, 0));
+		result.queuePanel = QRect(windowWidth - margin - panelWidth, top, panelWidth, areaHeight);
+		const auto contentRight = _queuePanelOpen
+			? result.queuePanel.x() - gap
+			: windowWidth - margin;
+		const auto contentWidth = std::max(contentRight - margin, 0);
 
 		if (now) {
 			auto lyricsLeft = margin;
 			auto lyricsTop = top;
-			if (windowWidth >= s(800)) {
+			if (contentRight + margin >= s(800)) {
 				// Обложка слева, текст песни по центру остального экрана.
-				const auto colWidth = std::clamp(int(windowWidth * 0.29), s(190), s(460));
+				const auto colWidth = std::clamp(int((contentRight + margin) * 0.29), s(190), s(460));
 				const auto side = std::max(std::min({
 					colWidth - 2 * pad,
 					std::max(areaHeight - pad, 0) * 4 / 5,
@@ -8715,9 +8713,9 @@ protected:
 			} else {
 				// В узком окне обложка над текстом, если по высоте хватает места для обоих.
 				const auto coverHeight = std::min(areaHeight * 2 / 5, s(360));
-				const auto side = std::min(windowWidth - 2 * (margin + pad), coverHeight * 4 / 5);
+				const auto side = std::min(contentWidth - 2 * pad, coverHeight * 4 / 5);
 				if (side >= s(128)) {
-					result.cover = QRect((windowWidth - side) / 2, top, side, side * 5 / 4);
+					result.cover = QRect(margin + (contentWidth - side) / 2, top, side, side * 5 / 4);
 					lyricsTop += result.cover.height() + gap;
 				}
 			}
@@ -8735,14 +8733,13 @@ protected:
 			result.lyrics = QRect(
 				lyricsLeft,
 				lyricsTop,
-				std::max(windowWidth - margin - lyricsLeft, 0),
+				std::max(contentRight - lyricsLeft, 0),
 				std::max(areaBottom - lyricsTop, 0));
 			if (showsQueue()) {
 				result.center = result.lyrics;
 				result.scrollTop = result.center.y();
 			}
 		} else {
-			const auto contentWidth = std::max(windowWidth - 2 * margin, 0);
 			result.center = QRect(margin, top, contentWidth, areaHeight);
 			result.scrollTop = result.center.y()
 				+ (_tab == Tab::Search ? searchHeaderHeight(contentWidth) : 0);
@@ -8927,15 +8924,10 @@ protected:
 		_queuePanelTarget = layout.queuePanel;
 		layoutQueuePanel();
 		const auto home = (_tab == Tab::Home);
-		const auto artistPage = home && _homeArtistOpen;
-		const auto scrollBehindBar = home && !artistPage;
-		const auto scrollBottom = scrollBehindBar
-			? height()
-			: (artistPage ? layout.contentBottom : layout.center.bottom() + 1 - s(12));
-		// Последнюю карточку можно прокрутить целиком выше плеера.
-		const auto bottomPadding = scrollBehindBar && _hasPlaybackTrack
-			? height() - layout.contentBottom
-			: 0;
+		const auto scrollBottom = home
+			? (_hasPlaybackTrack ? layout.contentBottom + s(PlayerStyle::kSpace12) : layout.contentBottom)
+			: layout.center.bottom() + 1 - s(12);
+		const auto bottomPadding = (home && _hasPlaybackTrack) ? s(12) : 0;
 		_tabContent->setPadding(QMargins(0, 0, 0, bottomPadding));
 		const auto scrollWidth = ((home && _homeAlbumOpen) || _tab == Tab::Search || showsQueue())
 			? std::min(layout.center.width(), s(kMusicListMaxWidth))
@@ -9138,11 +9130,7 @@ protected:
 			}
 		}
 		_queueSlide.start(from, open ? 1. : 0., kSpatial);
-		if (showsQueue()) {
-			_tabScroll->setVisible(!open);
-			update();
-		}
-		layoutQueuePanel();
+		relayout();
 		if (open) {
 			refreshQueuePanel();
 		}
@@ -10123,39 +10111,48 @@ protected:
 	}
 
 	void updateHomeArtistBar() {
-		if (_tab != Tab::Home || !_homeArtistOpen || !_homeAlbumHeader) {
-			_homeArtistBar->hide();
-			_homeArtistTopEdge->hide();
-			_homeArtistBottomEdge->hide();
-			return;
-		}
-
+		const auto home = (_tab == Tab::Home);
+		const auto artist = home && _homeArtistOpen && _homeAlbumHeader;
 		const auto s = [](int value) { return style::ConvertScale(value); };
 		const auto height = s(56);
 		const auto scrollTop = _tabScroll->scrollTop();
-		const auto remaining = _homeAlbumHeader->height() - scrollTop;
+		const auto remaining = artist ? _homeAlbumHeader->height() - scrollTop : 2 * height;
 		const auto ratio = std::clamp((2 * height - remaining) / double(height), 0., 1.);
 		const auto opacity = ratio * ratio * (3. - 2. * ratio);
-		_homeAlbumHeader->setArtistIdentityOpacity(1. - opacity);
-		const auto viewport = _tabScroll->viewport()->size();
+		if (artist) {
+			_homeAlbumHeader->setArtistIdentityOpacity(1. - opacity);
+		}
+		const auto viewport = _tabScroll->viewport();
 		const auto barHeight = (opacity > 0.) ? height + s(kMusicListGap) : 0;
-		const auto fadeHeight = std::clamp((viewport.height() - barHeight) / 2, 0, s(28));
-		const auto placeEdge = [&](Ui::RpWidget *edge, int y, bool clipped) {
-			edge->setGeometry(0, y, viewport.width(), fadeHeight);
-			edge->setVisible(clipped && fadeHeight > 0);
-			edge->raise();
-		};
-		placeEdge(_homeArtistTopEdge, int(base::SafeRound(barHeight * opacity)),
-			scrollTop > 0);
-		placeEdge(_homeArtistBottomEdge, viewport.height() - fadeHeight,
-			scrollTop < _tabScroll->scrollTopMax());
 		_homeArtistBar->setVisible(barHeight > 0);
 		if (barHeight > 0) {
-			_homeArtistBar->setGeometry(0, 0, viewport.width(), barHeight);
+			_homeArtistBar->setGeometry(QRect(
+				viewport->mapTo(this, QPoint()), QSize(viewport->width(), barHeight)));
 			_homeArtistBarOpacity->setOpacity(opacity);
 			_homeArtistBar->raise();
 			_homeArtistBar->update();
 		}
+		const auto fadeTop = home && scrollTop > 0;
+		const auto fadeBottom = home && scrollTop < _tabScroll->scrollTopMax();
+		const auto top = qRound(barHeight * opacity);
+		const auto extent = viewport->height();
+		const auto fadeHeight = std::clamp((extent - top) / 2, 0, s(28));
+		_homeScrollFade->setEnabled(fadeHeight > 0 && (fadeTop || fadeBottom));
+		if (!_homeScrollFade->isEnabled()) return;
+
+		auto mask = QLinearGradient(0., 0., 0., extent);
+		if (fadeTop) {
+			mask.setColorAt(0., Qt::transparent);
+			if (top > 0) mask.setColorAt(top / double(extent), Qt::transparent);
+			mask.setColorAt((top + fadeHeight) / double(extent), Qt::black);
+		} else {
+			mask.setColorAt(0., Qt::black);
+		}
+		if (fadeBottom) {
+			mask.setColorAt((extent - fadeHeight) / double(extent), Qt::black);
+		}
+		mask.setColorAt(1., fadeBottom ? Qt::transparent : Qt::black);
+		_homeScrollFade->setOpacityMask(QBrush(mask));
 	}
 
 	void openHomeArtist(ArtistInfo artist, Track track) {
@@ -11668,9 +11665,6 @@ private:
 		update();
 		_view->update();
 		_queuePanel->update();
-		_homeArtistBar->update();
-		_homeArtistTopEdge->update();
-		_homeArtistBottomEdge->update();
 	}
 
 	void repaintAnimatedBackdrop(crl::time now, bool finished = false) {
@@ -12064,8 +12058,7 @@ private:
 		}
 	} };
 	Ui::RpWidget *_homeArtistBar = nullptr;
-	Ui::RpWidget *_homeArtistTopEdge = nullptr;
-	Ui::RpWidget *_homeArtistBottomEdge = nullptr;
+	QGraphicsOpacityEffect *_homeScrollFade = nullptr;
 	QGraphicsOpacityEffect *_homeArtistBarOpacity = nullptr;
 	const not_null<RoundGlyph*> _filter;
 	base::unique_qptr<Ui::PopupMenu> _filterMenu;
