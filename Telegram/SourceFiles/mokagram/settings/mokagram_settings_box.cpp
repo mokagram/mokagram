@@ -1695,16 +1695,9 @@ void CustomizeBox(
 		}
 	};
 
-	// Аккаунт SoundCloud живёт на странице «Музыка»: строка-кнопка входа и
-	// отключение. Статус строки обновляется вместе с аккаунтом.
+	// Use the same SoundCloud card as the Music Library.
 	if (page == u"music"_q) {
 		Mokagram::Music::RegisterSoundCloudSettings();
-		auto entries = std::vector<Entry>();
-		for (const auto &entry : Entries()) {
-			if (entry.key.startsWith(u"music.soundcloud_"_q)) {
-				entries.push_back(entry);
-			}
-		}
 		const auto inner = content->add(
 			object_ptr<Ui::VerticalLayout>(content),
 			QMargins(kOuterSide, 0, kOuterSide, 0));
@@ -1715,36 +1708,16 @@ void CustomizeBox(
 				HeadLabelStyle()),
 			QMargins(kPad, 20, kPad, 6));
 		MakeTransparent(head);
-		const auto card = inner->add(object_ptr<Ui::VerticalLayout>(inner));
-		PaintGroupBg(card);
-		const auto grey = Categories().back().color;
-		auto first = true;
-		for (const auto &entry : entries) {
-			if (!entry.action) {
-				continue;
-			}
-			const auto action = entry.action;
-			AddActionRow(
-				card,
-				entry.key.endsWith(u"_logout"_q)
-					? entry.title
-					: (Mokagram::Music::Account::IsLoggedIn()
-						? U(Mokagram::Lang::Tr("Аккаунт SoundCloud подключён"))
-						: entry.title),
-				entry.description,
-				entry.key.endsWith(u"_logout"_q)
-					? st::menuIconDelete
-					: st::menuIconProfile,
-				grey,
-				first,
-				[=] {
-					action();
-				},
-				entry.key.endsWith(u"_logout"_q)
-					? QString()
-					: QString::fromUtf8("🔗"));
-			first = false;
-		}
+		const auto &entries = Entries();
+		const auto login = ranges::find(
+			entries, u"music.soundcloud_login"_q, &Entry::key);
+		const auto logout = ranges::find(
+			entries, u"music.soundcloud_logout"_q, &Entry::key);
+		Expects(login != end(entries) && logout != end(entries));
+		Mokagram::Music::AddSoundCloudAccountCard(
+			inner,
+			login->action,
+			logout->action);
 		Mokagram::Music::Account::Changes(
 		) | rpl::on_next([=] {
 			auto value = QString::fromUtf8(

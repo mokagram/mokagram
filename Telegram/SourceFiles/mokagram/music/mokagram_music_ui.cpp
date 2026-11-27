@@ -7501,6 +7501,16 @@ private:
 
 } // namespace
 
+void AddSoundCloudAccountCard(
+		not_null<Ui::VerticalLayout*> parent,
+		Fn<void()> login,
+		Fn<void()> logout) {
+	parent->add(object_ptr<SoundCloudAccountBar>(
+		parent,
+		std::move(login),
+		std::move(logout)));
+}
+
 Track details::PlayingTrack() {
 	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
 	const auto document = current.audio();

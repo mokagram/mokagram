@@ -24,6 +24,7 @@ class SessionController;
 
 namespace Ui {
 class RpWidget;
+class VerticalLayout;
 } // namespace Ui
 
 namespace Mokagram::Music {
@@ -43,6 +44,11 @@ void ShowAlbumsBox(
 	not_null<Window::SessionController*> controller,
 	const QString &query,
 	const QString &trackId = QString());
+
+void AddSoundCloudAccountCard(
+	not_null<Ui::VerticalLayout*> parent,
+	Fn<void()> login,
+	Fn<void()> logout);
 
 // Мост к плееру клиента: если играет трек из очереди SoundCloud, кнопки
 // «вперёд/назад», повтор и перемешивание работают по этой очереди.
