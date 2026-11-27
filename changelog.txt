@@ -8,6 +8,7 @@ mokaGram (27.11.26)
 - Use unfilled text buttons for secondary Music section actions and align the artist actions on the trailing edge.
 - Make Music backgrounds, lyrics, navigation and track lists readable in the light theme.
 - Keep the chat folders sidebar behind the fullscreen music player when resizing the window.
+- Use a readable theme surface and accent for the chat translation bar.
 
 mokaGram (26.11.26)
 

@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "settings/settings_credits_graphics.h" // CreditsEntryBoxStyleOverrides
+#include "ui/color_contrast.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/shadow.h"
 #include "ui/effects/ripple_animation.h"
@@ -280,18 +281,31 @@ void TranslateBar::setup(not_null<History*> history) {
 	};
 	const auto button = static_cast<Ui::AbstractButton*>(_wrap.entity());
 	button->resize(0, st::historyTranslateBarHeight);
+	button->setProperty("moka-strip", true);
+	// Mokagram: keep the strip on a tonal surface in the active chat palette.
+	const auto stripBackground = [] {
+		return anim::color(st::topBarBg->c, st::windowFg->c, .035);
+	};
+	const auto stripForeground = [=] {
+		const auto surface = stripBackground();
+		const auto accent = st::windowActiveTextFg->c;
+		if (Ui::CountContrast(surface, accent) >= 4.5) {
+			return accent;
+		}
+		const auto ink = st::windowFg->c;
+		const auto toned = anim::color(accent, ink, .30);
+		return Ui::CountContrast(surface, toned) >= 4.5 ? toned : ink;
+	};
 	button->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
-		// Mokagram: плашка перевода как музыка в профиле, скруглена снизу.
+		// Mokagram: square top edge, rounded bottom edge.
 		auto p = QPainter(button);
-		button->setProperty("moka-strip", true);
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
-		p.setBrush(st::topBarBg->c.darker(175));
-		p.drawRoundedRect(
-			QRectF(button->rect()).adjusted(0, -22, 0, 0),
-			22,
-			22);
+		p.setBrush(stripBackground());
+		const auto radius = style::ConvertScale(22);
+		p.drawRoundedRect(QRectF(button->rect()).adjusted(0, -radius, 0, 0),
+			radius, radius);
 	}, button->lifetime());
 
 	button->setClickedCallback([=] {
@@ -307,12 +321,21 @@ void TranslateBar::setup(not_null<History*> history) {
 	icon->resize(st::historyTranslateIcon.size());
 	icon->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(icon);
-		st::historyTranslateIcon.paint(p, 0, 0, icon->width());
+		st::historyTranslateIcon.paintInCenter(p, icon->rect(), stripForeground());
 	}, icon->lifetime());
 	const auto settings = Ui::CreateChild<Ui::IconButton>(
 		button,
 		st::historyTranslateSettings);
 	settings->setClickedCallback([=] { showMenu(createMenu(settings)); });
+	const auto updateStripPalette = [=] {
+		const auto ink = stripForeground();
+		label->setTextColorOverride(ink);
+		settings->setIconColorOverride(ink);
+		button->update();
+		icon->update();
+	};
+	updateStripPalette();
+	style::PaletteChanged() | rpl::on_next(updateStripPalette, button->lifetime());
 
 	const auto updateLabelGeometry = [=] {
 		const auto full = _wrap.width() - icon->width();
