@@ -6087,7 +6087,7 @@ struct PlaybackBarColors {
 	QColor inactiveTrack;
 };
 
-[[nodiscard]] PlaybackBarColors MakePlaybackBarColors(QColor accent = {}) {
+[[nodiscard]] PlaybackBarColors MakePlaybackBarColors(QColor accent = {}, bool now = false) {
 	const auto readable = [](QColor background, QColor ink, QColor alternate) {
 		return (Ui::CountContrast(background, ink) >= 4.5) ? ink : alternate;
 	};
@@ -6101,7 +6101,9 @@ struct PlaybackBarColors {
 		: base;
 	const auto onSurface = readable(
 		surface, opaque(st::windowFg->c), ContrastingForeground(surface));
-	auto primary = accent.isValid() ? opaque(accent) : opaque(st::activeButtonBg->c);
+	auto primary = accent.isValid()
+		? opaque(accent)
+		: now ? onSurface : opaque(st::activeButtonBg->c);
 	if (accent.isValid() && Ui::CountContrast(surface, primary) < 3.) {
 		primary = anim::color(primary, onSurface, .48);
 	}
@@ -7097,11 +7099,16 @@ void details::LoadPlaybackArtwork(const Track &track) {
 	const auto current = Media::Player::instance()->current(AudioMsgId::Type::Song);
 	const auto document = current.audio();
 	if (!document
-		|| !IsTelegramTrack(track)
 		|| !CoverForDocument(document->id).isNull()) {
 		return;
 	}
 	const auto documentId = document->id;
+	if (!IsTelegramTrack(track)) {
+		if (!track.artworkUrl.isEmpty()) {
+			LoadQueuePlaybackCover(documentId, track);
+		}
+		return;
+	}
 	LoadLocalArtwork(track, [=](QImage image) {
 		if (!image.isNull()) {
 			SetCover(documentId, std::move(image));
@@ -8429,6 +8436,10 @@ public:
 				_seek->advanceWave(elapsed);
 			}
 		});
+		_coverTitleTimer.setInterval(33);
+		connect(&_coverTitleTimer, &QTimer::timeout, this, [=] {
+			update(metadataLines(computeLayout().info, false).title);
+		});
 		_seek->waveAnimationChanges(
 		) | rpl::on_next([=] { updateAmbientTimer(); }, lifetime());
 		connect(qApp, &QGuiApplication::applicationStateChanged, this, [=] {
@@ -8519,6 +8530,7 @@ protected:
 	void showEvent(QShowEvent *event) override {
 		RpWidget::showEvent(event);
 		_canvas.setVisible(true);
+		updateCoverTitleScroll();
 		updateAmbientTimer();
 	}
 	void hideEvent(QHideEvent *event) override {
@@ -8526,6 +8538,8 @@ protected:
 		_homeSideGlowPulsing = false;
 		_searchHintMenu.hide();
 		_ambientTimer.stop();
+		_coverTitleTimer.stop();
+		_coverTitleScrollAt = 0;
 		_canvas.setVisible(false);
 		_upcomingCanvas.refresh({}, {}, {}, false);
 		_preparedBackdrop = QImage();
@@ -8870,6 +8884,56 @@ protected:
 			QRect(area.x(), top + titleHeight + gap, area.width(), artistHeight),
 		};
 	}
+	[[nodiscard]] static QFont coverTitleFont(bool underline = false) {
+		auto result = PlayerStyle::kTrackTitle.font()->f;
+		result.setFamilies({ u"Nunito"_q, u"Adwaita Sans"_q, u"Noto Sans"_q, result.family() });
+		result.setWeight(QFont::Medium);
+		result.setUnderline(underline);
+		return result;
+	}
+
+	void updateCoverTitleScroll() {
+		const auto rect = metadataLines(computeLayout().info, false).title;
+		const auto scroll = (_tab == Tab::Now) && isVisible() && !rect.isEmpty()
+			&& QFontMetricsF(coverTitleFont()).horizontalAdvance(_title) > rect.width();
+		if (scroll) {
+			if (!_coverTitleScrollAt) _coverTitleScrollAt = crl::now();
+			if (!_coverTitleTimer.isActive()) _coverTitleTimer.start();
+		} else {
+			_coverTitleTimer.stop();
+			_coverTitleScrollAt = 0;
+		}
+	}
+
+	void paintCoverTitle(QPainter &p, QRect rect, const QString &title, bool current) {
+		if (rect.isEmpty() || title.isEmpty()) return;
+		const auto font = coverTitleFont(current && _hover == InfoHover::Title);
+		const auto metrics = QFontMetricsF(font);
+		const auto textWidth = metrics.horizontalAdvance(title);
+		p.setFont(font);
+		if (textWidth <= rect.width()) {
+			p.drawText(rect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, title);
+			return;
+		}
+		const auto gap = style::ConvertScale(36);
+		const auto speed = style::ConvertScale(38) / 1000.;
+		const auto distance = textWidth + gap;
+		const auto pause = 1100.;
+		const auto cycle = pause + distance / speed;
+		const auto elapsed = current && _coverTitleScrollAt
+			? std::fmod(double(crl::now() - _coverTitleScrollAt), cycle)
+			: 0.;
+		const auto offset = std::max(elapsed - pause, 0.) * speed;
+		const auto baseline = QRectF(rect).center().y() + (metrics.ascent() - metrics.descent()) / 2.;
+		p.save();
+		p.setClipRect(rect, Qt::IntersectClip);
+		const auto x = rect.x() - offset;
+		p.drawText(QPointF(x, baseline), title);
+		if (x + distance < rect.x() + rect.width()) {
+			p.drawText(QPointF(x + distance, baseline), title);
+		}
+		p.restore();
+	}
 	[[nodiscard]] QRect barInfoRect(const Layout &layout) const {
 		const auto shown = _coverMorph.animating()
 			? 1. - _coverTransition.expanded()
@@ -8890,7 +8954,8 @@ protected:
 			return line;
 		};
 		const auto lines = metadataLines(layout.info, false);
-		const auto title = hitRect(lines.title, kTrackTitle, _title);
+		auto title = lines.title;
+		title.setWidth(std::min(title.width(), QFontMetrics(coverTitleFont()).horizontalAdvance(_title)));
 		const auto artist = hitRect(lines.artist, kTrackArtist, _artist);
 		if (_tab != Tab::Now
 			&& !layout.ultra
@@ -9059,6 +9124,7 @@ protected:
 			button->raise();
 		}
 		RpWidget::resizeEvent(e);
+		updateCoverTitleScroll();
 		scheduleHomeMoreIfNeeded();
 		_coverOverlay->setGeometry(rect());
 		if (_tab == Tab::Home) {
@@ -11639,15 +11705,10 @@ protected:
 			if (opacity <= 0. || layout.cover.isEmpty()) {
 				return;
 			}
-			auto font = kTrackTitle.font()->underline(current && _hover == InfoHover::Title);
-			p.setFont(font);
 			p.setPen(QColor(255, 255, 255, int(255 * opacity)));
-			p.drawText(
-				lines.title,
-				Qt::AlignLeft | Qt::AlignVCenter,
-				font->elided(title, lines.title.width()));
+			paintCoverTitle(p, lines.title, title, current);
 			const auto artistHover = current && _hover == InfoHover::Artist;
-			font = kTrackArtist.font()->underline(artistHover);
+			const auto font = kTrackArtist.font()->underline(artistHover);
 			p.setFont(font);
 			p.setPen(QColor(255, 255, 255, int((artistHover ? 255 : 210) * opacity)));
 			p.drawText(
@@ -11774,14 +11835,16 @@ private:
 
 	void updatePlaybackBarColors(bool paletteChanged = false) {
 		auto accent = QColor();
-		if (_tab == Tab::Now && Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
-			accent = _canvasBackground.isNull()
-				? _accent
+		const auto now = (_tab == Tab::Now);
+		if (now && Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
+			accent = _coverAccent.isValid() || _canvasBackground.isNull()
+				? _coverAccent
 				: anim::color(_canvasAccentFrom, _canvasAccentTo, _canvasFade.unitValue(1.));
 		}
-		if (!paletteChanged && _playbackBarAccent == accent) return;
+		if (!paletteChanged && _playbackBarAccent == accent && _playbackBarIsNow == now) return;
 		_playbackBarAccent = accent;
-		_playbackColors = MakePlaybackBarColors(accent);
+		_playbackBarIsNow = now;
+		_playbackColors = MakePlaybackBarColors(accent, now);
 		repaintPlaybackBar();
 		for (const auto child : _playbackBar->children()) {
 			if (const auto widget = qobject_cast<QWidget*>(child)) {
@@ -11982,6 +12045,8 @@ private:
 			_canvasBackgroundFrom = QImage();
 			_spotifyPaletteFrame = QImage();
 			_canvasPaletteNext = 0;
+			_coverAccent = {};
+			_accent = {};
 			repaintBackdrop();
 		}
 		if (_closing) {
@@ -11989,6 +12054,9 @@ private:
 		}
 		setPlaybackBarShown(!track.id.isEmpty());
 		if (track.id.isEmpty()) {
+			_playbackArtworkFor = AudioMsgId();
+			_playbackArtworkLifetime.destroy();
+			_playbackArtworkMedia = nullptr;
 			if (_isPlaying) repaintBackdrop();
 			_isPlaying = false;
 			_seek->setExpressive(true, false);
@@ -12007,6 +12075,27 @@ private:
 		const auto current = instance->current(AudioMsgId::Type::Song);
 		const auto state = instance->getState(AudioMsgId::Type::Song);
 		const auto frequency = std::max<int64>(state.frequency, 1);
+		if (_playbackArtworkFor != current) {
+			_playbackArtworkFor = current;
+			_playbackArtworkLifetime.destroy();
+			_playbackArtworkMedia = nullptr;
+			if (const auto document = current.audio(); document && !OwnsTrack(current)) {
+				_playbackArtworkMedia = document->createMediaView();
+				if (document->hasThumbnail() && !_playbackArtworkMedia->thumbnail()) {
+					document->session().downloaderTaskFinished(
+					) | rpl::on_next([=] {
+						if (_playbackArtworkMedia && _playbackArtworkMedia->thumbnail()) {
+							_playbackArtworkLifetime.destroy();
+							refresh();
+						}
+					}, _playbackArtworkLifetime);
+					_playbackArtworkMedia->thumbnailWanted(current.contextId());
+				}
+			}
+			if (CoverForPlayback(current).isNull()) {
+				details::LoadPlaybackArtwork(track);
+			}
+		}
 
 		// Обложка могла догрузиться позже трека.
 		const auto cover = CoverForPlayback(current);
@@ -12023,6 +12112,7 @@ private:
 				_infoFade.stop();
 				_infoFade.start(0., 1., kSlowEffects);
 			}
+			if (_title != track.title) _coverTitleScrollAt = 0;
 			_title = track.title;
 			_artist = track.artist;
 			_coverKey = coverKey;
@@ -12032,7 +12122,9 @@ private:
 					? cover.scaled(kMaxCoverSize, kMaxCoverSize,
 						Qt::KeepAspectRatio, Qt::SmoothTransformation)
 					: cover);
-			if (_canvasBackground.isNull()) _accent = CurrentCoverAccent();
+			_coverAccent = ComputeAccent(cover);
+			if (_canvasBackground.isNull()) _accent = _coverAccent;
+			updateCoverTitleScroll();
 			if (_tab == Tab::Home) {
 				_playbackBar->update();
 			}
@@ -12184,6 +12276,8 @@ private:
 	double _queueProgress = 0.;
 	PlaybackBarColors _playbackColors = MakePlaybackBarColors();
 	QColor _playbackBarAccent;
+	QColor _coverAccent;
+	bool _playbackBarIsNow = false;
 	const not_null<Ui::RpWidget*> _playbackBar;
 	bool _hasPlaybackTrack = false;
 	PlayerSpring _barSlide{ [this] {
@@ -12421,6 +12515,11 @@ private:
 		_coverOverlay->update();
 	} };
 	QPixmap _cover;
+	AudioMsgId _playbackArtworkFor;
+	std::shared_ptr<Data::DocumentMedia> _playbackArtworkMedia;
+	rpl::lifetime _playbackArtworkLifetime;
+	QTimer _coverTitleTimer;
+	crl::time _coverTitleScrollAt = 0;
 	QPixmap _coverWas;
 	qint64 _coverKey = 0;
 	QString _title;
