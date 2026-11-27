@@ -3528,6 +3528,29 @@ protected:
 	}
 };
 
+[[nodiscard]] HomeTonalControl *MakeHomeShelfAction(
+		QWidget *parent,
+		QString label,
+		const QString &section,
+		Fn<void()> callback) {
+	const auto action = Ui::CreateChild<HomeTonalControl>(parent);
+	action->setAccessibleName(label + u": "_q + section);
+	action->setClickedCallback(std::move(callback));
+	action->setNaturalWidth(st::semiboldFont->width(label) + style::ConvertScale(32));
+	action->paintRequest() | rpl::on_next([action, label = std::move(label)] {
+		auto p = QPainter(action);
+		auto hq = PainterHighQualityEnabler(p);
+		PaintHomeSurface(p, action->rect(), action->isOver() ? 1. : 0.,
+			action->isDown(), action->hasFocus());
+		const auto font = st::semiboldFont;
+		const auto available = std::max(action->width() - style::ConvertScale(16), 0);
+		p.setFont(font);
+		p.setPen(st::windowFg);
+		p.drawText(action->rect(), Qt::AlignCenter, font->elided(label, available));
+	}, action->lifetime());
+	return action;
+}
+
 class HomeShelfHeader final : public Ui::RpWidget {
 public:
 	HomeShelfHeader(QWidget *parent, QString title, Fn<void()> open = nullptr)
@@ -3535,21 +3558,8 @@ public:
 	, _title(std::move(title)) {
 		resize(width(), style::ConvertScale(56));
 		if (open) {
-			const auto action = Ui::CreateChild<HomeTonalControl>(this);
-			_action = action;
-			const auto label = PlaylistText("Показать все");
-			action->setAccessibleName(label + u": "_q + _title);
-			action->setClickedCallback(std::move(open));
-			action->paintRequest() | rpl::on_next([=] {
-				auto p = QPainter(action);
-				auto hq = PainterHighQualityEnabler(p);
-				PaintHomeSurface(p, action->rect(), action->isOver() ? 1. : 0.,
-					action->isDown(), action->hasFocus());
-				p.setFont(st::semiboldFont);
-				p.setPen(st::windowFg);
-				p.drawText(action->rect(), Qt::AlignCenter, label);
-			}, action->lifetime());
-			_actionWidth = st::semiboldFont->width(label) + style::ConvertScale(32);
+			_action = MakeHomeShelfAction(
+				this, PlaylistText("Показать все"), _title, std::move(open));
 		}
 	}
 
@@ -3558,8 +3568,9 @@ protected:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto side = s(BoxParts::kOuterSide);
 		if (_action) {
-			_action->setGeometry(std::max(newWidth - side - _actionWidth, side),
-				s(8), _actionWidth, s(40));
+			const auto width = _action->naturalWidth();
+			_action->setGeometry(std::max(newWidth - side - width, side),
+				s(8), width, s(40));
 		}
 		return s(56);
 	}
@@ -3581,7 +3592,6 @@ protected:
 private:
 	QString _title;
 	Ui::AbstractButton *_action = nullptr;
-	int _actionWidth = 0;
 };
 
 class PlaylistRow final : public Ui::AbstractButton {
@@ -5198,15 +5208,14 @@ public:
 		Fn<void(DiscographyFilter)> filter,
 		Fn<void()> toggle)
 	: RpWidget(parent) {
-		_title = Ui::CreateChild<Ui::FlatLabel>(
-			this, PlaylistText("Дискография"), st::boxTitle);
+		const auto title = PlaylistText("Дискография");
+		_title = Ui::CreateChild<Ui::FlatLabel>(this, title, st::boxTitle);
 		if (toggle) {
-			_toggle = Ui::CreateChild<Ui::RoundButton>(
+			_toggle = MakeHomeShelfAction(
 				this,
-				rpl::single(PlaylistText(expanded ? "Свернуть" : "Показать все")),
-				BoxParts::PillLight());
-			_toggle->setFocusPolicy(Qt::TabFocus);
-			_toggle->setClickedCallback(std::move(toggle));
+				PlaylistText(expanded ? "Свернуть" : "Показать все"),
+				title,
+				std::move(toggle));
 		}
 		const auto labels = std::array{
 			"Все релизы",
@@ -5225,11 +5234,13 @@ protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int value) { return style::ConvertScale(value); };
 		const auto rowHeight = s(44);
-		const auto toggleWidth = _toggle ? std::min(s(130), newWidth / 2) : 0;
+		const auto toggleWidth = _toggle
+			? std::min(_toggle->naturalWidth(), newWidth / 2)
+			: 0;
 		_title->resizeToWidth(std::max(newWidth - toggleWidth - s(8), 0));
 		_title->moveToLeft(0, (rowHeight - _title->height()) / 2, newWidth);
 		if (_toggle) {
-			_toggle->setFullWidth(toggleWidth);
+			_toggle->resize(toggleWidth, s(40));
 			_toggle->moveToRight(0, (rowHeight - _toggle->height()) / 2, newWidth);
 		}
 		const auto gap = s(kHomeCardGap);
@@ -5251,7 +5262,7 @@ protected:
 
 private:
 	Ui::FlatLabel *_title = nullptr;
-	Ui::RoundButton *_toggle = nullptr;
+	HomeTonalControl *_toggle = nullptr;
 	std::array<MusicChoiceChip*, 3> _filters = {};
 };
 

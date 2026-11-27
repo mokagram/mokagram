@@ -5,6 +5,7 @@ mokaGram (27.11.26)
 - Use the same Material 3 track rows on single-track pages and in artist track lists.
 - Align the current track highlight with the rounded edges of the track list.
 - Center the pause icon in Music Home cards.
+- Match the Discography toggle to other Music section actions.
 
 mokaGram (26.11.26)
 
