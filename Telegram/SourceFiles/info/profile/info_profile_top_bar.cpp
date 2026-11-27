@@ -46,6 +46,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_star_gift.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
+#include "mainwindow.h"
+#include "ui/unread_badge.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "editor/photo_editor_common.h"
 #include "editor/photo_editor_layer_widget.h"
@@ -125,11 +127,86 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QClipboard>
 #include <QtGui/QDragMoveEvent>
 #include <QtGui/QGuiApplication>
+#include <QtWidgets/QGraphicsDropShadowEffect>
 
 namespace Info::Profile {
 
 constexpr auto kHeaderInset = 0;
 namespace {
+
+// Mokagram: the profile badge uses the compact toast from swrm.
+class MokaBadgeToast final : public Ui::RpWidget {
+public:
+	MokaBadgeToast(not_null<Ui::RpWidget*> parent, QString text)
+	: Ui::RpWidget(parent)
+	, _text(std::move(text)) {
+		hide();
+		setAttribute(Qt::WA_TransparentForMouseEvents);
+		const auto shadow = new QGraphicsDropShadowEffect(this);
+		shadow->setBlurRadius(style::ConvertScale(32));
+		shadow->setOffset(0, style::ConvertScale(8));
+		shadow->setColor(QColor(0, 0, 0, 100));
+		setGraphicsEffect(shadow);
+		_font.setPixelSize(style::ConvertScale(14));
+		_font.setWeight(QFont::Medium);
+		parent->sizeValue() | rpl::on_next([=](QSize size) {
+			const auto inset = style::ConvertScale(16);
+			const auto metrics = QFontMetrics(_font);
+			const auto width = std::max(0, std::min({
+				metrics.horizontalAdvance(_text) + style::ConvertScale(26),
+				style::ConvertScale(384),
+				size.width() - 2 * inset,
+			}));
+			const auto height = metrics.height() + style::ConvertScale(20);
+			setGeometry(size.width() - inset - width,
+				size.height() - inset - height, width, height);
+		}, lifetime());
+	}
+
+	void setHovered(bool hovered) {
+		const auto from = _fade.value(isVisible() ? 1. : 0.);
+		_hovered = hovered;
+		if (hovered) {
+			show();
+			raise();
+		}
+		_fade.start([=] {
+			if (!_fade.animating() && !hovered) {
+				hide();
+			}
+			update();
+		}, from, hovered ? 1. : 0.,
+			hovered ? 220 : 140, anim::easeOutCubic);
+	}
+
+protected:
+	void paintEvent(QPaintEvent *) override {
+		const auto progress = _fade.value(_hovered ? 1. : 0.);
+		auto p = QPainter(this);
+		p.setRenderHint(QPainter::Antialiasing);
+		p.setOpacity(progress);
+		p.translate(rect().center());
+		const auto scale = 0.96 + 0.04 * progress;
+		p.scale(scale, scale);
+		p.translate(-rect().center());
+		const auto radius = style::ConvertScale(22);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg->c);
+		p.drawRoundedRect(QRectF(rect()), radius, radius);
+		p.setPen(st::windowFg->c);
+		p.setFont(_font);
+		const auto label = rect().adjusted(
+			style::ConvertScale(16), 0, -style::ConvertScale(10), 0);
+		p.drawText(label, Qt::AlignLeft | Qt::AlignVCenter,
+			QFontMetrics(_font).elidedText(_text, Qt::ElideRight, label.width()));
+	}
+
+private:
+	QString _text;
+	QFont _font;
+	bool _hovered = false;
+	Ui::Animations::Simple _fade;
+};
 
 class Userpic final
 	: public Ui::AbstractButton
@@ -573,6 +650,35 @@ TopBar::TopBar(
 		badgeUpdates = rpl::merge(
 			std::move(badgeUpdates),
 			_botVerify->updated());
+	}
+	// Mokagram: show the same description as the profile verification row.
+	if (!_savedMessages && _source != Source::Preview) {
+		rpl::single(rpl::empty_value{}) | rpl::then(
+			_botVerify->updated()
+		) | rpl::on_next([=] {
+			const auto badge = _botVerify->widget();
+			const auto details = _peer->botVerifyDetails();
+			if (!badge || !details || details->botId != UserId(0)
+				|| details->description.text.isEmpty()) {
+				return;
+			}
+			const auto toast = QPointer(new MokaBadgeToast(
+				controller->widget(),
+				details->description.text));
+			badge->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+			QObject::connect(badge, &QObject::destroyed, toast.data(), [=] {
+				toast->hide();
+				toast->deleteLater();
+			});
+			badge->events() | rpl::on_next([=](not_null<QEvent*> event) {
+				if (toast && event->type() == QEvent::Enter) {
+					toast->setHovered(true);
+				} else if (toast && (event->type() == QEvent::Leave
+					|| event->type() == QEvent::Hide)) {
+					toast->setHovered(false);
+				}
+			}, badge->lifetime());
+		}, lifetime());
 	}
 	_title->naturalWidthValue() | rpl::on_next([=](int w) {
 		_title->resizeToWidth(w);
