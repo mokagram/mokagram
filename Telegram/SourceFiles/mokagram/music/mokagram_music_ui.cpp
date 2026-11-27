@@ -2373,10 +2373,14 @@ constexpr auto kHomeCardDetailsHeight = 56;
 	return QRect(inset, inset, side, side);
 }
 
-[[nodiscard]] QColor HomeSurfaceColor(double hover, bool pressed, bool selected) {
+[[nodiscard]] QColor HomeSurfaceColor(
+		double hover,
+		bool pressed,
+		bool selected,
+		QColor selectedTint = st::windowBgActive->c) {
 	const auto surface = MusicCardColor();
 	const auto base = selected
-		? anim::color(surface, st::windowBgActive->c, .16)
+		? anim::color(surface, selectedTint, .16)
 		: surface;
 	return anim::color(base, st::windowFg->c, pressed ? .12 : .08 * hover);
 }
@@ -2387,12 +2391,13 @@ void PaintHomeSurface(
 		double hover,
 		bool pressed,
 		bool focused,
-		bool selected = false) {
+		bool selected = false,
+		QColor selectedTint = st::windowFg->c) {
 	const auto radius = std::min(
 		style::ConvertScale(BoxParts::kCardRadius),
 		std::min(rect.width(), rect.height()) / 2);
 	p.setPen(Qt::NoPen);
-	p.setBrush(HomeSurfaceColor(hover, pressed, selected));
+	p.setBrush(HomeSurfaceColor(hover, pressed, selected, selectedTint));
 	p.drawRoundedRect(rect, radius, radius);
 	if (focused) {
 		const auto inset = style::ConvertScale(1);
@@ -2481,13 +2486,21 @@ void PaintHomeCover(QPainter &p, const QRect &rect, const QImage &art) {
 }
 
 void PaintIslandGlyph(QPainter &p, const char *svg, QPointF center, int size, QColor color);
+[[nodiscard]] QColor ContrastingForeground(const QColor &background);
+
+[[nodiscard]] QColor PlaybackSurfaceColor() {
+	auto base = st::windowBg->c;
+	auto ink = st::windowFg->c;
+	base.setAlpha(255);
+	ink.setAlpha(255);
+	return anim::color(base, ink, .04);
+}
 
 void PaintHomeCardAction(
 		QPainter &p,
 		const QRect &button,
 		double shown = 1.,
-		bool playing = false,
-		bool current = false) {
+		bool playing = false) {
 	const auto s = [](int v) { return style::ConvertScale(v); };
 	if (button.width() < s(24)) {
 		return;
@@ -2499,9 +2512,11 @@ void PaintHomeCardAction(
 	p.save();
 	p.setOpacity(p.opacity() * shown);
 	p.setPen(Qt::NoPen);
-	p.setBrush(current ? st::windowBgActive : st::windowBg);
+	const auto surface = PlaybackSurfaceColor();
+	p.setBrush(surface);
 	p.drawEllipse(button);
-	const auto glyph = current ? st::windowFgActive->c : st::windowFg->c;
+	const auto ink = st::windowFg->c;
+	const auto glyph = Ui::CountContrast(surface, ink) >= 4.5 ? ink : ContrastingForeground(surface);
 	using namespace Mokagram::Music::IslandGlyphs;
 	PaintIslandGlyph(p, playing ? kGlyphPause : kGlyphPlay, QRectF(button).center(), s(16), glyph);
 	p.restore();
@@ -2699,7 +2714,7 @@ protected:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		PaintHomeCardAction(p, rect(), _loading ? shown * .65 : shown,
-			_playback.playing, _playback.current);
+			_playback.playing);
 		if (hasFocus()) {
 			const auto focus = style::ConvertScale(2);
 			const auto inset = focus / 2.;
@@ -3268,7 +3283,8 @@ private:
 		const auto album = (_mode == RowMode::AlbumTrack);
 		if (_compactQueue) {
 			if (!isDisabled() && (playing || over || hasFocus())) {
-				PaintHomeSurface(p, rect(), isOver() ? 1. : 0., isDown(), hasFocus(), playing);
+				PaintHomeSurface(p, rect(), isOver() ? 1. : 0., isDown(), hasFocus(),
+					playing, st::windowBgActive->c);
 			}
 		} else if (_grouped) {
 			PaintTrackListState(p, *this, playing);
@@ -4148,7 +4164,7 @@ protected:
 		PaintHomeCover(p, art, _art);
 		const auto action = actionRect();
 		PaintHomeCardAction(p, action,
-			(hasFocus() || _current) ? 1. : _hoverFade.value(), _playing, _current);
+			(hasFocus() || _current) ? 1. : _hoverFade.value(), _playing);
 		const auto left = art.left() + art.width() + s(12);
 		const auto available = std::max(action.left() - s(8) - left, 0);
 		const auto textHeight = s(22);
@@ -6077,8 +6093,7 @@ struct PlaybackBarColors {
 		color.setAlpha(255);
 		return color;
 	};
-	const auto surface = anim::color(
-		opaque(st::windowBg->c), opaque(st::windowFg->c), .04);
+	const auto surface = PlaybackSurfaceColor();
 	const auto onSurface = readable(
 		surface, opaque(st::windowFg->c), ContrastingForeground(surface));
 	auto primary = opaque(st::activeButtonBg->c);
