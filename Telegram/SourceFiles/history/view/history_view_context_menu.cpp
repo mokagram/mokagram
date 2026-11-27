@@ -1986,6 +1986,18 @@ void FillContextMenuItems(
 			list->controller(),
 			item);
 	}
+	if (item && !hasSelection && Mokagram::History::HasRevisions(item)) {
+		const auto controller = list->controller();
+		const auto id = item->fullId();
+		result->addAction(
+			QString::fromUtf8(Mokagram::Lang::Tr("Что изменилось")),
+			[=] {
+				if (const auto strong = controller->session().data().message(id)) {
+					Mokagram::History::ShowRevisions(controller, strong);
+				}
+			},
+			&st::menuIconEdit);
+	}
 	AddMessageActions(result, request, list);
 
 	const auto wasAmount = result->actions().size();
@@ -2562,13 +2574,6 @@ void AddWhenEditedForwardedAuthorActionHelper(
 					Api::WhenEdited(item->from(), edited->date)));
 			}
 		}
-	}
-	// Mokagram: open saved revisions even when the message hides its edit badge.
-	if (Mokagram::History::HasRevisions(item)) {
-		menu->addAction(
-			QString::fromUtf8(Mokagram::Lang::Tr("Что изменилось")),
-			[=] { Mokagram::History::ShowRevisions(controller, item); },
-			&st::menuIconEdit);
 	}
 	if (item->canLookupMessageAuthor()) {
 		if (insertSeparator && !menu->empty()) {

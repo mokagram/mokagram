@@ -3117,6 +3117,20 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			|| (channel->canPostMessages()
 				&& item->viewsCount() >= kMinViewsCount));
 	};
+	const auto addRevisions = [&](not_null<HistoryItem*> item) {
+		if (!Mokagram::History::HasRevisions(item)) {
+			return;
+		}
+		const auto id = item->fullId();
+		_menu->addAction(
+			QString::fromUtf8(Mokagram::Lang::Tr("Что изменилось")),
+			[controller = _controller, id] {
+				if (const auto strong = controller->session().data().message(id)) {
+					Mokagram::History::ShowRevisions(controller, strong);
+				}
+			},
+			&st::menuIconEdit);
+	};
 	const auto addItemActions = [&](
 			HistoryItem *item,
 			HistoryItem *albumPartItem) {
@@ -3567,6 +3581,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						}
 					},
 					&st::menuIconInfo);
+				addRevisions(item);
 			}
 			// Mokagram: скриншот выбранных сообщений (или одного).
 			_menu->addAction(
@@ -3913,6 +3928,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						}
 					},
 					&st::menuIconInfo);
+				addRevisions(item);
 			}
 			// Mokagram: скриншот выбранных сообщений (или одного).
 			_menu->addAction(

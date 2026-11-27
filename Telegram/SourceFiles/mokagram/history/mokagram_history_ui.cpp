@@ -334,20 +334,20 @@ void AddTextDiff(
 				wash.setAlphaF(0.17);
 				p.fillRect(row->rect(), wash);
 				wash.setAlphaF(0.19);
-				p.fillRect(gutter, wash);
+				p.fillRect(QRect(left ? 0 : column, 0, column, row->height()), wash);
 			}
 			p.setFont(lineStyle.style.font->f);
 			p.setPen(st::windowSubTextFg->c);
 			const auto y = vertical + lineStyle.style.font->ascent;
-			const auto drawNumber = [&](int index, int edge) {
+			const auto drawNumber = [&](int index, int start) {
 				if (index) {
 					const auto number = QString::number(index);
-					p.drawText(edge - style::ConvertScale(5)
-						- lineStyle.style.font->width(number), y, number);
+					p.drawText(start + (column - lineStyle.style.font->width(number)) / 2,
+						y, number);
 				}
 			};
-			drawNumber(left, column);
-			drawNumber(right, 2 * column);
+			drawNumber(left, 0);
+			drawNumber(right, column);
 			if (changed) {
 				p.setPen(accent->c);
 				p.drawText(2 * column + style::ConvertScale(7), y, QString(1, sign));
@@ -554,12 +554,16 @@ void HistoryBox(
 		});
 	}
 
-	const auto empty = content->add(
-		object_ptr<Ui::FlatLabel>(
+	const auto emptyWrap = content->add(
+		object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
 			content,
-			U(Mokagram::Lang::Tr("Загрузка...")),
-			st::boxLabel),
-		QMargins(24, 12, 24, 12));
+			object_ptr<Ui::FlatLabel>(
+				content,
+				U(Mokagram::Lang::Tr("Загрузка...")),
+				st::boxLabel),
+			QMargins(24, 12, 24, 12)));
+	const auto empty = emptyWrap->entity();
+	emptyWrap->toggle(true, anim::type::instant);
 	const auto list = content->add(
 		object_ptr<Ui::VerticalLayout>(content),
 		QMargins(),
@@ -724,7 +728,7 @@ void HistoryBox(
 						? "Здесь пока нет удалённых сообщений."
 						: "Ничего не найдено"))
 					: U(Mokagram::Lang::Tr("Здесь пока нет сохранённых правок."))));
-			weakEmpty->setVisible(!list->count());
+			emptyWrap->toggle(!list->count(), anim::type::instant);
 		});
 	};
 	more->setClickedCallback(loadMore);
@@ -744,7 +748,7 @@ void HistoryBox(
 			selection->changed.fire({});
 			list->clear();
 			empty->setText(U(Mokagram::Lang::Tr("Загрузка...")));
-			empty->show();
+			emptyWrap->toggle(true, anim::type::instant);
 			timer->start(250);
 		}, search->lifetime());
 	}
