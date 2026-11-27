@@ -8085,9 +8085,14 @@ void PaintHomeSideGlow(
 	glow.setColorAt(0., tint);
 	tint.setAlpha(0);
 	glow.setColorAt(1., tint);
-	const auto height = band.height() * .8;
-	p.fillRect(QRectF(band.x() - side, band.y(), 2. * side, height), glow);
-	p.fillRect(QRectF(band.x() + band.width() - side, band.y(), 2. * side, height), glow);
+	const auto left = band.x();
+	const auto right = band.x() + band.width();
+	const auto top = band.y();
+	const auto height = band.height();
+	p.fillRect(QRectF(left - side, top, 2. * side, .8 * height), glow);
+	p.fillRect(QRectF(right - side, top, 2. * side, .8 * height), glow);
+	p.fillRect(QRectF(left, top + .6 * height, side, .4 * height), glow);
+	p.fillRect(QRectF(right - side, top + .76 * height, side, .4 * height), glow);
 }
 
 struct PlayerSpringSpec {
@@ -8361,10 +8366,10 @@ public:
 		}));
 		_homeBack->hide();
 		const auto viewport = _tabScroll->viewport();
-		_homeScrollFade = new QGraphicsOpacityEffect(viewport);
-		_homeScrollFade->setOpacity(1.);
-		_homeScrollFade->setEnabled(false);
-		viewport->setGraphicsEffect(_homeScrollFade);
+		_tabScrollFade = new QGraphicsOpacityEffect(viewport);
+		_tabScrollFade->setOpacity(1.);
+		_tabScrollFade->setEnabled(false);
+		viewport->setGraphicsEffect(_tabScrollFade);
 		_homeArtistBar = Ui::CreateChild<Ui::RpWidget>(this);
 		_homeArtistBar->setAttribute(Qt::WA_TransparentForMouseEvents);
 		_homeArtistBarOpacity = new QGraphicsOpacityEffect(_homeArtistBar);
@@ -8617,6 +8622,8 @@ public:
 			if (_tab == Tab::Home) {
 				updateHomeArtistBar();
 				if (_homeAlbumOpen) update();
+			} else if (_tab == Tab::Library) {
+				updateTabScrollFade(-1);
 			}
 			if (!_rebuildingTab) {
 				scheduleHomeMoreIfNeeded();
@@ -10881,33 +10888,49 @@ protected:
 			_homeArtistBar->raise();
 			_homeArtistBar->update();
 		}
-		updateHomeScrollFade(home && scrollTop > 0 ? qRound(barHeight * opacity) : -1);
+		updateTabScrollFade(home && scrollTop > 0 ? qRound(barHeight * opacity) : -1);
 	}
 
-	void updateHomeScrollFade(int top) {
+	void updateTabScrollFade(int top) {
 		const auto viewport = _tabScroll->viewport();
 		const auto size = viewport->size();
+		const auto libraryEdgeDepth = (_tab == Tab::Library)
+			? std::clamp(
+				_tabScroll->scrollTopMax() - _tabScroll->scrollTop(),
+				0,
+				std::min(style::ConvertScale(14), size.height() / 2))
+			: 0;
 		const auto depth = style::ConvertScale(28);
 		const auto feather = style::ConvertScale(16);
-		const auto bar = _playbackBar->geometry().translated(-viewport->mapTo(this, QPoint()));
+		const auto bar = (_tab == Tab::Home && _hasPlaybackTrack)
+			? _playbackBar->geometry().translated(-viewport->mapTo(this, QPoint()))
+			: QRect();
 		const auto fadeBounds = bar.marginsAdded(QMargins(feather, feather, feather, feather));
-		const auto bottom = (_tab == Tab::Home && _hasPlaybackTrack && bar.width() > 0
+		const auto bottom = (bar.width() > 0
 			&& _tabScroll->scrollTop() < _tabScroll->scrollTopMax()
 			&& fadeBounds.intersects(viewport->rect()))
 			? fadeBounds
 			: QRect();
-		const auto enabled = !size.isEmpty() && (top >= 0 || !bottom.isEmpty());
-		_homeScrollFade->setEnabled(enabled);
+		const auto enabled = !size.isEmpty()
+			&& (top >= 0 || !bottom.isEmpty() || libraryEdgeDepth > 0);
+		_tabScrollFade->setEnabled(enabled);
 		if (!enabled) return;
 
-		const auto key = std::tuple(size, top, bottom, depth, feather);
-		if (_homeScrollFadeKey == key) return;
-		_homeScrollFadeKey = key;
+		const auto key = std::tuple(size, top, bottom, depth, feather, libraryEdgeDepth);
+		if (_tabScrollFadeKey == key) return;
+		_tabScrollFadeKey = key;
+		if (libraryEdgeDepth > 0) {
+			auto edge = QLinearGradient(0., size.height() - libraryEdgeDepth, 0., size.height());
+			edge.setColorAt(0., Qt::black);
+			edge.setColorAt(1., Qt::transparent);
+			_tabScrollFade->setOpacityMask(QBrush(edge));
+			return;
+		}
 		auto topFade = QLinearGradient(0., top, 0., top + depth);
 		topFade.setColorAt(0., Qt::transparent);
 		topFade.setColorAt(1., Qt::black);
 		if (bottom.isEmpty()) {
-			_homeScrollFade->setOpacityMask(QBrush(topFade));
+			_tabScrollFade->setOpacityMask(QBrush(topFade));
 			return;
 		}
 
@@ -10937,7 +10960,7 @@ protected:
 			p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
 			p.drawImage(bottom.topLeft(), cutout);
 		}
-		_homeScrollFade->setOpacityMask(QBrush(mask));
+		_tabScrollFade->setOpacityMask(QBrush(mask));
 	}
 
 	void beginHomeDetail() {
@@ -12959,8 +12982,8 @@ private:
 		}
 	} };
 	Ui::RpWidget *_homeArtistBar = nullptr;
-	QGraphicsOpacityEffect *_homeScrollFade = nullptr;
-	std::tuple<QSize, int, QRect, int, int> _homeScrollFadeKey;
+	QGraphicsOpacityEffect *_tabScrollFade = nullptr;
+	std::tuple<QSize, int, QRect, int, int, int> _tabScrollFadeKey;
 	QGraphicsOpacityEffect *_homeArtistBarOpacity = nullptr;
 	const not_null<RoundGlyph*> _filter;
 	base::unique_qptr<Ui::PopupMenu> _filterMenu;
