@@ -8922,9 +8922,9 @@ protected:
 		layoutQueuePanel();
 		const auto home = (_tab == Tab::Home);
 		const auto scrollBottom = home
-			? (_hasPlaybackTrack ? layout.contentBottom + s(PlayerStyle::kSpace12) : layout.contentBottom)
+			? (_hasPlaybackTrack ? height() : layout.contentBottom)
 			: layout.center.bottom() + 1 - s(12);
-		const auto bottomPadding = (home && _hasPlaybackTrack) ? s(12) : 0;
+		const auto bottomPadding = (home && _hasPlaybackTrack) ? height() - layout.contentBottom : 0;
 		_tabContent->setPadding(QMargins(0, 0, 0, bottomPadding));
 		const auto scrollWidth = ((home && _homeAlbumOpen) || _tab == Tab::Search || showsQueue())
 			? std::min(layout.center.width(), s(kMusicListMaxWidth))
@@ -10129,26 +10129,61 @@ protected:
 			_homeArtistBar->raise();
 			_homeArtistBar->update();
 		}
-		const auto fadeTop = home && scrollTop > 0;
-		const auto fadeBottom = home && scrollTop < _tabScroll->scrollTopMax();
-		const auto top = qRound(barHeight * opacity);
-		const auto extent = viewport->height();
-		const auto fadeHeight = std::clamp((extent - top) / 2, 0, s(28));
-		_homeScrollFade->setEnabled(fadeHeight > 0 && (fadeTop || fadeBottom));
-		if (!_homeScrollFade->isEnabled()) return;
+		updateHomeScrollFade(home && scrollTop > 0 ? qRound(barHeight * opacity) : -1);
+	}
 
-		auto mask = QLinearGradient(0., 0., 0., extent);
-		if (fadeTop) {
-			mask.setColorAt(0., Qt::transparent);
-			if (top > 0) mask.setColorAt(top / double(extent), Qt::transparent);
-			mask.setColorAt((top + fadeHeight) / double(extent), Qt::black);
-		} else {
-			mask.setColorAt(0., Qt::black);
+	void updateHomeScrollFade(int top) {
+		const auto viewport = _tabScroll->viewport();
+		const auto size = viewport->size();
+		const auto depth = style::ConvertScale(28);
+		const auto feather = style::ConvertScale(16);
+		const auto bar = _playbackBar->geometry().translated(-viewport->mapTo(this, QPoint()));
+		const auto bottom = (_tab == Tab::Home && _hasPlaybackTrack && bar.width() > 0
+			&& _tabScroll->scrollTop() < _tabScroll->scrollTopMax()
+			&& bar.y() - depth < size.height())
+			? QRect(bar.x() - feather, bar.y() - depth, bar.width() + 2 * feather,
+				size.height() - bar.y() + depth)
+			: QRect();
+		const auto enabled = !size.isEmpty() && (top >= 0 || !bottom.isEmpty());
+		_homeScrollFade->setEnabled(enabled);
+		if (!enabled) return;
+
+		const auto key = std::tuple(size, top, bottom, depth, feather);
+		if (_homeScrollFadeKey == key) return;
+		_homeScrollFadeKey = key;
+		auto topFade = QLinearGradient(0., top, 0., top + depth);
+		topFade.setColorAt(0., Qt::transparent);
+		topFade.setColorAt(1., Qt::black);
+		if (bottom.isEmpty()) {
+			_homeScrollFade->setOpacityMask(QBrush(topFade));
+			return;
 		}
-		if (fadeBottom) {
-			mask.setColorAt((extent - fadeHeight) / double(extent), Qt::black);
+
+		auto cutout = QImage(bottom.size(), QImage::Format_ARGB32_Premultiplied);
+		{
+			auto p = QPainter(&cutout);
+			auto vertical = QLinearGradient(0., 0., 0., depth);
+			vertical.setColorAt(0., Qt::transparent);
+			vertical.setColorAt(1., Qt::black);
+			p.setCompositionMode(QPainter::CompositionMode_Source);
+			p.fillRect(cutout.rect(), vertical);
+			auto horizontal = QLinearGradient(0., 0., bottom.width(), 0.);
+			const auto edge = feather / double(bottom.width());
+			horizontal.setColorAt(0., Qt::transparent);
+			horizontal.setColorAt(edge, Qt::black);
+			horizontal.setColorAt(1. - edge, Qt::black);
+			horizontal.setColorAt(1., Qt::transparent);
+			p.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+			p.fillRect(cutout.rect(), horizontal);
 		}
-		mask.setColorAt(1., fadeBottom ? Qt::transparent : Qt::black);
+		auto mask = QImage(size, QImage::Format_ARGB32_Premultiplied);
+		{
+			auto p = QPainter(&mask);
+			p.setCompositionMode(QPainter::CompositionMode_Source);
+			p.fillRect(mask.rect(), top >= 0 ? QBrush(topFade) : QBrush(Qt::black));
+			p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+			p.drawImage(bottom.topLeft(), cutout);
+		}
 		_homeScrollFade->setOpacityMask(QBrush(mask));
 	}
 
@@ -12041,7 +12076,10 @@ private:
 	PlaybackBarColors _playbackColors = MakePlaybackBarColors();
 	const not_null<Ui::RpWidget*> _playbackBar;
 	bool _hasPlaybackTrack = false;
-	PlayerSpring _barSlide{ [this] { layoutPlaybackBar(computeLayout()); } };
+	PlayerSpring _barSlide{ [this] {
+		layoutPlaybackBar(computeLayout());
+		updateHomeArtistBar();
+	} };
 	const not_null<SeekBar*> _seek;
 	const not_null<RoundGlyph*> _heart;
 	const not_null<RoundGlyph*> _collapse;
@@ -12056,6 +12094,7 @@ private:
 	} };
 	Ui::RpWidget *_homeArtistBar = nullptr;
 	QGraphicsOpacityEffect *_homeScrollFade = nullptr;
+	std::tuple<QSize, int, QRect, int, int> _homeScrollFadeKey;
 	QGraphicsOpacityEffect *_homeArtistBarOpacity = nullptr;
 	const not_null<RoundGlyph*> _filter;
 	base::unique_qptr<Ui::PopupMenu> _filterMenu;
