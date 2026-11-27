@@ -11,6 +11,7 @@ mokaGram (27.11.26)
 - Make Music backgrounds, lyrics, navigation and track lists readable in the light theme.
 - Keep the chat folders sidebar behind the fullscreen music player when resizing the window.
 - Use a readable theme surface and accent for the chat translation bar.
+- Center the sticker and caption when lyrics are missing, and let users change or restore the sticker with a right-click.
 - Group Music search results and the Now Playing queue into readable track lists.
 - Tint the wide side margins of Music detail pages with a more visible cover-color glow and a soft transition.
 - Pulse the side glow of Music detail pages with bass hits during playback.

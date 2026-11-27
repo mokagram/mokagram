@@ -5879,13 +5879,15 @@ private:
 
 };
 
-constexpr auto kHintStickerKey = "music.hint_sticker";
+const auto kSearchHintStickerKey = u"music.hint_sticker"_q;
+const auto kMissingLyricsStickerKey = u"music.missing_lyrics_sticker"_q;
 
 // Свой стикер вместо стандартного: документ целиком, с версией формата,
 // чтобы после перезапуска не зависеть от загруженных наборов.
-[[nodiscard]] DocumentData *LoadHintSticker(not_null<Main::Session*> session) {
-	const auto encoded = Mokagram::Settings::String(
-		QString::fromLatin1(kHintStickerKey));
+[[nodiscard]] DocumentData *LoadHintSticker(
+		not_null<Main::Session*> session,
+		const QString &key) {
+	const auto encoded = Mokagram::Settings::String(key);
 	if (encoded.isEmpty()) {
 		return nullptr;
 	}
@@ -5894,10 +5896,22 @@ constexpr auto kHintStickerKey = "music.hint_sticker";
 	stream.setVersion(QDataStream::Qt_5_1);
 	auto version = qint32();
 	stream >> version;
-	const auto document = Serialize::Document::readFromStream(
-		session,
-		version,
-		stream);
+	if (stream.status() != QDataStream::Ok) {
+		return nullptr;
+	}
+	auto document = static_cast<DocumentData*>(nullptr);
+	if (key == kMissingLyricsStickerKey) {
+		auto setId = quint64();
+		auto accessHash = quint64();
+		stream >> setId >> accessHash;
+		if (stream.status() != QDataStream::Ok) {
+			return nullptr;
+		}
+		document = Serialize::Document::readStickerFromStream(
+			session, version, stream, { setId, accessHash, QString() });
+	} else {
+		document = Serialize::Document::readFromStream(session, version, stream);
+	}
 	return (stream.status() == QDataStream::Ok
 		&& document
 		&& document->sticker())
@@ -5905,8 +5919,7 @@ constexpr auto kHintStickerKey = "music.hint_sticker";
 		: nullptr;
 }
 
-void SaveHintSticker(DocumentData *document) {
-	const auto key = QString::fromLatin1(kHintStickerKey);
+void SaveHintSticker(const QString &key, DocumentData *document) {
 	if (!document) {
 		Mokagram::Settings::Reset(key);
 		return;
@@ -5916,6 +5929,10 @@ void SaveHintSticker(DocumentData *document) {
 		auto stream = QDataStream(&bytes, QIODevice::WriteOnly);
 		stream.setVersion(QDataStream::Qt_5_1);
 		stream << qint32(AppVersion);
+		if (key == kMissingLyricsStickerKey) {
+			const auto &set = document->sticker()->set;
+			stream << quint64(set.id) << quint64(set.accessHash);
+		}
 		Serialize::Document::writeToStream(stream, document);
 	}
 	Mokagram::Settings::SetString(key, QString::fromLatin1(bytes.toBase64()));
@@ -5927,19 +5944,19 @@ public:
 			QWidget *parent,
 			QWidget *panelParent,
 			not_null<Window::SessionController*> controller,
-			QPoint global) {
+			QPoint global,
+			const QString &key) {
 		_menu = base::make_unique_q<Ui::PopupMenu>(
 			parent,
 			st::popupMenuWithIcons);
 		_menu->addAction(
 			QString::fromUtf8(Mokagram::Lang::Tr("Сменить стикер")),
-			[=] { choose(panelParent, controller, global); },
+			[=] { choose(panelParent, controller, global, key); },
 			&st::menuIconStickers);
-		if (!Mokagram::Settings::String(
-				QString::fromLatin1(kHintStickerKey)).isEmpty()) {
+		if (Mokagram::Settings::IsChanged(key)) {
 			_menu->addAction(
 				QString::fromUtf8(Mokagram::Lang::Tr("Вернуть стандартный")),
-				[] { SaveHintSticker(nullptr); },
+				[=] { SaveHintSticker(key, nullptr); },
 				&st::menuIconRestore);
 		}
 		_menu->popup(global);
@@ -5956,7 +5973,9 @@ private:
 	void choose(
 			QWidget *parent,
 			not_null<Window::SessionController*> controller,
-			QPoint global) {
+			QPoint global,
+			const QString &key) {
+		_key = key;
 		if (!_panel) {
 			using Selector = ChatHelpers::TabbedSelector;
 			_panel = base::make_unique_q<ChatHelpers::TabbedPanel>(
@@ -5976,7 +5995,7 @@ private:
 			panel->selector()->fileChosen(
 			) | rpl::on_next([=](ChatHelpers::FileChosen data) {
 				if (data.document->sticker()) {
-					SaveHintSticker(data.document);
+					SaveHintSticker(_key, data.document);
 					panel->hideAnimated();
 				}
 			}, panel->lifetime());
@@ -5993,6 +6012,7 @@ private:
 
 	base::unique_qptr<Ui::PopupMenu> _menu;
 	base::unique_qptr<ChatHelpers::TabbedPanel> _panel;
+	QString _key;
 };
 
 class StickerHint final : public Ui::RpWidget {
@@ -6013,7 +6033,7 @@ public:
 	, _showMenu(std::move(showMenu))
 	, _mode(mode) {
 		if (_mode != Mode::Compact) {
-			setFocusPolicy(_mode == Mode::Fullscreen ? Qt::StrongFocus : Qt::NoFocus);
+			setFocusPolicy(Qt::StrongFocus);
 			connect(qApp, &QGuiApplication::applicationStateChanged, this, [=] {
 				update();
 			});
@@ -6028,15 +6048,21 @@ public:
 		) | rpl::on_next([=](QRect) {
 			paint();
 		}, lifetime());
-		if (_mode == Mode::MissingLyrics) {
-			loadMissingLyricsSticker();
-		} else {
-			Mokagram::Settings::StringValue(
-				QString::fromLatin1(kHintStickerKey)
-			) | rpl::on_next([=](const QString &) {
-				loadSticker(LoadHintSticker(_session));
-			}, lifetime());
-		}
+		const auto key = (_mode == Mode::MissingLyrics)
+			? kMissingLyricsStickerKey
+			: kSearchHintStickerKey;
+		Mokagram::Settings::StringValue(key) | rpl::on_next([=](const QString &) {
+			if (_mode == Mode::MissingLyrics) {
+				_session->api().request(base::take(_defaultStickerRequest)).cancel();
+				_video = nullptr;
+				_missingStickerImage = QImage();
+			}
+			const auto document = LoadHintSticker(_session, key);
+			loadSticker(document);
+			if (!document && _mode == Mode::MissingLyrics) {
+				loadMissingLyricsSticker();
+			}
+		}, lifetime());
 		if (_mode == Mode::Compact && !PowerSaving::On(PowerSaving::kAnimations)) {
 			_started = crl::now();
 			_animation.init([=](crl::time) {
@@ -6044,6 +6070,12 @@ public:
 				return true;
 			});
 			_animation.start();
+		}
+	}
+
+	~StickerHint() override {
+		if (_defaultStickerRequest) {
+			_session->api().request(_defaultStickerRequest).cancel();
 		}
 	}
 
@@ -6065,9 +6097,10 @@ private:
 			loadSticker(cached);
 			return;
 		}
-		_session->api().request(MTPmessages_GetCustomEmojiDocuments(
+		_defaultStickerRequest = _session->api().request(MTPmessages_GetCustomEmojiDocuments(
 			MTP_vector<MTPlong>(1, MTP_long(kMissingLyricsDocumentId))
 		)).done(crl::guard(this, [=](const MTPVector<MTPDocument> &result) {
+			_defaultStickerRequest = 0;
 			if (!result.v.empty()) {
 				const auto document = _session->data().processDocument(result.v.front());
 				if (document->sticker()) {
@@ -6084,7 +6117,7 @@ private:
 	void loadMissingLyricsFile() {
 		// Telegram's sticker file ID contains its DC, document ID and reference.
 		const auto reference = QByteArray::fromHex("01000365b46b09937412b81e2581c747b7be8e1ab41eedb533");
-		_session->api().request(MTPupload_GetFile(
+		_defaultStickerRequest = _session->api().request(MTPupload_GetFile(
 			MTP_flags(MTPupload_GetFile::Flag::f_precise),
 			MTP_inputDocumentFileLocation(
 				MTP_long(kMissingLyricsDocumentId),
@@ -6094,6 +6127,7 @@ private:
 			MTP_long(0),
 			MTP_int(512 * 1024)
 		)).done(crl::guard(this, [=](const MTPupload_File &result) {
+			_defaultStickerRequest = 0;
 			if (result.type() != mtpc_upload_file) return;
 			const auto bytes = result.c_upload_file().vbytes().v;
 			if (bytes.startsWith(QByteArray::fromHex("1a45dfa3"))) {
@@ -6112,6 +6146,8 @@ private:
 				_missingStickerImage = QImage::fromData(bytes);
 			}
 			update();
+		})).fail(crl::guard(this, [=] {
+			_defaultStickerRequest = 0;
 		})).toDC(MTP::downloadDcId(2, 0)).send();
 	}
 
@@ -6210,7 +6246,7 @@ private:
 					QRect(target.topLeft() + QPoint((target.width() - size.width()) / 2,
 						(target.height() - size.height()) / 2), size),
 					_missingStickerImage);
-			} else {
+			} else if (!_custom || _mode == Mode::Fullscreen) {
 				paintVideo(p, target, paused);
 			}
 			return;
@@ -6291,6 +6327,7 @@ private:
 	QPixmap _sheet;
 	Media::Clip::ReaderPointer _video;
 	QImage _missingStickerImage;
+	mtpRequestId _defaultStickerRequest = 0;
 	Ui::Animations::Basic _animation;
 	crl::time _started = 0;
 	DocumentData *_custom = nullptr;
@@ -8756,7 +8793,7 @@ public:
 			return;
 		}
 		_closing = true;
-		_searchHintMenu.hide();
+		_stickerHintMenu.hide();
 		stopHomeBackExit();
 		_ambientTimer.stop();
 		if (_cancelMotion) _cancelMotion();
@@ -8795,7 +8832,7 @@ protected:
 	void hideEvent(QHideEvent *event) override {
 		_homeSideGlowFade.stop();
 		_homeSideGlowPulsing = false;
-		_searchHintMenu.hide();
+		_stickerHintMenu.hide();
 		_ambientTimer.stop();
 		_coverTitleTimer.stop();
 		_titleElapsed = {};
@@ -8913,7 +8950,7 @@ protected:
 		if (e->button() != Qt::LeftButton) {
 			return;
 		}
-		_searchHintMenu.hide();
+		_stickerHintMenu.hide();
 		const auto hover = infoAt(e->pos());
 		if (hover == InfoHover::None) {
 			return;
@@ -9074,7 +9111,9 @@ protected:
 				const auto coverHeight = side * 5 / 4;
 				const auto y = top + std::max((areaHeight - coverHeight) / 2, 0);
 				result.cover = QRect(margin + (colWidth - side) / 2, y, side, coverHeight);
-				lyricsLeft = margin + colWidth + s(kSpace32);
+				lyricsLeft = showsMissingLyrics()
+					? result.cover.x() + result.cover.width() + gap
+					: margin + colWidth + s(kSpace32);
 			} else {
 				// В узком окне обложка над текстом, если по высоте хватает места для обоих.
 				const auto coverHeight = std::min(areaHeight * 2 / 5, s(360));
@@ -10143,6 +10182,7 @@ protected:
 			return;
 		}
 		if (record) rememberNavigation();
+		_stickerHintMenu.hide();
 		stopHomeBackExit();
 		const auto from = _tab;
 		const auto animateTransition = _tab != Tab::Now
@@ -11042,15 +11082,18 @@ protected:
 		const auto searching = (_tab == Tab::Search);
 		const auto emptySearch = searching && _searchField->text().trimmed().isEmpty()
 			&& !(_searchChats && _searchChat);
+		if (!emptySearch && !showsMissingLyrics()) {
+			_stickerHintMenu.hide();
+		}
 		if (!emptySearch) {
-			_searchHintMenu.hide();
 			_searchEmptySticker = nullptr;
 		} else if (!_searchEmptySticker) {
 			_searchEmptySticker = base::make_unique_q<StickerHint>(
 				this,
 				&_controller->session(),
 				[=](QPoint global) {
-					_searchHintMenu.show(this, this, _controller, global);
+					_stickerHintMenu.show(
+						this, this, _controller, global, kSearchHintStickerKey);
 				},
 				StickerHint::Mode::Fullscreen);
 			_searchEmptySticker->setGeometry(searchHintGeometry(computeLayout()));
@@ -11675,7 +11718,13 @@ protected:
 		}
 		if (!_missingLyricsSticker) {
 			_missingLyricsSticker = base::make_unique_q<StickerHint>(
-				this, &_controller->session(), nullptr, StickerHint::Mode::MissingLyrics);
+				this,
+				&_controller->session(),
+				[=](QPoint global) {
+					_stickerHintMenu.show(
+						this, this, _controller, global, kMissingLyricsStickerKey);
+				},
+				StickerHint::Mode::MissingLyrics);
 		}
 		_missingLyricsSticker->setGeometry(missingLyricsStickerGeometry(computeLayout()));
 		_missingLyricsSticker->show();
@@ -12891,7 +12940,7 @@ private:
 	Media::Clip::ReaderPointer _playlistsSticker;
 	base::unique_qptr<StickerHint> _searchEmptySticker;
 	base::unique_qptr<StickerHint> _missingLyricsSticker;
-	HintStickerMenu _searchHintMenu;
+	HintStickerMenu _stickerHintMenu;
 	Media::Clip::ReaderPointer _spotifyCanvas;
 	QString _motionFor;
 	Fn<void()> _cancelMotion;
@@ -14842,7 +14891,8 @@ void ShowMusicBoxWith(
 		const auto showHintMenu = [=](QPoint global) {
 			const auto outer = box->getDelegate()->outerContainer();
 			if (outer) {
-				hintStickerMenu->show(box, outer.data(), controller, global);
+				hintStickerMenu->show(
+					box, outer.data(), controller, global, kSearchHintStickerKey);
 			}
 		};
 

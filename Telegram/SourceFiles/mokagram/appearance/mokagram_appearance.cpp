@@ -263,6 +263,13 @@ void RegisterSettings() {
 		.hidden = true,
 	});
 	playerEntry({
+		.key = u"music.missing_lyrics_sticker"_q,
+		.title = u"music.missing_lyrics_sticker"_q,
+		.kind = S::Kind::String,
+		.defaultValue = QString(),
+		.hidden = true,
+	});
+	playerEntry({
 		.key = u"lyrics.enabled"_q,
 		.title = QString::fromUtf8(Mokagram::Lang::Tr("Текст песни")),
 		.description = QString::fromUtf8(Mokagram::Lang::Tr("Панель со словами справа от чата, текущая строка подсвечивается. Включается кнопкой в панели плеера.")),
