@@ -75,6 +75,10 @@ void OnBeforeEdit(
 [[nodiscard]] HistoryItem *FindGhost(
 	not_null<Main::Session*> session,
 	FullMsgId original);
+[[nodiscard]] QString GhostReplyLink(not_null<HistoryItem*> target);
+[[nodiscard]] HistoryItem *UnpackGhostReply(
+	not_null<HistoryItem*> item,
+	TextWithEntities &text);
 // Самоуничтожающиеся фото, видео и голосовые не прячутся и не пропадают
 // после просмотра: ПК показывает их как обычные (history.keep_ttl).
 [[nodiscard]] bool KeepSelfDestruct();

@@ -142,6 +142,7 @@ struct GhostHistory {
 	int64 loadedFrom = 0;
 	bool loaded = false;
 	bool loading = false;
+	bool relinkScheduled = false;
 	base::flat_set<int64> created; // Исходные id, повторно не создаём.
 	base::flat_map<int64, HistoryItem*> byOrigin; // Для ответов на призраков.
 };
@@ -309,6 +310,7 @@ void RelinkReplies(
 	for (const auto &block : history->blocks) {
 		for (const auto &element : block->messages) {
 			const auto item = element->data();
+			item->restoreGhostReply();
 			const auto reply = item->Get<HistoryMessageReply>();
 			if (!reply
 				|| reply->externalPeerId()
@@ -743,6 +745,22 @@ bool OnServerDeleted(not_null<HistoryItem*> item) {
 	ghosts.items.emplace(item);
 	ghosts.origin.emplace(item, id.bare);
 	item->retainAfterServerDeletion();
+	if (!state.relinkScheduled) {
+		state.relinkScheduled = true;
+		const auto peer = history->peer->id;
+		crl::on_main(base::make_weak(session), [=] {
+			const auto loaded = session->data().historyLoaded(peer);
+			const auto ghosts = GhostsIfExist(session);
+			if (!loaded || !ghosts) {
+				return;
+			}
+			const auto i = ghosts->histories.find(loaded);
+			if (i != end(ghosts->histories)) {
+				i->second.relinkScheduled = false;
+				RelinkReplies(loaded, i->second.byOrigin);
+			}
+		});
+	}
 	return true;
 }
 
@@ -892,6 +910,124 @@ HistoryItem *FindGhost(not_null<Main::Session*> session, FullMsgId original) {
 	}
 	const auto item = state->second.byOrigin.find(original.msg.bare);
 	return (item != end(state->second.byOrigin)) ? item->second : nullptr;
+}
+
+namespace {
+
+const auto kGhostReplyFragment = u"#moka-reply-v1="_q;
+
+} // namespace
+
+QString GhostReplyLink(not_null<HistoryItem*> target) {
+	const auto from = target->from();
+	const auto username = from->username();
+	const auto profile = !username.isEmpty()
+		? (u"https://t.me/"_q + username)
+		: from->isUser()
+		? (u"tg://user?id="_q + QString::number(peerToUser(from->id).bare))
+		: u"https://moka.wtf/"_q;
+	auto id = target->id.bare;
+	if (const auto ghosts = GhostsIfExist(&target->history()->session())) {
+		const auto original = ghosts->origin.find(target);
+		if (original != ghosts->origin.end()) {
+			id = original->second;
+		}
+	}
+	return profile + kGhostReplyFragment
+		+ QString::number(id) + u'.'
+		+ QString::number(from->id.value) + u'.'
+		+ QString::number(target->date());
+}
+
+HistoryItem *UnpackGhostReply(not_null<HistoryItem*> item, TextWithEntities &text) {
+	const auto marker = ranges::find_if(text.entities, [](const EntityInText &entity) {
+		return entity.type() == EntityType::CustomUrl
+			&& entity.offset() == 0
+			&& entity.data().contains(kGhostReplyFragment);
+	});
+	if (marker == text.entities.end()) {
+		return nullptr;
+	}
+	const auto block = ranges::find_if(text.entities, [](const EntityInText &entity) {
+		return entity.type() == EntityType::Blockquote && entity.offset() == 0;
+	});
+	if (block == text.entities.end() || marker->length() <= 0
+		|| marker->length() >= block->length()
+		|| block->length() >= text.text.size() - 1
+		|| text.text[marker->length()] != u'\n'
+		|| text.text[block->length()] != u'\n') {
+		return nullptr;
+	}
+	const auto url = marker->data();
+	if (!url.startsWith(u"https://t.me/"_q)
+		&& !url.startsWith(u"tg://user?id="_q)
+		&& !url.startsWith(u"https://moka.wtf/"_q)) {
+		return nullptr;
+	}
+	const auto parts = url.sliced(url.lastIndexOf(kGhostReplyFragment)
+		+ kGhostReplyFragment.size()).split(u'.');
+	if (parts.size() != 3) {
+		return nullptr;
+	}
+	bool idOk = false, authorOk = false, dateOk = false;
+	const auto id = parts[0].toLongLong(&idOk);
+	const auto author = parts[1].toULongLong(&authorOk);
+	const auto date = parts[2].toInt(&dateOk);
+	if (!idOk || !authorOk || !dateOk || !id || !author || date <= 0) {
+		return nullptr;
+	}
+	const auto history = item->history();
+	const auto ghosts = GhostsIfExist(&history->session());
+	if (!ghosts) {
+		return nullptr;
+	}
+	const auto state = ghosts->histories.find(history);
+	if (state == end(ghosts->histories)) {
+		return nullptr;
+	}
+	const auto quoteStart = marker->length() + 1;
+	const auto quote = QStringView(text.text).sliced(
+		quoteStart, block->length() - quoteStart).trimmed();
+	const auto matches = [&](not_null<HistoryItem*> target) {
+		if (target == item || target->from()->id.value != author || target->date() != date) {
+			return false;
+		}
+		const auto &original = target->originalText().text;
+		return !quote.isEmpty() && (original.isEmpty()
+			? QStringView(target->notificationText().text).contains(quote)
+			: QStringView(original).contains(quote));
+	};
+	auto result = static_cast<HistoryItem*>(nullptr);
+	// Channel IDs are shared. In private chats and basic groups, message IDs
+	// may differ between accounts, so require a unique content match there.
+	const auto exact = state->second.byOrigin.find(id);
+	if (history->peer->isChannel() && exact != end(state->second.byOrigin)
+		&& matches(exact->second)) {
+		result = exact->second;
+	} else {
+		for (const auto &[_, target] : state->second.byOrigin) {
+			if (matches(target)) {
+				if (result) {
+					return nullptr;
+				}
+				result = target;
+			}
+		}
+	}
+	if (!result) {
+		return nullptr;
+	}
+	const auto skip = block->length() + 1;
+	text.text.remove(0, skip);
+	for (auto &entity : text.entities) {
+		entity.shiftLeft(skip);
+	}
+	text.entities.erase(
+		std::remove_if(text.entities.begin(), text.entities.end(), [](const EntityInText &entity) {
+			return entity.length() <= 0;
+		}),
+		text.entities.end());
+	return result;
 }
 
 void RemoveGhost(not_null<HistoryItem*> item) {

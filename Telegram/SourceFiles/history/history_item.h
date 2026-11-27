@@ -120,6 +120,7 @@ enum class PaidPostType : uchar {
 
 class HistoryItem final : public RuntimeComposer<HistoryItem> {
 public:
+	void restoreGhostReply();
 	void retainAfterServerDeletion(); // Mokagram: keep the original in history.
 
 	[[nodiscard]] static std::unique_ptr<Data::Media> CreateMedia(

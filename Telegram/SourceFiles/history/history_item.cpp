@@ -4807,7 +4807,29 @@ void HistoryItem::detectTextLinks(
 	}
 }
 
+// Mokagram: resolve quoted fallbacks after the local archive finishes loading.
+void HistoryItem::restoreGhostReply() {
+	if (isService() || _text.entities.empty()) {
+		return;
+	}
+	auto text = _text;
+	if (const auto target = Mokagram::History::UnpackGhostReply(this, text)) {
+		if (!Get<HistoryMessageReply>()) {
+			AddComponents(HistoryMessageReply::Bit());
+		}
+		resolveAdminLogReplyTo(target);
+		setTextValue(std::move(text), true);
+		history()->owner().requestItemResize(this);
+	}
+}
+
 void HistoryItem::setText(TextWithEntities textWithEntities) {
+	if (const auto target = Mokagram::History::UnpackGhostReply(this, textWithEntities)) {
+		if (!Get<HistoryMessageReply>()) {
+			AddComponents(HistoryMessageReply::Bit());
+		}
+		resolveAdminLogReplyTo(target);
+	}
 	Mokagram::Plugins::TransformMessageText(this, textWithEntities);
 	Mokagram::Scam::MarkText(this, textWithEntities);
 	detectTextLinks(textWithEntities);

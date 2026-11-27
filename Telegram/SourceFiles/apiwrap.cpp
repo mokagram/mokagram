@@ -4891,6 +4891,9 @@ void ApiWrap::sendMessage(
 				EntityType::Blockquote, 0, int(ghostQuote.text.size()) });
 			if (!author.isEmpty() && ghostQuote.text.startsWith(author)) {
 				ghostQuote.entities.push_back({ EntityType::Bold, 0, int(author.size()) });
+				ghostQuote.entities.push_back({
+					EntityType::CustomUrl, 0, int(author.size()),
+					Mokagram::History::GhostReplyLink(target) });
 			}
 			ghostQuote.text += '\n';
 		}
