@@ -6005,6 +6005,7 @@ public:
 	static constexpr auto kVideoWidth = 512;
 	static constexpr auto kVideoHeight = 377;
 	static constexpr auto kVideoMaxWidth = 220;
+	static constexpr auto kMissingLyricsMaxSize = 280;
 
 	StickerHint(
 		QWidget *parent,
@@ -6103,7 +6104,7 @@ private:
 				_video = Media::Clip::MakeReader(bytes,
 					[=](Media::Clip::Notification) { update(); });
 			} else if (bytes.startsWith(QByteArray::fromHex("1f8b"))) {
-				const auto side = style::ConvertScale(kVideoMaxWidth)
+				const auto side = style::ConvertScale(kMissingLyricsMaxSize)
 					* style::DevicePixelRatio();
 				_player = std::make_shared<HistoryView::LottiePlayer>(
 					std::make_unique<Lottie::SinglePlayer>(
@@ -6137,9 +6138,10 @@ private:
 		}) | rpl::take(1) | rpl::on_next([=] {
 			using namespace HistoryView;
 			const auto info = document->sticker();
-			const auto box = (_mode != Mode::Compact)
-				? QSize(style::ConvertScale(kVideoMaxWidth), style::ConvertScale(kVideoMaxWidth))
-				: QSize(kSide, kSide);
+			const auto side = (_mode == Mode::MissingLyrics)
+				? style::ConvertScale(kMissingLyricsMaxSize)
+				: (_mode == Mode::Fullscreen) ? style::ConvertScale(kVideoMaxWidth) : kSide;
+			const auto box = QSize(side, side);
 			if (info->isLottie()) {
 				_player = std::make_shared<LottiePlayer>(
 					ChatHelpers::LottiePlayerFromDocument(
@@ -11629,12 +11631,19 @@ protected:
 	}
 
 	[[nodiscard]] QRect missingLyricsStickerGeometry(const Layout &layout) const {
+		const auto area = layout.lyrics;
 		const auto side = std::max(0, std::min({
-			style::ConvertScale(200), layout.lyrics.width() / 2, layout.lyrics.height() / 2,
+			style::ConvertScale(StickerHint::kMissingLyricsMaxSize),
+			area.width() / 2,
+			area.height() / 2,
 		}));
+		const auto shift = std::clamp(
+			(area.width() - style::ConvertScale(360)) / 5,
+			0,
+			style::ConvertScale(120));
 		return QRect(
-			layout.lyrics.center().x() - side / 2,
-			layout.lyrics.center().y() - (side + style::ConvertScale(48)) / 2,
+			area.center().x() - shift - side / 2,
+			area.center().y() - (side + style::ConvertScale(64)) / 2,
 			side, side);
 	}
 
@@ -11955,10 +11964,13 @@ protected:
 		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
 		if (showsMissingLyrics() && _missingLyricsSticker) {
 			const auto sticker = _missingLyricsSticker->geometry();
-			p.setFont(PlayerStyle::kTrackArtist.musicFont());
+			const auto center = sticker.center().x();
+			const auto halfWidth = std::max(0, std::min(
+				center - layout.lyrics.left(), layout.lyrics.right() - center) - s(10));
+			p.setFont(PlayerStyle::kTrackTitle.musicFont());
 			p.setPen(MusicSecondaryColor());
-			p.drawText(QRect(layout.lyrics.x() + s(10), sticker.bottom() + s(12),
-				std::max(layout.lyrics.width() - s(20), 0), s(44)),
+			p.drawText(QRect(center - halfWidth, sticker.bottom() + s(12),
+				2 * halfWidth + 1, s(52)),
 				Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
 				QString::fromUtf8(Mokagram::Lang::Tr("вот блин, для этого трека текста не нашлось")));
 		}
