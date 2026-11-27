@@ -149,6 +149,8 @@ void FiltersMenu::setup() {
 	_menu.setAccessibleName(tr::lng_main_menu(tr::now));
 
 	_outer.setAttribute(Qt::WA_OpaquePaintEvent);
+	// Mokagram: folders belong behind full-window overlays, even when recreated on resize.
+	_outer.lower();
 	_outer.show();
 
 	// Keep the sidebar's Tab chain in visual order: the main menu button
