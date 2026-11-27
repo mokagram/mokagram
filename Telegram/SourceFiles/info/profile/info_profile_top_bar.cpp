@@ -101,6 +101,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/fields/input_field.h"
 #include "ui/top_background_gradient.h"
 #include "ui/ui_utility.h"
+#include "settings/sections/settings_main.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/glare_tooltip.h"
 #include "ui/widgets/horizontal_fit_container.h"
@@ -722,6 +723,14 @@ TopBar::TopBar(
 				details->description.text,
 				_edgeColor.value()));
 			badge->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+			const auto button = static_cast<Ui::AbstractButton*>(badge);
+			button->setCursor(Qt::PointingHandCursor);
+			button->setClickedCallback([=] {
+				if (toast) {
+					toast->hide();
+				}
+				controller->showSettings(::Settings::MokagramImportantId());
+			});
 			QObject::connect(badge, &QObject::destroyed, toast.data(), [=] {
 				toast->hide();
 				toast->deleteLater();

@@ -1535,6 +1535,10 @@ Type MainId() {
 }
 
 // Mokagram: страница «Настройки mokaGram» для кнопки поиска в шапке.
+Type MokagramImportantId() {
+	return MokagramImportant::Id();
+}
+
 Type MokagramSettingsId() {
 	return MokagramSettings::Id();
 }

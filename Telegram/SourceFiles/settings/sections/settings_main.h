@@ -22,6 +22,7 @@ namespace Settings {
 
 [[nodiscard]] Type MainId();
 [[nodiscard]] Type MokagramSettingsId();
+[[nodiscard]] Type MokagramImportantId();
 
 void SetupLanguageButton(
 	not_null<Window::Controller*> window,
