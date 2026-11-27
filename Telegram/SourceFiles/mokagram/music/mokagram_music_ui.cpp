@@ -3528,28 +3528,54 @@ protected:
 	}
 };
 
-[[nodiscard]] HomeTonalControl *MakeHomeShelfAction(
+constexpr auto kHomeShelfActionInset = 16;
+
+class HomeShelfAction final : public HomeTonalControl {
+public:
+	HomeShelfAction(
 		QWidget *parent,
 		QString label,
 		const QString &section,
-		Fn<void()> callback) {
-	const auto action = Ui::CreateChild<HomeTonalControl>(parent);
-	action->setAccessibleName(label + u": "_q + section);
-	action->setClickedCallback(std::move(callback));
-	action->setNaturalWidth(st::semiboldFont->width(label) + style::ConvertScale(32));
-	action->paintRequest() | rpl::on_next([action, label = std::move(label)] {
-		auto p = QPainter(action);
-		auto hq = PainterHighQualityEnabler(p);
-		PaintHomeSurface(p, action->rect(), action->isOver() ? 1. : 0.,
-			action->isDown(), action->hasFocus());
-		const auto font = st::semiboldFont;
-		const auto available = std::max(action->width() - style::ConvertScale(16), 0);
-		p.setFont(font);
-		p.setPen(st::windowFg);
-		p.drawText(action->rect(), Qt::AlignCenter, font->elided(label, available));
-	}, action->lifetime());
-	return action;
-}
+		Fn<void()> callback)
+	: HomeTonalControl(parent)
+	, _label(std::move(label)) {
+		setAccessibleName(_label + u": "_q + section);
+		setClickedCallback(std::move(callback));
+		setNaturalWidth(st::semiboldFont->width(_label)
+			+ 2 * style::ConvertScale(kHomeShelfActionInset));
+		resize(naturalWidth(), style::ConvertScale(40));
+	}
+
+protected:
+	void paintEvent(QPaintEvent *) override {
+		auto p = QPainter(this);
+		const auto hovered = isOver() || isDown();
+		const auto focused = hasFocus();
+		if (hovered || focused) {
+			auto hq = PainterHighQualityEnabler(p);
+			const auto stroke = style::ConvertScale(2);
+			const auto inset = focused ? stroke / 2. : 0.;
+			const auto shape = QRectF(rect()).adjusted(inset, inset, -inset, -inset);
+			auto color = st::windowFg->c;
+			color.setAlphaF(isDown() ? .12 : .08);
+			p.setBrush(hovered ? QBrush(color) : QBrush(Qt::NoBrush));
+			p.setPen(focused ? QPen(st::windowActiveTextFg->c, stroke) : QPen(Qt::NoPen));
+			const auto radius = shape.height() / 2.;
+			p.drawRoundedRect(shape, radius, radius);
+		}
+		const auto inset = style::ConvertScale(kHomeShelfActionInset);
+		const auto content = rect().adjusted(inset, 0, -inset, 0);
+		if (!content.isEmpty()) {
+			const auto font = st::semiboldFont;
+			p.setFont(font);
+			p.setPen(st::windowFg);
+			p.drawText(content, Qt::AlignCenter, font->elided(_label, content.width()));
+		}
+	}
+
+private:
+	QString _label;
+};
 
 class HomeShelfHeader final : public Ui::RpWidget {
 public:
@@ -3558,7 +3584,7 @@ public:
 	, _title(std::move(title)) {
 		resize(width(), style::ConvertScale(56));
 		if (open) {
-			_action = MakeHomeShelfAction(
+			_action = Ui::CreateChild<HomeShelfAction>(
 				this, PlaylistText("Показать все"), _title, std::move(open));
 		}
 	}
@@ -3568,9 +3594,9 @@ protected:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto side = s(BoxParts::kOuterSide);
 		if (_action) {
-			const auto width = _action->naturalWidth();
-			_action->setGeometry(std::max(newWidth - side - width, side),
-				s(8), width, s(40));
+			const auto width = std::clamp(newWidth - 2 * side, 0, _action->naturalWidth());
+			_action->setGeometry(newWidth - side - width,
+				s(8), width, _action->height());
 		}
 		return s(56);
 	}
@@ -5089,7 +5115,7 @@ public:
 	, _counts(std::move(counts))
 	, _action(PlaylistText(expanded ? "Свернуть" : "Показать все")) {
 		_title = PlaylistText("Вам нравится");
-		_actionWidth = st::semiboldFont->width(_action) + style::ConvertScale(24);
+		_actionWidth = st::semiboldFont->width(_action);
 		setAccessibleName(_title + u" · "_q + _counts + u" · "_q + _action);
 		setClickedCallback(std::move(toggle));
 		LoadImage(ArtUrl(artworkUrl, u"t200x200"_q), crl::guard(this, [=](QImage image) {
@@ -5109,32 +5135,30 @@ protected:
 		const auto s = [](int value) { return style::ConvertScale(value); };
 		PaintHomeSurface(p, rect(), isOver() ? 1. : 0., isDown(), hasFocus());
 		const auto artwork = QRect(s(14), s(14), s(56), s(56));
-		PaintHomeCover(p, artwork, _art);
+		PaintHomeCover(p, myrtlrect(artwork), _art);
 
 		const auto left = artwork.right() + s(15);
 		const auto stacked = compact(width());
-		const auto actionWidth = std::min(_actionWidth, std::max(width() - s(28), 0));
-		const auto action = QRect(
-			stacked ? s(14) : width() - s(14) - actionWidth,
-			stacked ? s(78) : s(22),
-			actionWidth, s(40));
+		const auto actionInset = s(kHomeShelfActionInset);
+		const auto actionWidth = std::min(_actionWidth, std::max(width() - 2 * actionInset, 0));
+		const auto action = QRect(width() - actionInset - actionWidth,
+			stacked ? s(78) : s(22), actionWidth, s(40));
 		const auto right = stacked ? width() - s(14) : action.x() - s(12);
 		const auto available = std::max(right - left, 0);
+		const auto leading = Qt::AlignVCenter | Qt::AlignAbsolute
+			| (rtl() ? Qt::AlignRight : Qt::AlignLeft);
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowFg);
-		p.drawText(QRect(left, s(16), available, s(24)),
-			Qt::AlignVCenter | Qt::AlignLeft, st::semiboldFont->elided(_title, available));
+		p.drawText(myrtlrect(QRect(left, s(16), available, s(24))),
+			leading, st::semiboldFont->elided(_title, available));
 		p.setFont(st::normalFont);
 		p.setPen(st::windowSubTextFg);
-		p.drawText(QRect(left, s(43), available, s(22)),
-			Qt::AlignVCenter | Qt::AlignLeft, st::normalFont->elided(_counts, available));
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBgOver);
-		p.drawRoundedRect(action, s(20), s(20));
+		p.drawText(myrtlrect(QRect(left, s(43), available, s(22))),
+			leading, st::normalFont->elided(_counts, available));
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowFg);
-		p.drawText(action, Qt::AlignCenter,
-			st::semiboldFont->elided(_action, std::max(action.width() - s(24), 0)));
+		p.drawText(myrtlrect(action), Qt::AlignCenter,
+			st::semiboldFont->elided(_action, actionWidth));
 	}
 
 private:
@@ -5211,7 +5235,7 @@ public:
 		const auto title = PlaylistText("Дискография");
 		_title = Ui::CreateChild<Ui::FlatLabel>(this, title, st::boxTitle);
 		if (toggle) {
-			_toggle = MakeHomeShelfAction(
+			_toggle = Ui::CreateChild<HomeShelfAction>(
 				this,
 				PlaylistText(expanded ? "Свернуть" : "Показать все"),
 				title,
@@ -5240,7 +5264,7 @@ protected:
 		_title->resizeToWidth(std::max(newWidth - toggleWidth - s(8), 0));
 		_title->moveToLeft(0, (rowHeight - _title->height()) / 2, newWidth);
 		if (_toggle) {
-			_toggle->resize(toggleWidth, s(40));
+			_toggle->resizeToWidth(toggleWidth);
 			_toggle->moveToRight(0, (rowHeight - _toggle->height()) / 2, newWidth);
 		}
 		const auto gap = s(kHomeCardGap);
@@ -10379,23 +10403,22 @@ protected:
 						addRows(popular, RowMode::DetailTrack, {}, _homeArtistVisibleTracks);
 						const auto count = int(popular.size());
 						if (_homeArtistVisibleTracks < count) {
-							const auto more = _tabList->add(object_ptr<Ui::RoundButton>(
-								_tabList,
-								rpl::single(tr("Показать ещё")),
-								BoxParts::PillLight()), QMargins(
-									style::ConvertScale(BoxParts::kOuterSide), style::ConvertScale(8),
-									style::ConvertScale(BoxParts::kOuterSide), style::ConvertScale(8)));
-							more->setFocusPolicy(Qt::TabFocus);
+							const auto side = style::ConvertScale(BoxParts::kOuterSide);
+							const auto gap = style::ConvertScale(8);
 							const auto generation = _homeAlbumGeneration;
-							more->setClickedCallback([=] {
-								crl::on_main(this, [=] {
-									if (_tab != Tab::Home || !_homeArtistOpen
-										|| generation != _homeAlbumGeneration) return;
-									_homeArtistVisibleTracks = std::min(
-										_homeArtistVisibleTracks + kArtistTrackPageSize, count);
-									rebuildTab();
-								});
-							});
+							_tabList->add(object_ptr<HomeShelfAction>(
+								_tabList,
+								tr("Показать ещё"),
+								tr("Популярное"),
+								[=] {
+									crl::on_main(this, [=] {
+										if (_tab != Tab::Home || !_homeArtistOpen
+											|| generation != _homeAlbumGeneration) return;
+										_homeArtistVisibleTracks = std::min(
+											_homeArtistVisibleTracks + kArtistTrackPageSize, count);
+										rebuildTab();
+									});
+								}), QMargins(side, gap, side, gap), style::al_right);
 						}
 					}
 					auto artistLikes = std::vector<Track>();
