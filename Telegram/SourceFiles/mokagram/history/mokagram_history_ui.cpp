@@ -277,17 +277,77 @@ void AddTextDiff(
 		not_null<Ui::VerticalLayout*> card,
 		const QString &previous,
 		const QString &current) {
-	const auto add = [&](const QString &text, std::optional<QColor> color) {
-		const auto label = card->add(
-			object_ptr<Ui::FlatLabel>(card, text, st::boxLabel),
-			QMargins(18, style::ConvertScale(3), 18, style::ConvertScale(3)));
-		label->setSelectable(true);
-		label->setTextColorOverride(color);
-	};
 	if (previous == current) {
-		add(U(Mokagram::Lang::Tr("Текст не изменился")), std::nullopt);
+		card->add(
+			object_ptr<Ui::FlatLabel>(
+				card,
+				U(Mokagram::Lang::Tr("Текст не изменился")),
+				st::boxLabel),
+			QMargins(
+				style::ConvertScale(14), style::ConvertScale(8),
+				style::ConvertScale(14), style::ConvertScale(10)));
 		return;
 	}
+	static const auto lineStyle = [] {
+		auto result = st::boxLabel;
+		result.style.font = result.style.font->monospace();
+		result.textFg = st::windowFg;
+		return result;
+	}();
+	const auto inset = style::ConvertScale(10);
+	const auto column = style::ConvertScale(28);
+	const auto marker = style::ConvertScale(22);
+	const auto vertical = style::ConvertScale(3);
+	const auto lines = card->add(
+		object_ptr<Ui::VerticalLayout>(card),
+		QMargins(inset, style::ConvertScale(7), inset, inset),
+		style::al_justify);
+	const auto append = [&](QChar sign, int left, int right, const QString &text) {
+		const auto row = lines->add(
+			object_ptr<Ui::VerticalLayout>(lines),
+			QMargins(),
+			style::al_justify);
+		const auto label = row->add(
+			object_ptr<Ui::FlatLabel>(
+				row,
+				text.isEmpty() ? QString(1, u' ') : text,
+				lineStyle),
+			QMargins(2 * column + marker, vertical, style::ConvertScale(6), vertical));
+		label->setSelectable(true);
+		label->setBreakEverywhere(true);
+		row->paintOn([=](QPainter &p) {
+			p.fillRect(row->rect(), st::boxBg);
+			const auto changed = sign != u' ';
+			const auto accent = sign == u'-'
+				? st::statisticsChartLineRed
+				: st::statisticsChartLineGreen;
+			const auto gutter = QRect(0, 0, 2 * column, row->height());
+			p.fillRect(gutter, st::windowBgOver);
+			if (changed) {
+				auto wash = accent->c;
+				wash.setAlphaF(0.17);
+				p.fillRect(row->rect(), wash);
+				wash.setAlphaF(0.19);
+				p.fillRect(gutter, wash);
+			}
+			p.setFont(lineStyle.style.font->f);
+			p.setPen(st::windowSubTextFg->c);
+			const auto y = vertical + lineStyle.style.font->ascent;
+			const auto drawNumber = [&](int index, int edge) {
+				if (index) {
+					const auto number = QString::number(index);
+					p.drawText(edge - style::ConvertScale(5)
+						- lineStyle.style.font->width(number), y, number);
+				}
+			};
+			drawNumber(left, column);
+			drawNumber(right, 2 * column);
+			if (changed) {
+				p.setPen(accent->c);
+				p.drawText(2 * column + style::ConvertScale(7), y, QString(1, sign));
+			}
+		});
+	};
 	const auto before = previous.isEmpty() ? QStringList() : previous.split(u'\n');
 	const auto after = current.isEmpty() ? QStringList() : current.split(u'\n');
 	const auto beforeCount = int(before.size());
@@ -307,34 +367,23 @@ void AddTextDiff(
 			}
 		}
 	}
-	auto chunks = std::vector<std::pair<QChar, QStringList>>();
-	const auto append = [&](QChar prefix, const QString &line) {
-		if (chunks.empty() || chunks.back().first != prefix) {
-			chunks.emplace_back(prefix, QStringList());
-		}
-		chunks.back().second.push_back(prefix + u"  "_q + line);
-	};
 	auto oldLine = 0;
 	auto newLine = 0;
 	while (oldLine < beforeCount || newLine < afterCount) {
 		if (bounded && oldLine < beforeCount && newLine < afterCount
 			&& before[oldLine] == after[newLine]) {
-			append(u' ', before[oldLine++]);
+			append(u' ', oldLine + 1, newLine + 1, before[oldLine]);
+			++oldLine;
 			++newLine;
 		} else if (oldLine < beforeCount
 			&& (!bounded || newLine == afterCount
 				|| length(oldLine + 1, newLine) >= length(oldLine, newLine + 1))) {
-			append(u'-', before[oldLine++]);
+			append(u'-', oldLine + 1, 0, before[oldLine]);
+			++oldLine;
 		} else {
-			append(u'+', after[newLine++]);
+			append(u'+', 0, newLine + 1, after[newLine]);
+			++newLine;
 		}
-	}
-	for (const auto &[prefix, lines] : chunks) {
-		add(lines.join(u'\n'), prefix == u'-'
-			? std::optional(st::boxTextFgError->c)
-			: prefix == u'+'
-			? std::optional(st::boxTextFgGood->c)
-			: std::nullopt);
 	}
 }
 
@@ -528,6 +577,19 @@ void HistoryBox(
 		return QString();
 	}();
 
+	const auto moreWrap = content->add(
+		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+			content,
+			object_ptr<Ui::VerticalLayout>(content)),
+		QMargins(),
+		style::al_justify);
+	const auto more = Ui::CreateChild<Ui::RoundButton>(
+		moreWrap->entity(),
+		rpl::single(U(Mokagram::Lang::Tr("Показать ещё"))),
+		st::dialogsPickCancel);
+	AddButtonsRow(moreWrap->entity(), { more });
+	moreWrap->toggle(false, anim::type::instant);
+
 	const auto loadMore = [=] {
 		if (state->loading || state->finished) {
 			return;
@@ -546,15 +608,17 @@ void HistoryBox(
 			.since = sinceEvent,
 			.mediaLike = mediaLike,
 			.text = query,
-			.limit = kPageSize,
+			.limit = kPageSize + 1,
 		}, [=](std::vector<Snapshot> rows) {
 			if (!weakList || !weakEmpty || state->generation != generation) {
 				return;
 			}
 			state->loading = false;
-			if (rows.size() < kPageSize) {
-				state->finished = true;
+			state->finished = (rows.size() <= kPageSize);
+			if (!state->finished) {
+				rows.pop_back();
 			}
+			moreWrap->toggle(!state->finished, anim::type::instant);
 			if (messageId && !state->cursorRevision && !rows.empty()) {
 				const auto item = session->data().message(
 					FullMsgId(PeerId(peerId), MsgId(messageId)));
@@ -583,12 +647,18 @@ void HistoryBox(
 				const auto parts = AddCard(weakList);
 				const auto card = parts.card;
 				const auto key = Key(row.peer, row.id);
-				card->add(
+				const auto title = card->add(
 					object_ptr<Ui::FlatLabel>(
 						card,
 						head,
 						st::defaultSubsectionTitle),
-					QMargins(18, 14, 56, 0));
+					messageId
+						? QMargins(style::ConvertScale(14), style::ConvertScale(10),
+							style::ConvertScale(14), 0)
+						: QMargins(18, 14, 56, 0));
+				if (messageId) {
+					title->setTextColorOverride(st::windowSubTextFg->c);
+				}
 				if (messageId && state->newer) {
 					AddTextDiff(card, row.text, *state->newer);
 				} else {
@@ -647,13 +717,8 @@ void HistoryBox(
 			weakEmpty->setVisible(!list->count());
 		});
 	};
-	loadMore();
-
-	const auto more = Ui::CreateChild<Ui::RoundButton>(
-		content.get(),
-		rpl::single(U(Mokagram::Lang::Tr("Показать ещё"))),
-		st::dialogsPickCancel);
 	more->setClickedCallback(loadMore);
+	loadMore();
 	if (search) {
 		const auto timer = new QTimer(search);
 		timer->setSingleShot(true);
@@ -662,6 +727,7 @@ void HistoryBox(
 			const auto generation = state->generation + 1;
 			*state = PageState();
 			state->generation = generation;
+			moreWrap->toggle(false, anim::type::instant);
 			selection->picked.clear();
 			selection->setters.clear();
 			selection->removers.clear();
@@ -673,7 +739,6 @@ void HistoryBox(
 		}, search->lifetime());
 	}
 	if (messageId) {
-		AddButtonsRow(content, { more });
 		return;
 	}
 	const auto switchKind = Ui::CreateChild<Ui::RoundButton>(
@@ -687,7 +752,7 @@ void HistoryBox(
 			peerId,
 			deleted ? Kind::Edited : Kind::Deleted);
 	});
-	AddButtonsRow(content, { more, switchKind });
+	AddButtonsRow(content, { switchKind });
 	Ui::AddSkip(content, 10);
 }
 
