@@ -8732,6 +8732,10 @@ protected:
 					case Qt::Key_Q: button = _previous.get(); break;
 					case Qt::Key_W: button = _queueToggle.get(); break;
 					case Qt::Key_L: button = _heart.get(); break;
+					case Qt::Key_H: button = _nav[int(Tab::Home)]; break;
+					case Qt::Key_N: button = _nav[int(Tab::Now)]; break;
+					case Qt::Key_S: button = _nav[int(Tab::Search)]; break;
+					case Qt::Key_P: button = _nav[int(Tab::Playlists)]; break;
 					default: break;
 					}
 					if (button) {
