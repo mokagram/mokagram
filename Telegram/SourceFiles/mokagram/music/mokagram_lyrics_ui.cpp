@@ -187,11 +187,6 @@ public:
 		if (Settings::Bool(u"lyrics.comments"_q) && validTrack()) load({});
 		refresh(true);
 	}
-	void setTimelineDuration(qint64 duration) {
-		if (_timelineDuration == duration) return;
-		_timelineDuration = duration;
-		refresh(true);
-	}
 	void setPosition(qint64 position) {
 		if (_position == position) return;
 		_position = position;
@@ -311,16 +306,12 @@ private:
 		auto groups = std::map<int, std::vector<int>>();
 		for (auto i = 0; i < int(_active.size()); ++i) {
 			const auto index = _active[i];
-			const auto bin = _timelineDuration > 0
-				? std::clamp(int(double(_comments[index].timestampMs) / _timelineDuration * capacity), 0, capacity - 1)
-				: std::min(i, capacity - 1);
+			const auto bin = std::min(i, capacity - 1);
 			groups[bin].push_back(index);
 		}
 		auto mask = QRegion();
 		for (auto &[bin, comments] : groups) {
-			const auto x = _timelineDuration > 0
-				? int(double(_comments[comments.front()].timestampMs) / _timelineDuration * std::max(0, width() - side))
-				: bin * step + (step - side) / 2;
+			const auto x = bin * step + (step - side) / 2;
 			auto rect = QRect(std::clamp(x, 0, std::max(0, width() - side)),
 				(height() - side) / 2, side, side);
 			if (!_slots.empty() && _slots.back().rect.right() + style::ConvertScale(4) >= rect.left()) {
@@ -384,10 +375,8 @@ private:
 					return _comments[index].timestampMs > at;
 				});
 		};
-		const auto from = _timelineDuration > 0
-			? _ordered.begin() : boundary(_position);
-		const auto till = _timelineDuration > 0
-			? _ordered.end() : boundary(std::max<qint64>(_position, 0) - 7000);
+		const auto from = boundary(_position);
+		const auto till = boundary(std::max<qint64>(_position, 0) - 7000);
 		const auto begin = int(from - _ordered.begin());
 		const auto end = int(till - _ordered.begin());
 		auto changed = false;
@@ -405,7 +394,7 @@ private:
 		if (changed) _changes.fire({});
 		// Следующая страница нужна, когда воспроизведение дошло до её таймкодов.
 		if (!_loading && _note.isEmpty() && !_next.isEmpty()
-			&& (_timelineDuration > 0 || _comments.empty() || _comments.back().timestampMs <= _position + 7000)) {
+			&& (_comments.empty() || _comments.back().timestampMs <= _position + 7000)) {
 			load(_next);
 		}
 	}
@@ -446,7 +435,6 @@ private:
 	std::set<QString> _pendingAvatars;
 	int _hoverIndex = 0;
 	int _hoverComment = 0;
-	qint64 _timelineDuration = 0;
 	rpl::event_stream<> _changes;
 	rpl::event_stream<qint64> _seekRequests;
 	qint64 _position = 0;
@@ -1667,14 +1655,13 @@ void AttachMissingLyricsComments(
 		const auto enabled = available() && Settings::Bool(u"lyrics.comments"_q);
 		const auto state = Media::Player::instance()->getState(AudioMsgId::Type::Song);
 		button->setTrack(enabled ? track.id : QString());
-		const auto shown = enabled && button->validTrack() && button->avatarCount() > 0
-			&& !anchor->isHidden();
+		const auto shown = enabled && button->validTrack() && button->avatarCount() > 0;
 		button->setVisible(shown);
 		const auto size = style::ConvertScale(32);
 		const auto width = std::min(anchor->width(), style::ConvertScale(96));
 		const auto anchorTop = anchor->mapTo(parent, QPoint());
 		button->setGeometry(anchorTop.x() + anchor->width() - width,
-			std::max(anchorTop.y() - size, 0), width, size);
+			anchorTop.y() + style::ConvertScale(8), width, size);
 		button->setPosition(state.position * 1000 / std::max<int64>(state.frequency, 1));
 		button->raise();
 	};

@@ -51,6 +51,7 @@
 #include "window/window_controller.h"
 #include "api/api_common.h"
 #include "apiwrap.h"
+#include "mtproto/facade.h"
 #include "data/data_media_types.h"
 #include "data/data_saved_music.h"
 #include "data/data_search_controller.h"
@@ -6000,7 +6001,7 @@ private:
 
 class StickerHint final : public Ui::RpWidget {
 public:
-	enum class Mode { Compact, Fullscreen };
+	enum class Mode { Compact, Fullscreen, MissingLyrics };
 	static constexpr auto kVideoWidth = 512;
 	static constexpr auto kVideoHeight = 377;
 	static constexpr auto kVideoMaxWidth = 220;
@@ -6014,8 +6015,8 @@ public:
 	, _session(session)
 	, _showMenu(std::move(showMenu))
 	, _mode(mode) {
-		if (_mode == Mode::Fullscreen) {
-			setFocusPolicy(Qt::StrongFocus);
+		if (_mode != Mode::Compact) {
+			setFocusPolicy(_mode == Mode::Fullscreen ? Qt::StrongFocus : Qt::NoFocus);
 			connect(qApp, &QGuiApplication::applicationStateChanged, this, [=] {
 				update();
 			});
@@ -6030,11 +6031,15 @@ public:
 		) | rpl::on_next([=](QRect) {
 			paint();
 		}, lifetime());
-		Mokagram::Settings::StringValue(
-			QString::fromLatin1(kHintStickerKey)
-		) | rpl::on_next([=](const QString &) {
-			loadSticker();
-		}, lifetime());
+		if (_mode == Mode::MissingLyrics) {
+			loadMissingLyricsSticker();
+		} else {
+			Mokagram::Settings::StringValue(
+				QString::fromLatin1(kHintStickerKey)
+			) | rpl::on_next([=](const QString &) {
+				loadSticker(LoadHintSticker(_session));
+			}, lifetime());
+		}
 		if (_mode == Mode::Compact && !PowerSaving::On(PowerSaving::kAnimations)) {
 			_started = crl::now();
 			_animation.init([=](crl::time) {
@@ -6057,10 +6062,66 @@ protected:
 	}
 
 private:
-	void loadSticker() {
+	void loadMissingLyricsSticker() {
+		const auto cached = _session->data().document(kMissingLyricsDocumentId);
+		if (cached->sticker()) {
+			loadSticker(cached);
+			return;
+		}
+		_session->api().request(MTPmessages_GetCustomEmojiDocuments(
+			MTP_vector<MTPlong>(1, MTP_long(kMissingLyricsDocumentId))
+		)).done(crl::guard(this, [=](const MTPVector<MTPDocument> &result) {
+			if (!result.v.empty()) {
+				const auto document = _session->data().processDocument(result.v.front());
+				if (document->sticker()) {
+					loadSticker(document);
+					return;
+				}
+			}
+			loadMissingLyricsFile();
+		})).fail(crl::guard(this, [=] {
+			loadMissingLyricsFile();
+		})).send();
+	}
+
+	void loadMissingLyricsFile() {
+		// Telegram's sticker file ID contains its DC, document ID and reference.
+		const auto reference = QByteArray::fromHex("01000365b46b09937412b81e2581c747b7be8e1ab41eedb533");
+		_session->api().request(MTPupload_GetFile(
+			MTP_flags(MTPupload_GetFile::Flag::f_precise),
+			MTP_inputDocumentFileLocation(
+				MTP_long(kMissingLyricsDocumentId),
+				MTP_long(uint64(-5555775548079956251LL)),
+				MTP_bytes(reference),
+				MTP_string()),
+			MTP_long(0),
+			MTP_int(512 * 1024)
+		)).done(crl::guard(this, [=](const MTPupload_File &result) {
+			if (result.type() != mtpc_upload_file) return;
+			const auto bytes = result.c_upload_file().vbytes().v;
+			if (bytes.startsWith(QByteArray::fromHex("1a45dfa3"))) {
+				_video = Media::Clip::MakeReader(bytes,
+					[=](Media::Clip::Notification) { update(); });
+			} else if (bytes.startsWith(QByteArray::fromHex("1f8b"))) {
+				const auto side = style::ConvertScale(kVideoMaxWidth)
+					* style::DevicePixelRatio();
+				_player = std::make_shared<HistoryView::LottiePlayer>(
+					std::make_unique<Lottie::SinglePlayer>(
+						Lottie::ReadContent(bytes, QString()),
+						Lottie::FrameRequest{ QSize(side, side) },
+						Lottie::Quality::High));
+				_player->setRepaintCallback([=] { update(); });
+			} else {
+				_missingStickerImage = QImage::fromData(bytes);
+			}
+			update();
+		})).toDC(MTP::downloadDcId(2, 0)).send();
+	}
+
+	void loadSticker(DocumentData *custom) {
 		_playerLifetime.destroy();
 		_player = nullptr;
-		_custom = LoadHintSticker(_session);
+		_custom = custom;
 		update();
 		if (!_custom) {
 			return;
@@ -6076,7 +6137,7 @@ private:
 		}) | rpl::take(1) | rpl::on_next([=] {
 			using namespace HistoryView;
 			const auto info = document->sticker();
-			const auto box = (_mode == Mode::Fullscreen)
+			const auto box = (_mode != Mode::Compact)
 				? QSize(style::ConvertScale(kVideoMaxWidth), style::ConvertScale(kVideoMaxWidth))
 				: QSize(kSide, kSide);
 			if (info->isLottie()) {
@@ -6105,7 +6166,7 @@ private:
 	void paint() {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
-		const auto fullscreen = (_mode == Mode::Fullscreen);
+		const auto fullscreen = (_mode != Mode::Compact);
 		const auto target = fullscreen
 			? rect()
 			: QRect((width() - kSide) / 2, 28, kSide, kSide);
@@ -6117,7 +6178,7 @@ private:
 				|| PowerSaving::On(PowerSaving::kAnimations))
 			: (!_started || !window()->isActiveWindow());
 		if (_player && _player->ready()) {
-			const auto fitted = fullscreen
+			const auto fitted = fullscreen && _custom
 				? _custom->dimensions.scaled(target.size(), Qt::KeepAspectRatio)
 				: target.size();
 			const auto frame = _player->frame(
@@ -6145,7 +6206,13 @@ private:
 			}
 		}
 		if (fullscreen) {
-			paintVideo(p, target, paused);
+			if (!_missingStickerImage.isNull()) {
+				const auto size = _missingStickerImage.size().scaled(target.size(), Qt::KeepAspectRatio);
+				p.drawImage(QRect(target.center() - QPoint(size.width() / 2, size.height() / 2), size),
+					_missingStickerImage);
+			} else {
+				paintVideo(p, target, paused);
+			}
 			return;
 		}
 		if (_custom || _sheet.isNull()) {
@@ -6179,17 +6246,24 @@ private:
 		if (!_video->ready()) {
 			return;
 		}
+		const auto size = (_mode == Mode::MissingLyrics)
+			? QSize(_video->width(), _video->height()).scaled(target.size(), Qt::KeepAspectRatio)
+			: target.size();
+		if (size.isEmpty()) return;
 		const auto request = Media::Clip::FrameRequest{
-			.frame = target.size(),
-			.outer = target.size(),
+			.frame = size,
+			.outer = size,
 			.factor = style::DevicePixelRatio(),
 		};
 		if (!_video->started()) {
 			_video->start(request);
 		}
-		p.drawImage(target, _video->current(request, paused ? 0 : crl::now()));
+		const auto position = target.topLeft()
+			+ QPoint((target.width() - size.width()) / 2, (target.height() - size.height()) / 2);
+		p.drawImage(QRect(position, size), _video->current(request, paused ? 0 : crl::now()));
 	}
 
+	static constexpr auto kMissingLyricsDocumentId = DocumentId(5368763064789254071ULL);
 	static constexpr auto kSource = 192;
 	static constexpr auto kSide = kSource / 2;
 	static constexpr auto kColumns = 9;
@@ -6201,6 +6275,7 @@ private:
 	const Mode _mode;
 	QPixmap _sheet;
 	Media::Clip::ReaderPointer _video;
+	QImage _missingStickerImage;
 	Ui::Animations::Basic _animation;
 	crl::time _started = 0;
 	DocumentData *_custom = nullptr;
@@ -8057,8 +8132,8 @@ public:
 				st::semiboldFont->elided(_homeArtistProfile.name, text.width()));
 		});
 		_homeArtistBar->hide();
-		AttachMissingLyricsComments(controller, this, _tabScroll, [=] {
-			return showsQueue();
+		AttachMissingLyricsComments(controller, this, _view.get(), [=] {
+			return showsMissingLyrics();
 		});
 		_filter->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr("Звуковой фильтр")));
 		_filter->setClickedCallback([=] {
@@ -8213,7 +8288,16 @@ public:
 			refreshQueuePanel();
 		}, lifetime());
 		_queuePanel->paintOn([=](QPainter &p) {
-			PaintMusicCard(p, _queuePanel->rect());
+			if (_tab == Tab::Now && _coverAccent.isValid()) {
+				auto hq = PainterHighQualityEnabler(p);
+				const auto card = _queuePanel->rect();
+				const auto radius = style::ConvertScale(BoxParts::kCardRadius);
+				p.setPen(Qt::NoPen);
+				p.setBrush(anim::color(MusicCardColor(), _coverAccent, .10));
+				p.drawRoundedRect(card, radius, radius);
+			} else {
+				PaintMusicCard(p, _queuePanel->rect());
+			}
 		});
 		_shuffle->resize(s(36), s(36));
 		_previous->resize(s(40), s(40));
@@ -8279,8 +8363,6 @@ public:
 			if (_tab == Tab::Home) {
 				updateHomeArtistBar();
 				if (_homeAlbumOpen) update();
-			} else if (showsQueue()) {
-				updateQueueEdgeFade(_tabScroll, _homeScrollFade);
 			}
 			if (!_rebuildingTab) {
 				scheduleHomeMoreIfNeeded();
@@ -8901,7 +8983,7 @@ protected:
 		int controlsWidth = 0;
 		int controlsTop = 0;
 	};
-	[[nodiscard]] bool showsQueue() const {
+	[[nodiscard]] bool showsMissingLyrics() const {
 		return _tab == Tab::Now && _lyricsMissing;
 	}
 	[[nodiscard]] Layout computeLayout() const {
@@ -9000,10 +9082,6 @@ protected:
 				lyricsTop,
 				std::max(contentRight - lyricsLeft, 0),
 				std::max(areaBottom - lyricsTop, 0));
-			if (showsQueue()) {
-				result.center = result.lyrics;
-				result.scrollTop = result.center.y();
-			}
 		} else {
 			result.center = QRect(margin, top, contentWidth, areaHeight);
 			result.scrollTop = result.center.y()
@@ -9235,20 +9313,17 @@ protected:
 		_seek->setOpaqueBackground(_tab == Tab::Home && !layout.seek.isEmpty()
 			&& Ui::SquirclePath(QRectF(layout.bar), s(kBarRadius)).contains(
 				QRectF(layout.seek).adjusted(-inset, -inset, inset, inset)));
-		_view->setVisible(_tab == Tab::Now && !showsQueue());
+		_view->setVisible(_tab == Tab::Now && !showsMissingLyrics());
 		_view->setGeometry(layout.lyrics);
-		_tabScroll->setVisible(_tab != Tab::Now || showsQueue());
+		_tabScroll->setVisible(_tab != Tab::Now);
 		_queuePanelTarget = layout.queuePanel;
 		layoutQueuePanel();
 		const auto home = (_tab == Tab::Home);
 		const auto scrollBottom = home
 			? (_hasPlaybackTrack ? height() : layout.contentBottom)
-			: layout.center.bottom() + 1 - (showsQueue() ? 0 : s(12));
+			: layout.center.bottom() + 1 - s(12);
 		const auto bottomPadding = (home && _hasPlaybackTrack) ? height() - layout.contentBottom : 0;
-		const auto queueInset = s(PlayerStyle::kSpace8);
-		_tabContent->setPadding(showsQueue()
-			? QMargins(queueInset, queueInset, queueInset, queueInset)
-			: QMargins(0, 0, 0, bottomPadding));
+		_tabContent->setPadding(QMargins(0, 0, 0, bottomPadding));
 		const auto scrollWidth = ((home && _homeAlbumOpen) || _tab == Tab::Search)
 			? std::min(layout.center.width(), s(kMusicListMaxWidth))
 			: layout.center.width();
@@ -9259,6 +9334,9 @@ protected:
 			std::max(scrollBottom - layout.scrollTop, 0));
 		if (_searchEmptySticker) {
 			_searchEmptySticker->setGeometry(searchHintGeometry(layout));
+		}
+		if (_missingLyricsSticker) {
+			_missingLyricsSticker->setGeometry(missingLyricsStickerGeometry(layout));
 		}
 		if (_tabContent->width() != _tabScroll->width()) {
 			_tabContent->resizeToWidth(_tabScroll->width());
@@ -9456,7 +9534,8 @@ protected:
 		effect->setOpacityMask(QBrush(mask));
 	}
 
-	void setQueuePanelOpen(bool open) {
+	void setQueuePanelOpen(bool open, bool automatic = false) {
+		if (!automatic) _lyricsOpenedQueue = false;
 		if (_queuePanelOpen == open) {
 			return;
 		}
@@ -10069,6 +10148,7 @@ protected:
 		_plainAnim.start(_tab == Tab::Now ? 0. : 1., tab == Tab::Now ? 0. : 1., kEffects);
 		const auto navFrom = double(int(_tab));
 		_tab = tab;
+		syncMissingLyricsQueue();
 		updatePlaybackBarColors();
 		_backdropDirty = true;
 		updateAmbientTimer();
@@ -10544,11 +10624,6 @@ protected:
 			_homeArtistBar->raise();
 			_homeArtistBar->update();
 		}
-		if (showsQueue()) {
-			_homeScrollFadeKey = {};
-			updateQueueEdgeFade(_tabScroll, _homeScrollFade);
-			return;
-		}
 		updateHomeScrollFade(home && scrollTop > 0 ? qRound(barHeight * opacity) : -1);
 	}
 
@@ -10939,10 +11014,10 @@ protected:
 		const auto keep = (_rebuiltTab == _tab) ? _tabScroll->scrollTop() : 0;
 		_rebuiltTab = _tab;
 		_searchResultWidgets.clear();
-		_tabQueueList = nullptr;
 		_tabList->clear();
 		_homeBack->setVisible(_tab == Tab::Home && _homeAlbumOpen);
 		_tabNote.clear();
+		updateMissingLyricsHint();
 		if (_tab != Tab::Playlists) {
 			_playlistsSticker = nullptr;
 		}
@@ -11009,9 +11084,6 @@ protected:
 		};
 		switch (_tab) {
 		case Tab::Now:
-			if (showsQueue()) {
-				fillTabQueue();
-			}
 			break;
 		case Tab::Home: {
 			const auto &queue = QueueState();
@@ -11531,47 +11603,52 @@ protected:
 			}
 		}
 		_tabContent->resizeToWidth(_tabScroll->width());
-		if (!showsQueue()) {
-			_tabScroll->scrollToY(keep);
-		}
+		_tabScroll->scrollToY(keep);
 		updateHomeArtistBar();
 		_queuePanel->update();
 		update();
 		scheduleHomeMoreIfNeeded();
 	}
 	void refreshQueueViews() {
-		if (showsQueue()) {
-			fillTabQueue();
-			update();
-		}
 		if (_queuePanelOpen && !_queueHistory) {
 			scheduleQueuePanelRefresh();
 		}
 	}
 
-	void fillTabQueue() {
-		_tabNote.clear();
-		const auto playingId = PlayingTrack().id;
-		const auto focusTrack = !_tabQueueList || _tabQueuePlayingId != playingId;
-		const auto [tracks, mode] = queueTracks(playingId);
-		if (!_tabQueueList) {
-			_tabQueueList = _tabList->add(object_ptr<CompactQueueList>(_tabList));
+	void syncMissingLyricsQueue() {
+		if (showsMissingLyrics()) {
+			if (!_queuePanelOpen) {
+				_lyricsOpenedQueue = true;
+				setQueueHistory(false);
+				setQueuePanelOpen(true, true);
+			}
+		} else if (_lyricsOpenedQueue) {
+			_lyricsOpenedQueue = false;
+			setQueuePanelOpen(false, true);
 		}
-		const auto list = _tabQueueList;
-		fillQueueRows(list, tracks, mode, 0, 1, {});
-		_tabContent->resizeToWidth(_tabScroll->width());
-		const auto current = mode == RowMode::Queue
-			? QueueState().index
-			: int(ranges::find(tracks, playingId, &Track::id) - begin(tracks));
-		if (focusTrack && current >= 0 && current < list->count()) {
-			_tabQueuePlayingId = playingId;
-			const auto first = std::max(current - 1, 0);
-			_tabScroll->scrollToY(first ? list->y() + list->widgetAt(first)->y() : 0);
+	}
+
+	[[nodiscard]] QRect missingLyricsStickerGeometry(const Layout &layout) const {
+		const auto side = std::max(0, std::min({
+			style::ConvertScale(200), layout.lyrics.width() / 2, layout.lyrics.height() / 2,
+		}));
+		return QRect(
+			layout.lyrics.center().x() - side / 2,
+			layout.lyrics.center().y() - (side + style::ConvertScale(48)) / 2,
+			side, side);
+	}
+
+	void updateMissingLyricsHint() {
+		if (!showsMissingLyrics()) {
+			if (_missingLyricsSticker) _missingLyricsSticker->hide();
+			return;
 		}
-		updateQueueEdgeFade(_tabScroll, _homeScrollFade);
-		if (list->count() == 0) {
-			_tabNote = QString::fromUtf8(Mokagram::Lang::Tr("Очередь пуста."));
+		if (!_missingLyricsSticker) {
+			_missingLyricsSticker = base::make_unique_q<StickerHint>(
+				this, &_controller->session(), nullptr, StickerHint::Mode::MissingLyrics);
 		}
+		_missingLyricsSticker->setGeometry(missingLyricsStickerGeometry(computeLayout()));
+		_missingLyricsSticker->show();
 	}
 
 	void setQueueHistory(bool history) {
@@ -11876,19 +11953,16 @@ protected:
 			s(40) - 2 * inset);
 		p.setBrush(colors.selected);
 		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
-		if (showsQueue() && _tabQueueList && _tabQueueList->count()) {
-			const auto card = _tabScroll->geometry();
-			const auto radius = s(BoxParts::kCardRadius);
-			const auto surface = MusicCardColor();
-			p.setPen(Qt::NoPen);
-			p.setBrush(_coverAccent.isValid()
-				? anim::color(surface, _coverAccent, .10)
-				: surface);
-			p.drawRoundedRect(card, radius, radius);
+		if (showsMissingLyrics() && _missingLyricsSticker) {
+			const auto sticker = _missingLyricsSticker->geometry();
+			p.setFont(PlayerStyle::kTrackArtist.musicFont());
+			p.setPen(MusicSecondaryColor());
+			p.drawText(QRect(layout.lyrics.x() + s(10), sticker.bottom() + s(12),
+				std::max(layout.lyrics.width() - s(20), 0), s(44)),
+				Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+				QString::fromUtf8(Mokagram::Lang::Tr("вот блин, для этого трека текста не нашлось")));
 		}
-		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
-		if ((_tab != Tab::Now || showsQueue())
-			&& !(_tab == Tab::Home && _homeAlbumOpen)) {
+		if (_tab != Tab::Now && !(_tab == Tab::Home && _homeAlbumOpen)) {
 			if (!_tabNote.isEmpty()) {
 				p.setFont(PlayerStyle::kTrackArtist.musicFont());
 				p.setPen(MusicSecondaryColor());
@@ -12536,6 +12610,7 @@ private:
 						_lyricsMissing = !lyrics.found || lyrics.lines.empty();
 						_view->setLyrics(std::move(lyrics));
 						if (_tab == Tab::Now) {
+							syncMissingLyricsQueue();
 							relayout();
 							rebuildTab();
 						}
@@ -12607,8 +12682,6 @@ private:
 	const not_null<Ui::RpWidget*> _coverOverlay;
 	Ui::PaddingWrap<Ui::VerticalLayout> *_tabContent = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
-	CompactQueueList *_tabQueueList = nullptr;
-	QString _tabQueuePlayingId;
 	QPointer<HomeAlbumHeader> _homeAlbumHeader;
 	std::array<NavItem*, int(Tab::Count)> _nav = {};
 	PlayerSpring _navSlide{ [this] { update(computeLayout().nav); } };
@@ -12647,6 +12720,7 @@ private:
 	int _searchGen = 0;
 	bool _searchChats = false;
 	bool _lyricsMissing = false;
+	bool _lyricsOpenedQueue = false;
 	Tab _tab;
 	std::vector<NavigationPage> _navigationBack;
 	std::vector<NavigationPage> _navigationForward;
@@ -12786,6 +12860,7 @@ private:
 	Media::Clip::ReaderPointer _motionCover;
 	Media::Clip::ReaderPointer _playlistsSticker;
 	base::unique_qptr<StickerHint> _searchEmptySticker;
+	base::unique_qptr<StickerHint> _missingLyricsSticker;
 	HintStickerMenu _searchHintMenu;
 	Media::Clip::ReaderPointer _spotifyCanvas;
 	QString _motionFor;
