@@ -8650,7 +8650,8 @@ protected:
 			std::clamp(windowWidth / 4, s(280), s(360)));
 		const auto panelWidth = std::min(queueWidth, std::max((windowWidth - 3 * margin) / 2, 0));
 		const auto queueLeft = windowWidth - margin - panelWidth;
-		const auto contentRight = _queuePanelOpen ? queueLeft - gap : windowWidth - margin;
+		const auto queueProgress = _queueSlide.unitValue(_queuePanelOpen ? 1. : 0.);
+		const auto contentRight = windowWidth - margin - qRound((panelWidth + gap) * queueProgress);
 		const auto contentWidth = std::max(contentRight - margin, 0);
 
 		const auto barHeight = s(kBarHeight);
@@ -8964,13 +8965,16 @@ protected:
 			auto font = st::normalFont->f;
 			font.setPixelSize(s(15));
 			_searchField->setFont(font);
-			_searchField->setStyleSheet(u"QLineEdit { background: %3; color: %4; border: 1px solid transparent; border-radius: %1px; padding: 0 %2px 0 %6px; selection-background-color: %5; } QLineEdit:focus { border: 1px solid %5; }"_q
+			const auto fieldStyle = u"QLineEdit { background: %3; color: %4; border: 1px solid transparent; border-radius: %1px; padding: 0 %2px 0 %6px; selection-background-color: %5; } QLineEdit:focus { border: 1px solid %5; }"_q
 				.arg(fieldHeight / 2)
 				.arg(s(20))
 				.arg(st::windowBgOver->c.name())
 				.arg(st::windowFg->c.name())
 				.arg(st::windowActiveTextFg->c.name())
-				.arg(s(50)));
+				.arg(s(50));
+			if (_searchField->styleSheet() != fieldStyle) {
+				_searchField->setStyleSheet(fieldStyle);
+			}
 			if (!_searchChats) {
 				layoutCatalogHeader(layout.center);
 			} else {
@@ -12072,7 +12076,7 @@ private:
 	bool _queueHistory = false;
 	bool _queuePanelOpen = false;
 	QRect _queuePanelTarget;
-	PlayerSpring _queueSlide{ [this] { layoutQueuePanel(); } };
+	PlayerSpring _queueSlide{ [this] { relayout(); } };
 	PlaybackBarColors _playbackColors = MakePlaybackBarColors();
 	const not_null<Ui::RpWidget*> _playbackBar;
 	bool _hasPlaybackTrack = false;
