@@ -11149,7 +11149,8 @@ void HistoryWidget::processReply() {
 			processContinue());
 		return;
 	} else if (!_processingReplyItem->isRegular()
-		&& !CanReplyToEphemeral(_processingReplyItem)) {
+		&& !CanReplyToEphemeral(_processingReplyItem)
+		&& !Mokagram::History::IsGhost(_processingReplyItem)) {
 		return processCancel();
 	} else if (const auto forum = _peer->forum()
 		; forum && _processingReplyItem->history() == _history) {

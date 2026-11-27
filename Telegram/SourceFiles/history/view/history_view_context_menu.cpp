@@ -1816,9 +1816,9 @@ void FillContextMenuItems(
 			result,
 			list->controller(),
 			{ item },
-			[=](const TextWithTags &text) {
+			[=](FullMsgId id) {
 				if (const auto strong = weakList.get()) {
-					strong->insertTextAtCursor(text.text);
+					strong->replyToMessageRequestNotify({ .messageId = id });
 				}
 			});
 		return;

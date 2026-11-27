@@ -114,6 +114,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_upload.h"
 #include "storage/storage_account.h"
 #include "mokagram/ghost/mokagram_ghost.h"
+#include "mokagram/history/mokagram_history.h"
 #include "tgw/tgw_storage.h"
 
 namespace {
@@ -4870,6 +4871,44 @@ void ApiWrap::sendMessage(
 	Mokagram::Snippets::ApplyFont(message.textWithTags);
 	const auto &textWithTags = message.textWithTags;
 
+	// Mokagram: a server-deleted message cannot be a portable reply target.
+	auto ghostQuote = TextWithEntities();
+	auto &reply = message.action.replyTo;
+	if (const auto target = reply.messageId ? _session->data().message(reply.messageId) : nullptr;
+			target && Mokagram::History::IsGhost(target)
+			&& !textWithTags.text.trimmed().isEmpty()) {
+		const auto author = target->from()->name();
+		const auto &quoted = reply.quote.text;
+		const auto original = quoted.isEmpty()
+			? target->originalText().text
+			: quoted;
+		ghostQuote.text = author + '\n' + (original.isEmpty()
+			? target->notificationText().text
+			: original);
+		ghostQuote.text = ghostQuote.text.trimmed();
+		if (!ghostQuote.text.isEmpty()) {
+			ghostQuote.entities.push_back({
+				EntityType::Blockquote, 0, int(ghostQuote.text.size()) });
+			if (!author.isEmpty() && ghostQuote.text.startsWith(author)) {
+				ghostQuote.entities.push_back({ EntityType::Bold, 0, int(author.size()) });
+			}
+			ghostQuote.text += '\n';
+		}
+		const auto topicId = reply.topicRootId
+			? reply.topicRootId
+			: (target->history() == history ? target->topicRootId() : MsgId());
+		reply = {
+			.messageId = (topicId > Data::ForumTopic::kGeneralId
+				? FullMsgId(peer->id, topicId)
+				: FullMsgId()),
+			.topicRootId = topicId,
+			.monoforumPeerId = reply.monoforumPeerId,
+		};
+		if (message.webPage.url.isEmpty()) {
+			message.webPage.removed = true;
+		}
+	}
+
 	auto action = message.action;
 	action.generateLocal = true;
 	sendAction(action);
@@ -4896,7 +4935,7 @@ void ApiWrap::sendMessage(
 		}
 		return;
 	}
-	if (Api::SendDice(message)) {
+	if (ghostQuote.empty() && Api::SendDice(message)) {
 		return;
 	}
 	local().saveRecentSentHashtags(textWithTags.text);
@@ -4910,6 +4949,9 @@ void ApiWrap::sendMessage(
 		history,
 		_session->user()).flags;
 	TextUtilities::PrepareForSending(left, prepareFlags);
+	if (!ghostQuote.empty() && !left.empty()) {
+		left = std::move(ghostQuote.append(std::move(left)));
+	}
 
 	auto lastMessage = (HistoryItem*)nullptr;
 

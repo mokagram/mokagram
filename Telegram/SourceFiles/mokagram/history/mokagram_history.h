@@ -133,6 +133,6 @@ void FillGhostMenu(
 	not_null<Ui::PopupMenu*> menu,
 	not_null<Window::SessionController*> controller,
 	std::vector<not_null<HistoryItem*>> items,
-	Fn<void(const TextWithTags &)> insertText);
+	Fn<void(FullMsgId)> reply);
 
 } // namespace Mokagram::History

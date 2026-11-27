@@ -1046,7 +1046,7 @@ void FillGhostMenu(
 		not_null<Ui::PopupMenu*> menu,
 		not_null<Window::SessionController*> controller,
 		std::vector<not_null<HistoryItem*>> items,
-		Fn<void(const TextWithTags &)> insertText) {
+		Fn<void(FullMsgId)> reply) {
 	if (items.empty()) {
 		return;
 	}
@@ -1079,26 +1079,12 @@ void FillGhostMenu(
 	const auto suffix = (count > 1)
 		? (u" ("_q + QString::number(count) + ')')
 		: QString();
-	if (count == 1) {
-		const auto &first = entries.front();
-		menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Ответить")), [=] {
-			if (!insertText) {
-				return;
-			}
-			// <blockquote><a href=…>Имя</a>\nтекст</blockquote>, затем строка.
-			auto result = TextWithTags();
-			const auto quote = first.name + '\n' + first.text;
-			result.text = quote + '\n';
-			const auto both = TextUtilities::TagWithAdded(
-				first.link,
-				Ui::InputField::kTagBlockquote);
-			result.tags.push_back({ 0, int(first.name.size()), both });
-			result.tags.push_back({
-				int(first.name.size()),
-				int(quote.size() - first.name.size()),
-				Ui::InputField::kTagBlockquote });
-			insertText(result);
-		}, &st::menuIconReply);
+	if (count == 1 && reply) {
+		const auto id = entries.front().id;
+		menu->addAction(
+			QString::fromUtf8(Mokagram::Lang::Tr("Ответить")),
+			[=] { reply(id); },
+			&st::menuIconReply);
 	}
 	menu->addAction(QString::fromUtf8(Mokagram::Lang::Tr("Переслать")) + suffix, [=] {
 		Window::ShowChooseRecipientBox(controller, [=](

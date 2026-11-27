@@ -3061,7 +3061,11 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			_menu.get(),
 			_controller,
 			std::move(ghostItems),
-			[=](const TextWithTags &text) { _widget->insertTextWithTags(text); });
+			[=](FullMsgId id) {
+				if (const auto item = session->data().message(id)) {
+					_widget->replyToMessage(item);
+				}
+			});
 		_menu->popup(e->globalPos());
 		e->accept();
 		return;
