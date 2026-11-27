@@ -136,6 +136,8 @@
 	{ "Форум", "Forum" },
 	{ "Важное", "Important" },
 	{ "Поддержка", "Support" },
+	{ "Поддержите разработку", "Support development" },
+	{ "и получите уникальный значок!", "and get a unique badge!" },
 	{ "Форум mokaGram", "mokaGram forum" },
 	{ "Канал mokaGram", "mokaGram channel" },
 	{ "Подключить", "Connect" },
