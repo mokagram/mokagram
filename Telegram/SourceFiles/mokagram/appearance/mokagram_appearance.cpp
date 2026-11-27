@@ -238,7 +238,7 @@ void RegisterSettings() {
 	playerEntry({
 		.key = Music::Presence::kShareKey,
 		.title = QString::fromUtf8(Lang::Tr("Показывать, что я слушаю")),
-		.description = QString::fromUtf8(Lang::Tr("Для всех аккаунтов на этом устройстве. Название, исполнитель и публичный идентификатор трека SoundCloud видны всем, кто запрашивает статус у @mokamusic_testbot.")),
+		.description = QString::fromUtf8(Lang::Tr("Для всех аккаунтов на этом устройстве. Название трека, исполнитель, название проигрываемого альбома и публичный идентификатор трека SoundCloud видны всем, кто запрашивает статус у @mokagent.")),
 		.kind = S::Kind::Bool,
 		.defaultValue = false,
 	});

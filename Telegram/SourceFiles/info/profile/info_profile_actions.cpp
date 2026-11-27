@@ -1413,15 +1413,18 @@ public:
 	}
 
 	void setTrack(Mokagram::Music::Presence::Track track) {
-		const auto coverChanged = _track.soundcloudId != track.soundcloudId
-			|| _track.artworkUrl != track.artworkUrl;
+		const auto coverChanged = _track.artworkUrl != track.artworkUrl
+			|| (track.artworkUrl.isEmpty() && _track.soundcloudId != track.soundcloudId);
 		_track = std::move(track);
 		if (coverChanged) {
 			loadCover();
 		}
-		setAccessibleName(_track.artist.isEmpty()
+		_subtitle = _track.albumTitle.isEmpty()
+			? _track.artist
+			: QString::fromUtf8(Mokagram::Lang::Tr("Альбом")) + u" · "_q + _track.albumTitle;
+		setAccessibleName(_subtitle.isEmpty()
 			? _track.title
-			: _track.title + u", "_q + _track.artist);
+			: _track.title + u", "_q + _subtitle);
 		update();
 	}
 
@@ -1490,11 +1493,11 @@ private:
 		Resolve(Track{ .id = trackId }, crl::guard(this, [=](
 				Track resolved,
 				const QString &error) {
-			if (!error.isEmpty() || _track.soundcloudId != id) {
+			if (!error.isEmpty() || _track.soundcloudId != id || !_track.artworkUrl.isEmpty()) {
 				return;
 			}
 			LoadImage(resolved.artworkUrl, crl::guard(this, [=](QImage cover) {
-				if (_track.soundcloudId == id) {
+				if (_track.soundcloudId == id && _track.artworkUrl.isEmpty()) {
 					_cover = std::move(cover);
 					update();
 				}
@@ -1606,7 +1609,7 @@ private:
 		const auto title = st::semiboldFont;
 		const auto artist = st::normalFont;
 		const auto textGap = style::ConvertScale(4);
-		const auto both = !_track.artist.isEmpty();
+		const auto both = !_subtitle.isEmpty();
 		const auto textHeight = title->height
 			+ (both ? textGap + artist->height : 0);
 		const auto top = (height() - textHeight) / 2;
@@ -1617,11 +1620,12 @@ private:
 			p.setFont(artist);
 			p.setPen(secondary);
 			p.drawTextLeft(left, top + title->height + textGap, width(),
-				artist->elided(_track.artist, available));
+				artist->elided(_subtitle, available));
 		}
 	}
 
 	Mokagram::Music::Presence::Track _track;
+	QString _subtitle;
 	QImage _cover;
 	std::optional<QColor> _profileColor;
 	std::shared_ptr<Data::EmojiStatusCollectible> _collectible;

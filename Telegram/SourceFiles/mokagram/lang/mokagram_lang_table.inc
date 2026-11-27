@@ -878,7 +878,7 @@
 	{ "Показывать активность прослушивания", "Show listening activity" },
 	{ "Передаёт @mokagent ID пользователей из открытого профиля, шапки чата, видимых строк списка чатов и видимых аватаров у сообщений, чтобы проверить активность прослушивания.", "Sends user IDs from the open profile, chat header, visible chat rows, and visible message avatars to @mokagent to check listening activity." },
 	{ "Показывать, что я слушаю", "Share what I’m listening to" },
-	{ "Для всех аккаунтов на этом устройстве. Название, исполнитель и публичный идентификатор трека SoundCloud видны всем, кто запрашивает статус у @mokamusic_testbot.", "Applies to all accounts on this device. Anyone who asks @mokamusic_testbot for your status can see the title, artist, and public SoundCloud track ID." },
+	{ "Для всех аккаунтов на этом устройстве. Название трека, исполнитель, название проигрываемого альбома и публичный идентификатор трека SoundCloud видны всем, кто запрашивает статус у @mokagent.", "Applies to all accounts on this device. Anyone who asks @mokagent for your status can see the track title, artist, album title during album playback, and public SoundCloud track ID." },
 	{ "Сердце", "Heart" },
 	{ "Сеть", "Network" },
 	{ "Сингапур", "Singapore" },

@@ -24,25 +24,53 @@ constexpr auto kPublishCheck = crl::time(1000);
 constexpr auto kReadInterval = crl::time(2000);
 constexpr auto kLabelBytes = 150;
 constexpr auto kBatchSize = 12;
+// The v1 bot relays this printable UTF-8 label without interpreting it.
+constexpr auto kAlbumMarker = u'\u2063';
+const auto kAlbumSeparator = u"\u2063 · "_q;
 const auto kResultPrefix = u"presence-v1:"_q;
 const auto kWriteAck = u"presence-v1"_q;
 
+[[nodiscard]] QString LabelField(QString text) {
+	return text.remove(kAlbumMarker).simplified();
+}
+
+void LimitUtf8(QByteArray &bytes, qsizetype limit) {
+	if (bytes.size() <= limit) {
+		return;
+	}
+	while (limit > 0 && (uchar(bytes.at(limit)) & 0xC0) == 0x80) {
+		--limit;
+	}
+	bytes.truncate(limit);
+}
+
 [[nodiscard]] QByteArray Encode(const Playback &track) {
-	auto label = track.title.simplified();
-	if (label.isEmpty()) {
+	auto bytes = LabelField(track.title).toUtf8();
+	if (bytes.isEmpty()) {
 		return {};
 	}
-	const auto artist = track.artist.simplified();
-	if (!artist.isEmpty()) {
-		label += u" · "_q + artist;
-	}
-	auto bytes = label.toUtf8();
-	if (bytes.size() > kLabelBytes) {
-		auto end = kLabelBytes;
-		while ((uchar(bytes.at(end)) & 0xC0) == 0x80) {
-			--end;
+	const auto artist = LabelField(track.artist);
+	auto album = LabelField(track.albumTitle).toUtf8();
+	if (album.isEmpty()) {
+		if (!artist.isEmpty()) {
+			bytes += " · " + artist.toUtf8();
 		}
-		bytes.truncate(end);
+		LimitUtf8(bytes, kLabelBytes);
+	} else {
+		static const auto separator = kAlbumSeparator.toUtf8();
+		const auto budget = kLabelBytes - 2 * separator.size();
+		auto artistBytes = artist.toUtf8();
+		LimitUtf8(bytes, std::max(
+			budget / 2,
+			budget - artistBytes.size() - album.size()));
+		const auto left = budget - bytes.size();
+		LimitUtf8(album, std::max(left / 2, left - artistBytes.size()));
+		LimitUtf8(artistBytes, left - album.size());
+		bytes.reserve(kLabelBytes);
+		bytes += separator;
+		bytes += artistBytes;
+		bytes += separator;
+		bytes += album;
 	}
 	const auto encoded = bytes.toBase64(
 		QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
@@ -56,6 +84,34 @@ struct Activity {
 	crl::time expiresAt = 0;
 	uint64 request = 0;
 };
+
+[[nodiscard]] Track DecodeLabel(const QString &label, uint64 id) {
+	const auto first = label.indexOf(kAlbumSeparator);
+	if (first > 0) {
+		const auto artistAt = first + kAlbumSeparator.size();
+		const auto second = label.indexOf(kAlbumSeparator, artistAt);
+		if (second >= 0) {
+			const auto album = label.mid(second + kAlbumSeparator.size()).trimmed();
+			const auto title = label.left(first).trimmed();
+			if (!title.isEmpty() && !album.isEmpty()
+				&& !album.contains(kAlbumMarker)) {
+				return {
+					.title = title,
+					.artist = label.mid(artistAt, second - artistAt).trimmed(),
+					.soundcloudId = id,
+					.albumTitle = album,
+				};
+			}
+		}
+	}
+	const auto legacy = LabelField(label);
+	const auto split = legacy.lastIndexOf(u" · "_q);
+	return {
+		.title = split < 0 ? legacy : legacy.left(split),
+		.artist = split < 0 ? QString() : legacy.mid(split + 3),
+		.soundcloudId = id,
+	};
+}
 
 [[nodiscard]] Activity Decode(
 		const Bot::Result &result,
@@ -71,17 +127,11 @@ struct Activity {
 		|| result.title.toUtf8().size() > kLabelBytes) {
 		return {};
 	}
-	const auto label = result.title.simplified();
-	const auto split = label.lastIndexOf(u" · "_q);
 	const auto id = (separator < 0)
 		? uint64(0)
 		: description.mid(separator + 1).toULongLong();
 	return {
-		.track = {
-			.title = split < 0 ? label : label.left(split),
-			.artist = split < 0 ? QString() : label.mid(split + 3),
-			.soundcloudId = id,
-		},
+		.track = DecodeLabel(result.title, id),
 		.expiresAt = sentAt + ttl,
 	};
 }

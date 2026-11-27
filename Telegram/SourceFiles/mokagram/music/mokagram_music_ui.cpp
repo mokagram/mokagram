@@ -347,6 +347,13 @@ Queue &QueueState() {
 	return std::ranges::binary_search(queue.album.trackIds, id);
 }
 
+[[nodiscard]] const Album *CurrentAlbum(const Queue &queue) {
+	const auto album = queue.currentAlbum.get();
+	return (album && album->releaseKind == ReleaseKind::Album && !album->title.isEmpty())
+		? album
+		: nullptr;
+}
+
 [[nodiscard]] bool IsTelegramTrack(const Track &track) {
 	return track.id.startsWith(u"telegram:"_q);
 }
@@ -1190,11 +1197,13 @@ void Subscribe() {
 			|| !CanForwardTrack(queue.current)) {
 			return Presence::Playback();
 		}
+		const auto album = CurrentAlbum(queue);
 		return Presence::Playback{
 			.session = queue.session.get(),
 			.title = queue.current.title,
 			.artist = queue.current.artist,
 			.soundcloudId = queue.current.id.toULongLong(),
+			.albumTitle = album ? album->title : QString(),
 		};
 	}, queue.lifetime);
 	Media::Player::instance()->updatedNotifier(
@@ -16103,20 +16112,15 @@ Presence::Track CurrentProfileTrack(not_null<Main::Session*> session) {
 		|| state.id.audio()->id != DocumentIdForTrack(track.id)) {
 		return {};
 	}
-	if (const auto &album = queue.currentAlbum;
-		album && album->releaseKind == ReleaseKind::Album && !album->title.isEmpty()) {
-		const auto kind = HomeReleaseKindText(album->releaseKind);
-		return {
-			.title = album->title,
-			.artist = album->artist.isEmpty() ? kind : kind + u" · "_q + album->artist,
-			.artworkUrl = album->artworkUrl,
-		};
-	}
+	const auto album = CurrentAlbum(queue);
 	return {
 		.title = track.title,
 		.artist = track.artist,
 		.soundcloudId = track.id.toULongLong(),
-		.artworkUrl = track.artworkUrl,
+		.artworkUrl = (album && !album->artworkUrl.isEmpty())
+			? album->artworkUrl
+			: track.artworkUrl,
+		.albumTitle = album ? album->title : QString(),
 	};
 }
 
