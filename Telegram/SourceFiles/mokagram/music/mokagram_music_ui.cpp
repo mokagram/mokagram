@@ -7976,7 +7976,7 @@ public:
 		_queueEdgeFade->setEnabled(false);
 		queueViewport->setGraphicsEffect(_queueEdgeFade);
 		_queueScroll->scrollTopChanges() | rpl::on_next([=] {
-			updateQueueEdgeFade();
+			updateQueueEdgeFade(_queueScroll, _queueEdgeFade);
 		}, lifetime());
 		_queueSlide.setEasingCurve(QEasingCurve::InOutCubic);
 		connect(&_queueSlide, &QVariantAnimation::valueChanged, this, [=](const QVariant &value) {
@@ -8127,6 +8127,8 @@ public:
 			if (_tab == Tab::Home) {
 				updateHomeArtistBar();
 				if (_homeAlbumOpen) update();
+			} else if (showsQueue()) {
+				updateQueueEdgeFade(_tabScroll, _homeScrollFade);
 			}
 			if (!_rebuildingTab) {
 				scheduleHomeMoreIfNeeded();
@@ -8959,7 +8961,10 @@ protected:
 			? (_hasPlaybackTrack ? height() : layout.contentBottom)
 			: layout.center.bottom() + 1 - s(12);
 		const auto bottomPadding = (home && _hasPlaybackTrack) ? height() - layout.contentBottom : 0;
-		_tabContent->setPadding(QMargins(0, 0, 0, bottomPadding));
+		const auto queueInset = s(PlayerStyle::kSpace8);
+		_tabContent->setPadding(showsQueue()
+			? QMargins(queueInset, queueInset, queueInset, queueInset)
+			: QMargins(0, 0, 0, bottomPadding));
 		const auto scrollWidth = ((home && _homeAlbumOpen) || _tab == Tab::Search || showsQueue())
 			? std::min(layout.center.width(), s(kMusicListMaxWidth))
 			: layout.center.width();
@@ -9141,21 +9146,21 @@ protected:
 			if (_queueContent->width() != _queueScroll->width()) {
 				_queueContent->resizeToWidth(_queueScroll->width());
 			}
-			updateQueueEdgeFade();
+			updateQueueEdgeFade(_queueScroll, _queueEdgeFade);
 		}
 		if (_queuePanel->isHidden()) {
 			_queuePanel->show();
 		}
 	}
 
-	void updateQueueEdgeFade() {
-		const auto height = _queueScroll->viewport()->height();
+	static void updateQueueEdgeFade(Ui::ScrollArea *scroll, QGraphicsOpacityEffect *effect) {
+		const auto height = scroll->viewport()->height();
 		const auto depth = std::min(style::ConvertScale(14), height / 2);
-		const auto top = _queueScroll->scrollTop();
+		const auto top = scroll->scrollTop();
 		const auto above = top > 0;
-		const auto below = top < _queueScroll->scrollTopMax();
-		_queueEdgeFade->setEnabled(depth > 0 && (above || below));
-		if (!_queueEdgeFade->isEnabled()) return;
+		const auto below = top < scroll->scrollTopMax();
+		effect->setEnabled(depth > 0 && (above || below));
+		if (!effect->isEnabled()) return;
 
 		const auto fraction = depth / double(height);
 		auto mask = QLinearGradient(0., 0., 0., height);
@@ -9163,7 +9168,7 @@ protected:
 		mask.setColorAt(fraction, Qt::black);
 		mask.setColorAt(1. - fraction, Qt::black);
 		mask.setColorAt(1., below ? Qt::transparent : Qt::black);
-		_queueEdgeFade->setOpacityMask(QBrush(mask));
+		effect->setOpacityMask(QBrush(mask));
 	}
 
 	void setQueuePanelOpen(bool open) {
@@ -10196,6 +10201,11 @@ protected:
 			_homeArtistBar->raise();
 			_homeArtistBar->update();
 		}
+		if (showsQueue()) {
+			_homeScrollFadeKey = {};
+			updateQueueEdgeFade(_tabScroll, _homeScrollFade);
+			return;
+		}
 		updateHomeScrollFade(home && scrollTop > 0 ? qRound(barHeight * opacity) : -1);
 	}
 
@@ -11178,9 +11188,11 @@ protected:
 	void fillTabQueue() {
 		_tabNote.clear();
 		const auto playingId = PlayingTrack().id;
+		const auto focusTrack = !_tabQueueList || _tabQueuePlayingId != playingId;
+		_tabQueuePlayingId = playingId;
 		const auto [tracks, mode] = queueTracks(playingId);
 		if (!_tabQueueList) {
-			_tabQueueList = AddMusicTrackList(_tabList, style::ConvertScale(kMusicListGap));
+			_tabQueueList = _tabList->add(object_ptr<CompactQueueList>(_tabList));
 		}
 		const auto list = _tabQueueList;
 		fillQueueRows(list, tracks, mode, 0, 1, {});
@@ -11188,9 +11200,11 @@ protected:
 		const auto current = mode == RowMode::Queue
 			? QueueState().index
 			: int(ranges::find(tracks, playingId, &Track::id) - begin(tracks));
-		if (current >= 0 && current < list->count()) {
-			_tabScroll->scrollToY(list->y() + list->widgetAt(std::max(current - 1, 0))->y());
+		if (focusTrack && current >= 0 && current < list->count()) {
+			const auto first = std::max(current - 1, 0);
+			_tabScroll->scrollToY(first ? list->y() + list->widgetAt(first)->y() : 0);
 		}
+		updateQueueEdgeFade(_tabScroll, _homeScrollFade);
 		if (list->count() == 0) {
 			_tabNote = QString::fromUtf8(Mokagram::Lang::Tr("Очередь пуста."));
 		}
@@ -11359,7 +11373,7 @@ protected:
 				: _queueHistory ? "Нет недавно прослушанных треков" : "Нет следующих треков"));
 		}
 		_queueContent->resizeToWidth(_queueScroll->width());
-		updateQueueEdgeFade();
+		updateQueueEdgeFade(_queueScroll, _queueEdgeFade);
 		if (!advance.outgoing.isNull()) {
 			_queueAdvanceListShift = (advance.nextTop >= 0 && _queueList->count())
 				? std::max(advance.nextTop - _queueList->y() - _queueList->widgetAt(0)->y(), 0)
@@ -11498,6 +11512,9 @@ protected:
 			s(40) - 2 * inset);
 		p.setBrush(colors.selected);
 		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
+		if (showsQueue() && !_queuePanelOpen && _tabQueueList && _tabQueueList->count()) {
+			PaintMusicCard(p, _tabScroll->geometry());
+		}
 		// Открытая вкладка лежит на карточке; на «Сейчас играет» обложка и текст прямо на фоне.
 		if ((_tab != Tab::Now || (showsQueue() && !_queuePanelOpen))
 			&& !(_tab == Tab::Home && _homeAlbumOpen)) {
@@ -12196,7 +12213,8 @@ private:
 	const not_null<Ui::RpWidget*> _coverOverlay;
 	Ui::PaddingWrap<Ui::VerticalLayout> *_tabContent = nullptr;
 	Ui::VerticalLayout *_tabList = nullptr;
-	MusicTrackList *_tabQueueList = nullptr;
+	CompactQueueList *_tabQueueList = nullptr;
+	QString _tabQueuePlayingId;
 	QPointer<HomeAlbumHeader> _homeAlbumHeader;
 	std::array<NavItem*, int(Tab::Count)> _nav = {};
 	PlayerSpring _navSlide{ [this] { update(computeLayout().nav); } };
