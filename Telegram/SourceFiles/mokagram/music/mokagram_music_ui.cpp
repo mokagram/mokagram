@@ -267,13 +267,13 @@ void ShowMusicSourceBox(
 }
 
 constexpr auto kRowHeight = 76;
-constexpr auto kAlbumTrackHeight = 56;
-constexpr auto kAlbumTrackLeadWidth = 40;
-constexpr auto kAlbumTrackLeadingInset = 8;
+constexpr auto kGroupedTrackHeight = 56;
+constexpr auto kGroupedTrackLeadWidth = 40;
+constexpr auto kGroupedTrackLeadingInset = 8;
 constexpr auto kGroupedTrackTextGap = 12;
-constexpr auto kAlbumTrackDurationInset = 16;
-constexpr auto kAlbumTrackDurationColumn = 64;
-constexpr auto kAlbumTrackActionSize = 40;
+constexpr auto kGroupedTrackDurationInset = 16;
+constexpr auto kGroupedTrackDurationColumn = 64;
+constexpr auto kGroupedTrackActionSize = 40;
 constexpr auto kTrackGroupInset = 8;
 constexpr auto kTrackGroupPadding = 6;
 constexpr auto kCoverFadeDuration = crl::time(320);
@@ -2663,9 +2663,13 @@ private:
 };
 
 enum class RowMode {
-	Results, Queue, Context, Home, Detail, AlbumTrack, ArtistPopular,
+	Results, Queue, Context, Home, DetailTrack, AlbumTrack,
 	QueueCurrent, QueueUpcoming, QueueHistory,
 };
+
+[[nodiscard]] bool IsGroupedTrackRow(RowMode mode) {
+	return mode == RowMode::DetailTrack || mode == RowMode::AlbumTrack;
+}
 
 class Row final : public Ui::AbstractButton {
 public:
@@ -2673,8 +2677,7 @@ public:
 		if (_mode == RowMode::Home) {
 			_hoverFade.set(isOver() || isDown(), [=] { update(); });
 		}
-		if (_mode == RowMode::Home || _mode == RowMode::Detail
-			|| _mode == RowMode::AlbumTrack || _mode == RowMode::ArtistPopular) {
+		if (_mode == RowMode::Home || IsGroupedTrackRow(_mode)) {
 			update();
 		}
 	}
@@ -2693,9 +2696,9 @@ public:
 	: AbstractButton(parent)
 	, _track(track)
 	, _mode(mode)
-	, _titleFont((mode == RowMode::ArtistPopular || mode == RowMode::AlbumTrack)
+	, _titleFont(IsGroupedTrackRow(mode)
 		? style::font(
-			style::ConvertScale(mode == RowMode::AlbumTrack ? 16 : 15),
+			style::ConvertScale(16),
 			st::semiboldFont->flags(),
 			st::semiboldFont->family())
 		: st::semiboldFont)
@@ -2704,9 +2707,8 @@ public:
 	, _results(std::move(results))
 	, _homePlaybackControls(homePlaybackControls)
 	, _playlistId(std::move(playlistId)) {
-		resize(width(), mode == RowMode::ArtistPopular
-			? listMetric(48)
-			: listMetric(mode == RowMode::AlbumTrack ? kAlbumTrackHeight : kRowHeight));
+		const auto grouped = IsGroupedTrackRow(mode);
+		resize(width(), listMetric(grouped ? kGroupedTrackHeight : kRowHeight));
 		setPointerCursor(true);
 		setFocusPolicy(Qt::TabFocus);
 		if (mode == RowMode::Results) {
@@ -2720,8 +2722,7 @@ public:
 		}
 		const auto unavailable = !CanPlayTrack(_track);
 		const auto unavailableText = QString::fromUtf8(Mokagram::Lang::Tr("Недоступен для воспроизведения"));
-		if (_mode != RowMode::Home && _mode != RowMode::ArtistPopular
-			&& _mode != RowMode::AlbumTrack
+		if (_mode != RowMode::Home && !grouped
 			&& _mode != RowMode::QueueCurrent && _mode != RowMode::QueueUpcoming
 			&& _mode != RowMode::QueueHistory
 			&& !_track.videoId.isEmpty() && _track.playbackCount > 0) {
@@ -2737,7 +2738,7 @@ public:
 			setToolTip(unavailableText);
 		} else if (!IsTelegramTrack(_track)) {
 			_likeButton = Ui::CreateChild<TrackLikeButton>(
-				this, controller, _track, mode == RowMode::AlbumTrack);
+				this, controller, _track, grouped);
 		}
 		if (_mode != RowMode::Home) {
 			_equalizerTimer.setInterval(33);
@@ -2963,41 +2964,30 @@ private:
 	}
 
 	[[nodiscard]] int listMetric(int value) const {
-		return (_catalogStyle || _mode == RowMode::Detail
-			|| _mode == RowMode::AlbumTrack || _mode == RowMode::ArtistPopular)
+		return (_catalogStyle || IsGroupedTrackRow(_mode))
 			? style::ConvertScale(value)
 			: value;
 	}
 
 	[[nodiscard]] QRect listLeadingRect() const {
-		if (_mode == RowMode::AlbumTrack) {
-			const auto side = listMetric(kAlbumTrackLeadWidth);
-			return QRect(listMetric(kAlbumTrackLeadingInset), (height() - side) / 2, side, side);
-		}
-		if (_mode == RowMode::ArtistPopular) {
-			const auto side = listMetric(36);
-			return QRect(listMetric(8), (height() - side) / 2, side, side);
+		if (IsGroupedTrackRow(_mode)) {
+			const auto side = listMetric(kGroupedTrackLeadWidth);
+			return QRect(listMetric(kGroupedTrackLeadingInset), (height() - side) / 2, side, side);
 		}
 		const auto side = _catalogStyle
 			? style::ConvertScale(kCatalogArtSize)
 			: listMetric(kArtSize);
-		return QRect(listMetric(_mode == RowMode::Detail ? 26 : 20),
-			(height() - side) / 2, side, side);
+		return QRect(listMetric(20), (height() - side) / 2, side, side);
 	}
 
 	[[nodiscard]] int durationRight() const {
-		if (_mode == RowMode::ArtistPopular) {
-			return width() - listMetric(8);
-		}
-		if (_mode == RowMode::AlbumTrack) {
-			return width() - listMetric(kAlbumTrackDurationInset);
-		}
-		return width() - listMetric(_menuButton ? 72 : _mode == RowMode::Detail ? 26 : 24);
+		return width() - listMetric(IsGroupedTrackRow(_mode)
+			? kGroupedTrackDurationInset
+			: _menuButton ? 72 : 24);
 	}
 
 	[[nodiscard]] QRect listTextRect(bool title) const {
-		const auto album = (_mode == RowMode::AlbumTrack);
-		if (album || _mode == RowMode::ArtistPopular) {
+		if (IsGroupedTrackRow(_mode)) {
 			const auto art = listLeadingRect();
 			const auto left = art.x() + art.width() + listMetric(kGroupedTrackTextGap);
 			const auto right = heartRect().x() - listMetric(8);
@@ -3100,14 +3090,10 @@ private:
 			const auto side = style::ConvertScale(28);
 			return QRect(width() - inset - side, height() - inset - side, side, side);
 		}
-		if (_mode == RowMode::AlbumTrack) {
-			const auto side = listMetric(kAlbumTrackActionSize);
-			return QRect(durationRight() - listMetric(kAlbumTrackDurationColumn) - side,
+		if (IsGroupedTrackRow(_mode)) {
+			const auto side = listMetric(kGroupedTrackActionSize);
+			return QRect(durationRight() - listMetric(kGroupedTrackDurationColumn) - side,
 				(height() - side) / 2, side, side);
-		}
-		if (_mode == RowMode::ArtistPopular) {
-			return QRect(durationRight() - listMetric(96),
-				(height() - listMetric(28)) / 2, listMetric(36), listMetric(28));
 		}
 		const auto durationWidth = st::normalFont->width(FormatDuration(_track.durationMs));
 		const auto side = listMetric(28);
@@ -3213,28 +3199,24 @@ private:
 		}
 		const auto playing = selected;
 		const auto over = isOver() || isDown();
-		const auto detail = (_mode == RowMode::Detail);
+		const auto grouped = IsGroupedTrackRow(_mode);
 		const auto album = (_mode == RowMode::AlbumTrack);
-		const auto popular = (_mode == RowMode::ArtistPopular);
-		const auto inset = listMetric((album || popular) ? 1 : detail ? BoxParts::kOuterSide : 8);
-		const auto verticalInset = listMetric((album || popular) ? 1 : 4);
+		const auto inset = listMetric(grouped ? 1 : 8);
+		const auto verticalInset = listMetric(grouped ? 1 : 4);
 		const auto bounds = rect().marginsRemoved({
 			inset, verticalInset, inset, verticalInset });
-		if (detail) {
-			PaintHomeSurface(p, bounds, isOver() && !isDisabled() ? 1. : 0.,
-				isDown() && !isDisabled(), hasFocus(), playing);
-		} else if (album) {
+		if (grouped) {
 			if (!isDisabled() && (playing || over || hasFocus())) {
 				PaintHomeSurface(p, bounds, isOver() ? 1. : 0.,
 					isDown(), hasFocus(), playing, 8);
 			}
 		} else {
-			if (popular ? (over && !isDisabled()) : (playing || over)) {
+			if (playing || over) {
 				p.setPen(Qt::NoPen);
 				p.setBrush(_glass
 					? QColor(255, 255, 255, playing ? 34 : 20)
-					: (popular && isDown()) ? st::windowBgRipple->c : st::windowBgOver->c);
-				const auto radius = listMetric(popular ? 8 : 12);
+					: st::windowBgOver->c);
+				const auto radius = listMetric(12);
 				p.drawRoundedRect(bounds, radius, radius);
 			}
 			if (hasFocus()) {
@@ -3281,14 +3263,14 @@ private:
 			p.restore();
 		} else {
 			p.setPen(Qt::NoPen);
-			p.setBrush(popular ? st::boxBg : st::windowBgOver);
+			p.setBrush(grouped ? st::boxBg : st::windowBgOver);
 			p.drawPath(path);
 		}
 		if (playing) {
 			// Три столбика «играет».
 			p.setPen(Qt::NoPen);
 			p.setBrush(album ? st::windowActiveTextFg->c : QColor(Qt::white));
-			const auto scale = [&](int value) { return (album || popular) ? listMetric(value) : value; };
+			const auto scale = [&](int value) { return grouped ? listMetric(value) : value; };
 			const auto base = art.center().y() + scale(9);
 			const auto left = art.center().x() - scale(10);
 			const auto step = scale(8);
@@ -3317,8 +3299,8 @@ private:
 		const auto titleRect = listTextRect(true);
 		auto subtitleRect = listTextRect(false);
 		p.setFont(_titleFont);
-		p.setPen(((album || popular) && isDisabled()) ? st::windowSubTextFg
-			: (playing && !album && !detail && _mode != RowMode::QueueCurrent)
+		p.setPen((grouped && isDisabled()) ? st::windowSubTextFg
+			: (playing && !grouped && _mode != RowMode::QueueCurrent)
 			? st::windowActiveTextFg
 			: st::windowFg);
 		p.drawText(
@@ -3327,7 +3309,7 @@ private:
 			_titleFont->elided(_track.title, titleRect.width()));
 		p.setFont(st::normalFont);
 		p.setPen(st::windowSubTextFg);
-		if (((album || popular) && !isDisabled()) || (_moreArtists && CanPlayTrack(_track))) {
+		if ((grouped && !isDisabled()) || (_moreArtists && CanPlayTrack(_track))) {
 			if (!subtitleRect.isEmpty()) {
 				paintArtistLinks(p, subtitleRect);
 			}
@@ -3335,7 +3317,7 @@ private:
 		}
 		const auto item = TrackMessage(_track);
 		const auto subtitle = !CanPlayTrack(_track)
-			? ((album || popular) ? QString() : _track.artist + u" · "_q)
+			? (grouped ? QString() : _track.artist + u" · "_q)
 				+ QString::fromUtf8(Mokagram::Lang::Tr("Недоступен для воспроизведения"))
 			: item
 			? _track.artist + u" · "_q + item->history()->peer->name()
@@ -5395,7 +5377,7 @@ protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		if (_layout == HomeLoadingLayout::TrackList) {
-			return s(56) + 2 * s(kTrackGroupPadding) + kTrackPlaceholders * s(kAlbumTrackHeight);
+			return s(56) + 2 * s(kTrackGroupPadding) + kTrackPlaceholders * s(kGroupedTrackHeight);
 		}
 		return s(56) + s(kHomeCardDetailsHeight) + s(kHomeCardGap)
 			+ HomeShelfCardWidth(newWidth);
@@ -5472,11 +5454,11 @@ private:
 	void paintTrackPlaceholders(QPainter &p, const QRegion &dirty, int top) const {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto side = s(BoxParts::kOuterSide);
-		const auto pitch = s(kAlbumTrackHeight);
+		const auto pitch = s(kGroupedTrackHeight);
 		const auto padding = s(kTrackGroupPadding);
 		const auto rowLeft = side + s(kTrackGroupInset);
-		const auto leadWidth = s(kAlbumTrackLeadWidth);
-		const auto leadLeft = rowLeft + s(kAlbumTrackLeadingInset);
+		const auto leadWidth = s(kGroupedTrackLeadWidth);
+		const auto leadLeft = rowLeft + s(kGroupedTrackLeadingInset);
 		const auto left = leadLeft + leadWidth + s(kGroupedTrackTextGap);
 		const auto panel = QRect(side, top, std::max(width() - 2 * side, 0),
 			2 * padding + kTrackPlaceholders * pitch);
@@ -5485,8 +5467,8 @@ private:
 		}
 		BoxParts::PaintCard(p, panel);
 		p.setBrush(st::windowBgOver);
-		const auto durationRight = panel.right() + 1 - s(kTrackGroupInset) - s(kAlbumTrackDurationInset);
-		const auto textRight = durationRight - s(kAlbumTrackDurationColumn) - s(kAlbumTrackActionSize) - s(8);
+		const auto durationRight = panel.right() + 1 - s(kTrackGroupInset) - s(kGroupedTrackDurationInset);
+		const auto textRight = durationRight - s(kGroupedTrackDurationColumn) - s(kGroupedTrackActionSize) - s(8);
 		const auto textWidth = std::clamp(textRight - left, 0, s(320));
 		for (auto i = 0; i != kTrackPlaceholders; ++i) {
 			const auto rowTop = top + padding + i * pitch;
@@ -8770,8 +8752,7 @@ protected:
 			? height() - layout.contentBottom
 			: 0;
 		_tabContent->setPadding(QMargins(0, 0, 0, bottomPadding));
-		const auto albumPage = home && _homeAlbumOpen && !_homeAlbumIsTrack;
-		const auto scrollWidth = (artistPage || albumPage)
+		const auto scrollWidth = (home && _homeAlbumOpen)
 			? std::min(layout.center.width(), s(1000))
 			: layout.center.width();
 		_tabScroll->setGeometry(
@@ -10263,7 +10244,7 @@ protected:
 			auto resultIndex = 0;
 			const auto count = (visibleLimit < 0)
 				? int(tracks.size()) : std::min(int(tracks.size()), visibleLimit);
-			const auto grouped = (mode == RowMode::ArtistPopular || mode == RowMode::AlbumTrack);
+			const auto grouped = IsGroupedTrackRow(mode);
 			const auto s = [](int value) { return style::ConvertScale(value); };
 			const auto side = s(BoxParts::kOuterSide);
 			const auto list = grouped
@@ -10272,10 +10253,8 @@ protected:
 			if (grouped) {
 				list->paintOn([=](QPainter &p) { BoxParts::PaintCard(p, list->rect()); });
 			}
-			const auto hiddenArtist = (mode == RowMode::ArtistPopular)
-				? QStringView(_homeArtistProfile.name).trimmed()
-				: (mode == RowMode::AlbumTrack)
-				? QStringView(_homeAlbum.artist).trimmed()
+			const auto hiddenArtist = grouped
+				? QStringView(_homeArtistOpen ? _homeArtistProfile.name : _homeAlbum.artist).trimmed()
 				: QStringView();
 			const auto inset = s(kTrackGroupInset);
 			const auto padding = s(kTrackGroupPadding);
@@ -10358,7 +10337,7 @@ protected:
 						_homeArtistTracks, _homeArtistYouTubeTracks);
 					if (!popular.empty()) {
 						_tabList->add(object_ptr<HomeShelfHeader>(_tabList, tr("Популярное")));
-						addRows(popular, RowMode::ArtistPopular, {}, _homeArtistVisibleTracks);
+						addRows(popular, RowMode::DetailTrack, {}, _homeArtistVisibleTracks);
 						const auto count = int(popular.size());
 						if (_homeArtistVisibleTracks < count) {
 							const auto more = _tabList->add(object_ptr<Ui::RoundButton>(
@@ -10423,7 +10402,7 @@ protected:
 								});
 							})), QMargins(s(14), s(20), s(14), s(8)));
 						if (_homeArtistLikesOpen) {
-							if (!artistLikes.empty()) addRows(artistLikes, RowMode::Detail);
+							if (!artistLikes.empty()) addRows(artistLikes, RowMode::DetailTrack);
 							if (!likedReleases.empty()) {
 								_tabList->add(object_ptr<HomeMixedGrid>(
 									_tabList, _controller, std::vector<Track>(), likedReleases,
@@ -10475,7 +10454,7 @@ protected:
 					}
 				} else if (!_homeAlbumTracks.empty()) {
 					_tabList->add(object_ptr<HomeShelfHeader>(_tabList, tr("Треки")));
-					addRows(_homeAlbumTracks, _homeAlbumIsTrack ? RowMode::Detail : RowMode::AlbumTrack);
+					addRows(_homeAlbumTracks, _homeAlbumIsTrack ? RowMode::DetailTrack : RowMode::AlbumTrack);
 				}
 				if (!_homeArtistAlbums.empty() || !_homeArtistTracks.empty()) {
 					_tabList->add(object_ptr<HomeShelfHeader>(
