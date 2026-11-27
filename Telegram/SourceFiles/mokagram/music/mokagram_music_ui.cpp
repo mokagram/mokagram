@@ -8648,18 +8648,20 @@ protected:
 		const auto queueWidth = std::min(
 			std::max(windowWidth - 2 * margin, 0),
 			std::clamp(windowWidth / 4, s(280), s(360)));
-		// Толстая капсула как у островка: по центру, не на всю ширину.
+		const auto panelWidth = std::min(queueWidth, std::max((windowWidth - 3 * margin) / 2, 0));
+		const auto queueLeft = windowWidth - margin - panelWidth;
+		const auto contentRight = _queuePanelOpen ? queueLeft - gap : windowWidth - margin;
+		const auto contentWidth = std::max(contentRight - margin, 0);
+
 		const auto barHeight = s(kBarHeight);
-		const auto barWidth = std::max(
-			std::min(windowWidth - 2 * margin, s(kBarMaxWidth)),
-			0);
+		const auto barWidth = std::min(contentWidth, s(kBarMaxWidth));
 		const auto barProgress = _barSlide.unitValue(_hasPlaybackTrack ? 1. : 0.);
 		result.barShown = _hasPlaybackTrack || barProgress > 0.;
 		// Список меняет размер один раз, каждый кадр двигается сама панель.
 		result.contentBottom = height() - gap
 			- (_hasPlaybackTrack ? margin + barHeight : 0);
 		result.bar = QRect(
-			(windowWidth - barWidth) / 2,
+			margin + (contentWidth - barWidth) / 2,
 			height() - int(base::SafeRound((margin + barHeight) * barProgress)),
 			barWidth,
 			barHeight);
@@ -8689,12 +8691,7 @@ protected:
 		const auto top = result.nav.y() + result.nav.height() + gap;
 		const auto areaBottom = result.contentBottom;
 		const auto areaHeight = std::max(areaBottom - top, 0);
-		const auto panelWidth = std::min(queueWidth, std::max((windowWidth - 3 * margin) / 2, 0));
-		result.queuePanel = QRect(windowWidth - margin - panelWidth, top, panelWidth, areaHeight);
-		const auto contentRight = _queuePanelOpen
-			? result.queuePanel.x() - gap
-			: windowWidth - margin;
-		const auto contentWidth = std::max(contentRight - margin, 0);
+		result.queuePanel = QRect(queueLeft, top, panelWidth, areaHeight);
 
 		if (now) {
 			auto lyricsLeft = margin;
