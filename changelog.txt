@@ -1,5 +1,7 @@
 mokaGram (27.11.26)
 
+- Style shared media tabs as a rounded selector with readable labels in light and dark themes.
+- Separate bot information from report and block actions in the profile.
 - Slide the next song into Now playing and shift the remaining queue up as playback advances.
 - Group album tracks into a numbered Material 3 list with aligned favorites and durations.
 - Use the same Material 3 track rows on single-track pages and in artist track lists.
