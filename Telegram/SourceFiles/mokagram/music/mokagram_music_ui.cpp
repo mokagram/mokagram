@@ -269,13 +269,11 @@ void ShowMusicSourceBox(
 constexpr auto kRowHeight = 76;
 constexpr auto kGroupedTrackHeight = 56;
 constexpr auto kGroupedTrackLeadWidth = 40;
-constexpr auto kGroupedTrackLeadingInset = 8;
+constexpr auto kGroupedTrackLeadingInset = 16;
 constexpr auto kGroupedTrackTextGap = 12;
-constexpr auto kGroupedTrackDurationInset = 16;
+constexpr auto kGroupedTrackDurationInset = 24;
 constexpr auto kGroupedTrackDurationColumn = 64;
 constexpr auto kGroupedTrackActionSize = 40;
-constexpr auto kTrackGroupInset = 8;
-constexpr auto kTrackGroupPadding = 6;
 constexpr auto kCoverFadeDuration = crl::time(320);
 constexpr auto kTypingDelay = crl::time(400);
 constexpr auto kArtSize = 56;
@@ -2349,22 +2347,25 @@ constexpr auto kHomeCardDetailsHeight = 56;
 	return QRect(inset, inset, side, side);
 }
 
+[[nodiscard]] QColor HomeSurfaceColor(double hover, bool pressed, bool selected) {
+	const auto base = selected
+		? anim::color(st::windowBg->c, st::windowBgActive->c, .16)
+		: st::windowBg->c;
+	return anim::color(base, st::windowFg->c, pressed ? .12 : .08 * hover);
+}
+
 void PaintHomeSurface(
 		QPainter &p,
 		QRect rect,
 		double hover,
 		bool pressed,
 		bool focused,
-		bool selected = false,
-		int corner = BoxParts::kCardRadius) {
+		bool selected = false) {
 	const auto radius = std::min(
-		style::ConvertScale(corner),
+		style::ConvertScale(BoxParts::kCardRadius),
 		std::min(rect.width(), rect.height()) / 2);
-	const auto base = selected
-		? anim::color(st::windowBg->c, st::windowBgActive->c, .16)
-		: st::windowBg->c;
 	p.setPen(Qt::NoPen);
-	p.setBrush(anim::color(base, st::windowFg->c, pressed ? .12 : .08 * hover));
+	p.setBrush(HomeSurfaceColor(hover, pressed, selected));
 	p.drawRoundedRect(rect, radius, radius);
 	if (focused) {
 		const auto inset = style::ConvertScale(1);
@@ -3184,6 +3185,35 @@ private:
 		popup();
 	}
 
+	void paintGroupedTrackState(QPainter &p, bool selected) const {
+		if (isDisabled() || !(selected || isOver() || isDown() || hasFocus())) {
+			return;
+		}
+		const auto panelHeight = parentWidget()->height();
+		const auto first = (y() == 0);
+		const auto last = (y() + height() == panelHeight);
+		const auto radius = std::min(listMetric(BoxParts::kCardRadius), panelHeight / 2);
+		if (selected || isOver() || isDown()) {
+			const auto fill = HomeSurfaceColor(isOver() ? 1. : 0., isDown(), selected);
+			if (first || last) {
+				// The widget clips the extended ends, leaving only the panel corners rounded.
+				const auto surface = rect().adjusted(0, first ? 0 : -radius, 0, last ? 0 : radius);
+				p.setPen(Qt::NoPen);
+				p.setBrush(fill);
+				p.drawRoundedRect(surface, radius, radius);
+			} else {
+				p.fillRect(rect(), fill);
+			}
+		}
+		if (hasFocus()) {
+			const auto inset = listMetric(4);
+			const auto corner = (first || last) ? std::max(radius - inset, 0) : listMetric(8);
+			p.setPen(QPen(st::windowActiveTextFg->c, listMetric(2)));
+			p.setBrush(Qt::NoBrush);
+			p.drawRoundedRect(rect().adjusted(inset, inset, -inset, -inset), corner, corner);
+		}
+	}
+
 	void paint(QRect area) {
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
@@ -3201,16 +3231,13 @@ private:
 		const auto over = isOver() || isDown();
 		const auto grouped = IsGroupedTrackRow(_mode);
 		const auto album = (_mode == RowMode::AlbumTrack);
-		const auto inset = listMetric(grouped ? 1 : 8);
-		const auto verticalInset = listMetric(grouped ? 1 : 4);
-		const auto bounds = rect().marginsRemoved({
-			inset, verticalInset, inset, verticalInset });
 		if (grouped) {
-			if (!isDisabled() && (playing || over || hasFocus())) {
-				PaintHomeSurface(p, bounds, isOver() ? 1. : 0.,
-					isDown(), hasFocus(), playing, 8);
-			}
+			paintGroupedTrackState(p, playing);
 		} else {
+			const auto inset = listMetric(8);
+			const auto verticalInset = listMetric(4);
+			const auto bounds = rect().marginsRemoved({
+				inset, verticalInset, inset, verticalInset });
 			if (playing || over) {
 				p.setPen(Qt::NoPen);
 				p.setBrush(_glass
@@ -5377,7 +5404,7 @@ protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		if (_layout == HomeLoadingLayout::TrackList) {
-			return s(56) + 2 * s(kTrackGroupPadding) + kTrackPlaceholders * s(kGroupedTrackHeight);
+			return s(56) + kTrackPlaceholders * s(kGroupedTrackHeight);
 		}
 		return s(56) + s(kHomeCardDetailsHeight) + s(kHomeCardGap)
 			+ HomeShelfCardWidth(newWidth);
@@ -5455,23 +5482,21 @@ private:
 		const auto s = [](int v) { return style::ConvertScale(v); };
 		const auto side = s(BoxParts::kOuterSide);
 		const auto pitch = s(kGroupedTrackHeight);
-		const auto padding = s(kTrackGroupPadding);
-		const auto rowLeft = side + s(kTrackGroupInset);
 		const auto leadWidth = s(kGroupedTrackLeadWidth);
-		const auto leadLeft = rowLeft + s(kGroupedTrackLeadingInset);
+		const auto leadLeft = side + s(kGroupedTrackLeadingInset);
 		const auto left = leadLeft + leadWidth + s(kGroupedTrackTextGap);
 		const auto panel = QRect(side, top, std::max(width() - 2 * side, 0),
-			2 * padding + kTrackPlaceholders * pitch);
+			kTrackPlaceholders * pitch);
 		if (!dirty.intersects(panel)) {
 			return;
 		}
 		BoxParts::PaintCard(p, panel);
 		p.setBrush(st::windowBgOver);
-		const auto durationRight = panel.right() + 1 - s(kTrackGroupInset) - s(kGroupedTrackDurationInset);
+		const auto durationRight = panel.right() + 1 - s(kGroupedTrackDurationInset);
 		const auto textRight = durationRight - s(kGroupedTrackDurationColumn) - s(kGroupedTrackActionSize) - s(8);
 		const auto textWidth = std::clamp(textRight - left, 0, s(320));
 		for (auto i = 0; i != kTrackPlaceholders; ++i) {
-			const auto rowTop = top + padding + i * pitch;
+			const auto rowTop = top + i * pitch;
 			if (!dirty.intersects(QRect(panel.x(), rowTop, panel.width(), pitch))) {
 				continue;
 			}
@@ -10256,8 +10281,6 @@ protected:
 			const auto hiddenArtist = grouped
 				? QStringView(_homeArtistOpen ? _homeArtistProfile.name : _homeAlbum.artist).trimmed()
 				: QStringView();
-			const auto inset = s(kTrackGroupInset);
-			const auto padding = s(kTrackGroupPadding);
 			for (auto i = 0; i != count; ++i) {
 				const auto index = CanPlayTrack(tracks[i]) ? resultIndex++ : -1;
 				const auto row = list->add(object_ptr<Row>(
@@ -10269,9 +10292,7 @@ protected:
 					playable,
 					index,
 					nullptr,
-					playlistId), grouped
-						? QMargins(inset, i == 0 ? padding : 0, inset, i + 1 == count ? padding : 0)
-						: QMargins());
+					playlistId));
 				setResultTrackLinks(row, hiddenArtist);
 			}
 		};
