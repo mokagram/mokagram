@@ -10142,11 +10142,11 @@ protected:
 		const auto depth = style::ConvertScale(28);
 		const auto feather = style::ConvertScale(16);
 		const auto bar = _playbackBar->geometry().translated(-viewport->mapTo(this, QPoint()));
+		const auto fadeBounds = bar.marginsAdded(QMargins(feather, feather, feather, feather));
 		const auto bottom = (_tab == Tab::Home && _hasPlaybackTrack && bar.width() > 0
 			&& _tabScroll->scrollTop() < _tabScroll->scrollTopMax()
-			&& bar.y() - depth < size.height())
-			? QRect(bar.x() - feather, bar.y() - depth, bar.width() + 2 * feather,
-				size.height() - bar.y() + depth)
+			&& fadeBounds.intersects(viewport->rect()))
+			? fadeBounds
 			: QRect();
 		const auto enabled = !size.isEmpty() && (top >= 0 || !bottom.isEmpty());
 		_homeScrollFade->setEnabled(enabled);
@@ -10164,21 +10164,22 @@ protected:
 		}
 
 		auto cutout = QImage(bottom.size(), QImage::Format_ARGB32_Premultiplied);
+		cutout.fill(Qt::transparent);
 		{
 			auto p = QPainter(&cutout);
-			auto vertical = QLinearGradient(0., 0., 0., depth);
-			vertical.setColorAt(0., Qt::transparent);
-			vertical.setColorAt(1., Qt::black);
+			auto hq = PainterHighQualityEnabler(p);
 			p.setCompositionMode(QPainter::CompositionMode_Source);
-			p.fillRect(cutout.rect(), vertical);
-			auto horizontal = QLinearGradient(0., 0., bottom.width(), 0.);
-			const auto edge = feather / double(bottom.width());
-			horizontal.setColorAt(0., Qt::transparent);
-			horizontal.setColorAt(edge, Qt::black);
-			horizontal.setColorAt(1. - edge, Qt::black);
-			horizontal.setColorAt(1., Qt::transparent);
-			p.setCompositionMode(QPainter::CompositionMode_DestinationIn);
-			p.fillRect(cutout.rect(), horizontal);
+			const auto capsule = QRectF(bar.translated(-bottom.topLeft()));
+			const auto radius = style::ConvertScale(kBarRadius);
+			const auto layers = 16;
+			for (auto i = 1; i <= layers; ++i) {
+				const auto ratio = i / double(layers);
+				const auto spread = feather * (1. - ratio);
+				const auto alpha = ratio * ratio * (3. - 2. * ratio);
+				p.fillPath(
+					Ui::SquirclePath(capsule.adjusted(-spread, -spread, spread, spread), radius + spread),
+					QColor(0, 0, 0, qRound(255. * alpha)));
+			}
 		}
 		auto mask = QImage(size, QImage::Format_ARGB32_Premultiplied);
 		{
