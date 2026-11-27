@@ -1443,6 +1443,73 @@ PeerQrImageArgs PeerQrSurface::prepareImage() const {
 	};
 }
 
+Fn<bool(QImage&)> PeerQrSurface::prepareProfileGif() {
+	if (_profileCard.isNull() || _cardGeometry.isEmpty()) {
+		return nullptr;
+	}
+	// Bound the encoded pixel count independently of UI scaling and HiDPI.
+	const auto margin = _cardGeometry.left();
+	const auto width = _cardGeometry.width() + 2 * margin;
+	const auto size = QSize(width, _cardGeometry.height() + 2 * margin)
+		.scaled(512, 768, Qt::KeepAspectRatio);
+	if (size.isEmpty()) {
+		return nullptr;
+	}
+	const auto scale = size.width() / float64(width);
+	const auto card = QRect(
+		QPoint(margin, margin) * scale,
+		_cardGeometry.size() * scale);
+	auto bg = ComposeBackground({
+		.size = size,
+		.center = _appearance.center,
+		.edge = _appearance.edge,
+		.gradientCenter = QRectF(card).center(),
+		.gradientRadius = kGradientRadiusToCard * card.width(),
+	});
+	if (bg.isNull()) {
+		return nullptr;
+	}
+	auto cover = _profileCard.scaled(
+		card.size(),
+		Qt::IgnoreAspectRatio,
+		Qt::SmoothTransformation);
+	if (cover.isNull()) {
+		return nullptr;
+	}
+	cover.setDevicePixelRatio(1.);
+	return [=, bg = std::move(bg), cover = std::move(cover)](QImage &frame) {
+		if (frame.isNull()) {
+			frame = QImage(size, QImage::Format_RGBX8888);
+			if (frame.isNull()) {
+				return false;
+			}
+		}
+		auto p = QPainter(&frame);
+		p.setCompositionMode(QPainter::CompositionMode_Source);
+		p.drawImage(QPoint(), bg);
+		p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+		p.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+		p.scale(scale, scale);
+		const auto now = crl::now();
+		auto args = fieldArgs(now);
+		args.falloff.area = QRectF(QPointF(), QSizeF(size) / scale);
+		args.card = QRectF(QPointF(card.topLeft()) / scale,
+			QSizeF(card.size()) / scale);
+		args.origin = args.card.center() + _layer.offset();
+		if (_field && !_fieldLeaving) {
+			_field->paint(p, args);
+		}
+		if (_giftField) {
+			args.paused = PowerSaving::On(PowerSaving::kStickersChat);
+			_giftField->paint(p, args);
+		}
+		p.resetTransform();
+		p.drawImage(card.topLeft(), cover);
+		p.end();
+		return true;
+	};
+}
+
 void PeerQrSurface::setProfileCard(QImage card) {
 	_profileCard = std::move(card);
 	_card->profilePreview = QImage();

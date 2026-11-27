@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/weak_qptr.h"
 #include "boxes/share_box.h"
 #include "core/application.h"
+#include "core/file_utilities.h"
 #include "data/data_emoji_statuses.h"
 #include "data/data_file_origin.h"
 #include "data/data_peer.h"
@@ -32,6 +33,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/music/mokagram_player_style.h"
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/ui/mokagram_box_parts.h"
+#include "mokagram/ui/mokagram_profile_gif.h"
 #include "settings/settings_common.h"
 #include "ui/empty_userpic.h"
 #include "ui/image/image.h"
@@ -70,6 +72,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMimeData>
 #include <QtCore/QSaveFile>
 #include <QtCore/QStandardPaths>
+#include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QtEvents>
 
@@ -513,14 +516,18 @@ void SaveProfileLook(
 	return result;
 }
 
+// Mokagram: PNG quick-save and GIF Save As use the same filename convention.
+[[nodiscard]] QString ProfileExportName() {
+	return u"mokagram_profile_"_q
+		+ QDateTime::currentDateTime().toString(u"yyyyMMdd_HHmmss_zzz"_q);
+}
+
 void SaveProfileExport(not_null<GenericBox*> box, const QImage &image) {
 	auto directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
 	if (directory.isEmpty()) {
 		directory = QDir::homePath();
 	}
-	const auto path = QDir(directory).filePath(u"mokagram_profile_"_q
-		+ QDateTime::currentDateTime().toString(u"yyyyMMdd_HHmmss_zzz"_q)
-		+ u".png"_q);
+	const auto path = QDir(directory).filePath(ProfileExportName() + u".png"_q);
 	auto file = QSaveFile(path);
 	const auto saved = QDir().mkpath(directory)
 		&& file.open(QIODevice::WriteOnly)
@@ -987,32 +994,43 @@ void TrackShareBox(
 		&& snapshot.profileCardKey == state->profileCard.cacheKey();
 }
 
+// Mokagram: both formats wait for profile badges before capturing them.
+void WaitForProfileAssets(
+		not_null<GenericBox*> box,
+		not_null<BoxState*> state,
+		not_null<PeerQrButton*> button,
+		Fn<void()> resume) {
+	const auto request = ++state->profileRenderRequest;
+	button->setBusy(true);
+	state->pendingProfileRender = [=, resume = std::move(resume)] {
+		button->setBusy(false);
+		resume();
+	};
+	base::call_delayed(6000, box, [=] {
+		if (state->profileRenderRequest == request
+			&& base::take(state->pendingProfileRender)) {
+			button->setBusy(false);
+			box->uiShow()->showToast(
+				ProfileExportText("Не удалось загрузить эмодзи"));
+		}
+	});
+}
+
 void RenderCardImage(
 		not_null<GenericBox*> box,
 		not_null<PeerQrSurface*> surface,
 		not_null<BoxState*> state,
 		not_null<PeerQrButton*> button,
 		Fn<void(QImage, const ImageSnapshot&)> done) {
-	if (state->rendering || RefuseImage(surface, state)) {
+	if (state->rendering
+		|| state->pendingProfileRender
+		|| RefuseImage(surface, state)) {
 		return;
 	}
 	if (state->profileAssetsReady && !state->profileAssetsReady()) {
-		if (!state->pendingProfileRender) {
-			const auto request = ++state->profileRenderRequest;
-			button->setBusy(true);
-			state->pendingProfileRender = [=, done = std::move(done)]() mutable {
-				button->setBusy(false);
-				RenderCardImage(box, surface, state, button, std::move(done));
-			};
-			base::call_delayed(6000, box, [=] {
-				if (state->profileRenderRequest == request
-					&& base::take(state->pendingProfileRender)) {
-					button->setBusy(false);
-					box->uiShow()->showToast(
-						ProfileExportText("Не удалось загрузить эмодзи"));
-				}
-			});
-		}
+		WaitForProfileAssets(box, state, button, [=, done = std::move(done)] {
+			RenderCardImage(box, surface, state, button, done);
+		});
 		return;
 	}
 	auto args = surface->prepareImage();
@@ -1069,6 +1087,49 @@ void RenderCardImage(
 			done(image, state->imageSnapshot);
 		});
 	});
+}
+
+// Mokagram: record the selected profile look, not the surrounding dialog.
+void RenderProfileGif(
+		not_null<GenericBox*> box,
+		not_null<PeerQrSurface*> surface,
+		not_null<BoxState*> state,
+		not_null<PeerQrButton*> button,
+		Fn<void(QByteArray)> done) {
+	if (state->rendering || state->pendingProfileRender) {
+		return;
+	} else if (state->profileAssetsReady && !state->profileAssetsReady()) {
+		WaitForProfileAssets(box, state, button, [=, done = std::move(done)] {
+			RenderProfileGif(box, surface, state, button, done);
+		});
+		return;
+	}
+	auto render = surface->prepareProfileGif();
+	if (!render) {
+		done({});
+		return;
+	}
+	const auto appearance = surface->appearance();
+	const auto cardKey = state->profileCard.cacheKey();
+	const auto current = [=] {
+		return surface->appearance() == appearance
+			&& state->profileCard.cacheKey() == cardKey;
+	};
+	state->rendering = true;
+	button->setBusy(true);
+	Mokagram::RecordProfileGif(
+		box.get(),
+		[current, render = std::move(render)](QImage &frame) {
+			return current() && render(frame);
+		},
+		!anim::Disabled() && (!appearance.emoji.empty() || appearance.gift),
+		[=, done = std::move(done)](QByteArray bytes) {
+			state->rendering = false;
+			button->setBusy(false);
+			if (current()) {
+				done(std::move(bytes));
+			}
+		});
 }
 
 void SetupFreeCodes(
@@ -2338,7 +2399,7 @@ static void FillPeerQrBoxImpl(
 			|| RefuseImage(surface, state)
 			|| RefuseExpiring(surface, state, snapshot.expiry);
 	};
-	copy->setClickedCallback([=] {
+	const auto copyImage = [=] {
 		if (RefuseImage(surface, state)) {
 			return;
 		}
@@ -2360,6 +2421,23 @@ static void FillPeerQrBoxImpl(
 				.iconLottieSize = st::toastLottieIconSize,
 			});
 		});
+	};
+	copy->setClickedCallback([=] {
+		if (!profileExport) {
+			copyImage();
+			return;
+		}
+		const auto menu = Ui::CreateChild<Ui::PopupMenu>(copy);
+		menu->addAction(ProfileExportText("Копировать картинку"), copyImage);
+		menu->addAction(ProfileExportText("Копировать как GIF"), [=] {
+			RenderProfileGif(box, surface, state, copy, [=](QByteArray gif) {
+				const auto copied = !gif.isEmpty() && Mokagram::CopyProfileGif(gif);
+				box->uiShow()->showToast(copied
+					? ProfileExportText("GIF скопирован")
+					: ProfileExportText("Не удалось скопировать GIF"));
+			});
+		});
+		menu->popup(copy->mapToGlobal(QPoint(0, copy->height())));
 	});
 	if (share) {
 		const auto shareImage = [=](bool save) {
@@ -2405,6 +2483,31 @@ static void FillPeerQrBoxImpl(
 			menu->addAction(
 				ProfileExportText("Сохранить"),
 				[=] { shareImage(true); });
+			menu->addAction(ProfileExportText("Сохранить как GIF"), [=] {
+				if (state->rendering || state->pendingProfileRender) {
+					return;
+				}
+				FileDialog::GetWritePath(
+					QPointer<QWidget>(box.get()),
+					ProfileExportText("Сохранить как GIF"),
+					ProfileExportText("Изображение GIF (*.gif)"),
+					ProfileExportName() + u".gif"_q,
+					crl::guard(box, [=](QString path) {
+						if (path.isEmpty()) {
+							return;
+						}
+						RenderProfileGif(box, surface, state, share, [=](QByteArray gif) {
+							auto file = QSaveFile(path);
+							const auto saved = !gif.isEmpty()
+								&& file.open(QIODevice::WriteOnly)
+								&& file.write(gif) == gif.size()
+								&& file.commit();
+							box->uiShow()->showToast(saved
+								? ProfileExportText("Сохранено: ") + path
+								: ProfileExportText("Не получилось сохранить"));
+						});
+					}));
+			});
 			menu->popup(share->mapToGlobal(QPoint(0, share->height())));
 		});
 	}

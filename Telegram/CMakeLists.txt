@@ -211,6 +211,8 @@ PRIVATE
     mokagram/saveinator/mokagram_saveinator.h
     mokagram/ui/mokagram_box_parts.cpp
     mokagram/ui/mokagram_box_parts.h
+    mokagram/ui/mokagram_profile_gif.cpp
+    mokagram/ui/mokagram_profile_gif.h
     mokagram/ui/mokagram_report_box.cpp
     mokagram/ui/mokagram_report_box.h
     mokagram/update/mokagram_update.cpp

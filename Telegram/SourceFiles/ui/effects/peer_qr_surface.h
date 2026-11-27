@@ -87,6 +87,8 @@ public:
 	[[nodiscard]] rpl::producer<PeerQrColors> colorsValue() const;
 	[[nodiscard]] rpl::producer<not_null<QTouchEvent*>> touchPresses() const;
 	[[nodiscard]] PeerQrImageArgs prepareImage() const;
+	// Mokagram: capture the profile and its live layers without editor controls.
+	[[nodiscard]] Fn<bool(QImage&)> prepareProfileGif();
 	// the child's control tint lands on the clean backdrop inside its shape
 	void addControl(
 		not_null<QWidget*> control,
