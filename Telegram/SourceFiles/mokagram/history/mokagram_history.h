@@ -42,8 +42,12 @@ namespace Mokagram::History {
 void RegisterSettings();
 
 // От сервера пришло удаление: вызывать до notifyItemsAboutToBeDestroyed.
-// Снимок кладётся в фоновую очередь, поведение клиента не меняется.
-void OnServerDeleted(const std::vector<not_null<HistoryItem*>> &items);
+// Возвращает true, если исходное сообщение остаётся в чате.
+[[nodiscard]] bool OnServerDeleted(not_null<HistoryItem*> item);
+
+// Исходные удалённые сообщения, которые ещё живут в этой сессии.
+[[nodiscard]] std::vector<not_null<HistoryItem*>> RetainedItems(
+	not_null<::History*> history);
 
 // Сообщение появилось в клиенте (пришло, подгрузилось, отправлено):
 // копия уходит в журнал на диск, чтобы пережить удаление.
@@ -66,8 +70,7 @@ void OnBeforeEdit(
 // Хранилище аккаунта (создаётся при первом обращении, лениво).
 [[nodiscard]] Store &StoreFor(not_null<Main::Session*> session);
 
-// Призраки удалённых сообщений: локальные HistoryItem (флаг Local, id вне
-// серверного диапазона), вставляются в ленту по дате, на сервер не уходят.
+// Призрак: исходное сообщение в памяти или локальная копия из архива.
 [[nodiscard]] bool IsGhost(not_null<const HistoryItem*> item);
 // Самоуничтожающиеся фото, видео и голосовые не прячутся и не пропадают
 // после просмотра: ПК показывает их как обычные (history.keep_ttl).

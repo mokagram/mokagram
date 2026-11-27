@@ -3262,6 +3262,10 @@ void Session::checkTTLs() {
 		}
 		expired.insert(expired.end(), items.begin(), items.end());
 	}
+	// Mokagram: apply the same archive policy when the chat timer expires.
+	std::erase_if(expired, [](not_null<HistoryItem*> item) {
+		return Mokagram::History::OnServerDeleted(item);
+	});
 	if (!expired.empty()) {
 		notifyItemsAboutToBeDestroyed(expired);
 		for (const auto &item : expired) {
@@ -3404,7 +3408,10 @@ void Session::processMessagesDeleted(
 		const auto i = list ? list->find(messageId.v) : Messages::iterator();
 		if (list && i != list->end()) {
 			const auto history = i->second->history();
-			toDestroy.push_back(i->second);
+			// Mokagram: retained messages keep their original chat entry.
+			if (!Mokagram::History::OnServerDeleted(i->second)) {
+				toDestroy.push_back(i->second);
+			}
 			historiesToCheck.emplace(history);
 		} else {
 			missing.push_back(messageId.v);
@@ -3415,7 +3422,6 @@ void Session::processMessagesDeleted(
 	}
 	Mokagram::History::OnServerDeletedIds(&session(), peerId, std::move(missing));
 	if (!toDestroy.empty()) {
-		Mokagram::History::OnServerDeleted(toDestroy);
 		notifyItemsAboutToBeDestroyed(toDestroy);
 		for (const auto &item : toDestroy) {
 			item->destroy();
@@ -3436,7 +3442,9 @@ void Session::processNonChannelMessagesDeleted(const QVector<MTPint> &data) {
 	for (const auto &messageId : data) {
 		if (const auto item = nonChannelMessage(messageId.v)) {
 			const auto history = item->history();
-			toDestroy.push_back(item);
+			if (!Mokagram::History::OnServerDeleted(item)) {
+				toDestroy.push_back(item);
+			}
 			historiesToCheck.emplace(history);
 		} else {
 			missing.push_back(messageId.v);
@@ -3444,7 +3452,6 @@ void Session::processNonChannelMessagesDeleted(const QVector<MTPint> &data) {
 	}
 	Mokagram::History::OnServerDeletedIds(&session(), PeerId(), std::move(missing));
 	if (!toDestroy.empty()) {
-		Mokagram::History::OnServerDeleted(toDestroy);
 		notifyItemsAboutToBeDestroyed(toDestroy);
 		for (const auto &item : toDestroy) {
 			item->destroy();

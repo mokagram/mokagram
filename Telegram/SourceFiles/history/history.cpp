@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/music/mokagram_tyanka_hikka.h" // Mokagram: message sounds.
 #include "mokagram/tweaks/mokagram_tweaks.h"
 #include "mokagram/stash/mokagram_compose_stash.h"
+#include "mokagram/history/mokagram_history.h"
 
 #include "history/view/history_view_element.h"
 #include "history/view/history_view_item_preview.h"
@@ -4295,6 +4296,12 @@ void History::checkLocalMessages() {
 		return (date >= firstDate && date < lastDate);
 	};
 	for (const auto &item : _clientSideMessages) {
+		if (!item->mainView() && goodDate(item->date())) {
+			insertMessageToBlocks(item);
+		}
+	}
+	// Mokagram: server slices omit retained deletions after a history reload.
+	for (const auto &item : Mokagram::History::RetainedItems(this)) {
 		if (!item->mainView() && goodDate(item->date())) {
 			insertMessageToBlocks(item);
 		}

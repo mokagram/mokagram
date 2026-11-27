@@ -120,6 +120,8 @@ enum class PaidPostType : uchar {
 
 class HistoryItem final : public RuntimeComposer<HistoryItem> {
 public:
+	void retainAfterServerDeletion(); // Mokagram: keep the original in history.
+
 	[[nodiscard]] static std::unique_ptr<Data::Media> CreateMedia(
 		not_null<HistoryItem*> item,
 		const MTPMessageMedia &media);

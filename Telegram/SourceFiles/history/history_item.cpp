@@ -4531,6 +4531,23 @@ bool HistoryItem::canUpdateDate() const {
 	return isScheduled();
 }
 
+// Mokagram: settle transient state while retaining the original message.
+void HistoryItem::retainAfterServerDeletion() {
+	applyTTL(0);
+	if (isUnreadMention()) {
+		markMediaAndMentionRead();
+	}
+	if (hasUnreadReaction()) {
+		markReactionsRead();
+	}
+	if (hasUnreadPollVote()) {
+		markPollVotesRead();
+	}
+	auto &owner = _history->owner();
+	owner.requestItemViewRefresh(this);
+	owner.requestItemResize(this);
+}
+
 void HistoryItem::applyTTL(TimeId destroyAt) {
 	const auto previousDestroyAt = std::exchange(_ttlDestroyAt, destroyAt);
 	if (previousDestroyAt) {
@@ -4542,7 +4559,10 @@ void HistoryItem::applyTTL(TimeId destroyAt) {
 		const auto session = &_history->session();
 		crl::on_main(session, [session, id = fullId()]{
 			if (const auto item = session->data().message(id)) {
-				session->data().destroyMessageWithCacheCleanup(item);
+				// Mokagram: a message can arrive after its chat timer expired.
+				if (!Mokagram::History::OnServerDeleted(item)) {
+					session->data().destroyMessageWithCacheCleanup(item);
+				}
 			}
 		});
 	} else {

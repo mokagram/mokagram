@@ -180,7 +180,14 @@ struct GhostSession {
 	session->data().itemRemoved(
 	) | rpl::on_next([=](not_null<const HistoryItem*> item) {
 		raw->items.remove(const_cast<HistoryItem*>(item.get()));
-		raw->origin.remove(const_cast<HistoryItem*>(item.get()));
+		const auto original = raw->origin.find(const_cast<HistoryItem*>(item.get()));
+		if (original != end(raw->origin)) {
+			const auto state = raw->histories.find(item->history());
+			if (state != end(raw->histories)) {
+				state->second.byOrigin.remove(original->second);
+			}
+			raw->origin.erase(original);
+		}
 	}, raw->lifetime);
 	session->lifetime().add([=] {
 		AllGhosts().erase(session);
@@ -696,35 +703,47 @@ Store &StoreFor(not_null<Main::Session*> session) {
 	return *raw;
 }
 
-void OnServerDeleted(const std::vector<not_null<HistoryItem*>> &items) {
-	auto ghosts = std::vector<Snapshot>();
-	Main::Session *ghostSession = nullptr;
-	for (const auto &item : items) {
-		if (!Eligible(item, Kind::Deleted)) {
-			continue;
-		}
-		const auto session = &item->history()->session();
-		SaveFiles(item);
-		auto snapshot = MakeSnapshot(item, Kind::Deleted);
-		if (GhostsEnabled()) {
-			ghostSession = session;
-			ghosts.push_back(snapshot);
-		}
-		StoreFor(session).push(std::move(snapshot));
+std::vector<not_null<HistoryItem*>> RetainedItems(not_null<::History*> history) {
+	auto result = std::vector<not_null<HistoryItem*>>();
+	const auto ghosts = GhostsIfExist(&history->session());
+	if (!ghosts || !GhostPeerAllowed(history->peer)) {
+		return result;
 	}
-	if (ghosts.empty()) {
-		return;
-	}
-	// Оригиналы ещё не уничтожены: призраков создаём после, в главном цикле.
-	std::sort(ghosts.begin(), ghosts.end(), [](const auto &a, const auto &b) {
-		return a.id < b.id;
-	});
-	const auto weak = base::make_weak(ghostSession);
-	crl::on_main(weak, [=, rows = std::move(ghosts)]() mutable {
-		if (const auto strong = weak.get()) {
-			CreateGhosts(strong, std::move(rows));
+	const auto state = ghosts->histories.find(history);
+	if (state != end(ghosts->histories)) {
+		for (const auto &[id, item] : state->second.byOrigin) {
+			if (!item->isLocal() && !item->mainView()) {
+				result.push_back(item);
+			}
 		}
-	});
+	}
+	return result;
+}
+
+bool OnServerDeleted(not_null<HistoryItem*> item) {
+	if (IsGhost(item)) {
+		return true;
+	}
+	if (!Eligible(item, Kind::Deleted)) {
+		return false;
+	}
+	const auto history = item->history();
+	const auto session = &history->session();
+	SaveFiles(item);
+	StoreFor(session).push(MakeSnapshot(item, Kind::Deleted));
+	if (!GhostsEnabled()) {
+		return false;
+	}
+
+	auto &ghosts = GhostsFor(session);
+	auto &state = ghosts.histories[history];
+	const auto id = item->id;
+	state.created.emplace(id.bare);
+	state.byOrigin.emplace(id.bare, item);
+	ghosts.items.emplace(item);
+	ghosts.origin.emplace(item, id.bare);
+	item->retainAfterServerDeletion();
+	return true;
 }
 
 namespace {
@@ -854,9 +873,6 @@ void OnBeforeEdit(
 namespace Mokagram::History {
 
 bool IsGhost(not_null<const HistoryItem*> item) {
-	if (!item->isLocal()) {
-		return false;
-	}
 	const auto ghosts = GhostsIfExist(&item->history()->session());
 	return ghosts
 		&& ghosts->items.contains(const_cast<HistoryItem*>(item.get()));
@@ -873,7 +889,6 @@ void RemoveGhost(not_null<HistoryItem*> item) {
 		StoreFor(session).removeOne(
 			item->history()->peer->id.value,
 			i->second);
-		ghosts->origin.erase(i);
 	}
 	ghosts->items.remove(item);
 	session->data().notifyItemsAboutToBeDestroyed({ item });
