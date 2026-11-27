@@ -14002,9 +14002,11 @@ void ShowCurrentTrackMenu(
 	AddRadioAction(menu.get(), controller, track);
 	AddToPlaylistMenu(menu.get(), controller, track);
 	const auto instance = Media::Player::instance();
+	const auto showPause = Media::Player::ShowPauseIcon(
+		instance->getState(AudioMsgId::Type::Song).state);
 	add(QString::fromUtf8(Mokagram::Lang::Tr("Пауза / играть")), [=] {
 		instance->playPause(AudioMsgId::Type::Song);
-	}, &st::menuIconSoundOn);
+	}, showPause ? &st::windowTaskbarThumbPause : &st::windowTaskbarThumbPlay);
 	const auto audioId = instance->current(AudioMsgId::Type::Song);
 	if (audioId.changeablePlaybackSpeed()) {
 		const auto currentSpeed = Core::App().settings().audioPlaybackSpeed();
@@ -14013,16 +14015,18 @@ void ShowCurrentTrackMenu(
 		};
 		auto submenu = std::make_unique<Ui::PopupMenu>(menu.get(), st::popupMenuWithIcons);
 		for (const auto rate : { 0.5, 0.75, 1., 1.25, 1.5, 1.75, 2. }) {
+			const auto selected = std::abs(rate - currentSpeed) < 0.001;
 			const auto action = submenu->addAction(speedText(rate), [=] {
 				Core::App().settings().setAudioPlaybackSpeed(rate);
 				Core::App().saveSettingsDelayed();
 				instance->updatePlaybackSpeed();
-			});
+			}, selected ? &st::mediaPlayerMenuCheck : nullptr);
 			action->setCheckable(true);
-			action->setChecked(std::abs(rate - currentSpeed) < 0.001);
+			action->setChecked(selected);
 		}
 		if (Media::Audio::SupportsMusicPitchWithSpeed()) {
 			const auto key = u"player.pitch_with_speed"_q;
+			const auto enabled = Mokagram::Settings::Bool(key);
 			submenu->addSeparator();
 			const auto action = submenu->addAction(
 				QString::fromUtf8(Mokagram::Lang::Tr("Менять высоту тона")), [=] {
@@ -14042,15 +14046,15 @@ void ShowCurrentTrackMenu(
 					} else {
 						instance->finishSeeking(type, progress);
 					}
-				});
+				}, enabled ? &st::mediaPlayerMenuCheck : &st::menuIconSoundSelect);
 			action->setCheckable(true);
-			action->setChecked(Mokagram::Settings::Bool(key));
+			action->setChecked(enabled);
 		}
 		menu->addAction(
 			QString::fromUtf8(Mokagram::Lang::Tr("Скорость воспроизведения"))
 				+ u" · "_q + speedText(currentSpeed),
 			std::move(submenu),
-			nullptr);
+			&st::menuIconTimer);
 	}
 	if (const auto document = audioId.audio()) {
 		auto info = std::make_unique<Ui::PopupMenu>(menu.get(), st::popupMenuWithIcons);
@@ -14079,7 +14083,7 @@ void ShowCurrentTrackMenu(
 			menu->addAction(
 				QString::fromUtf8(Mokagram::Lang::Tr("Сведения о записи")),
 				std::move(info),
-				nullptr);
+				&st::menuIconInfo);
 		}
 	}
 	if (UsesQueue(instance->current(AudioMsgId::Type::Song))
