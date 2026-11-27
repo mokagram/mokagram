@@ -294,8 +294,14 @@ void AddTextDiff(
 		result.textFg = st::windowFg;
 		return result;
 	}();
+	const auto before = previous.isEmpty() ? QStringList() : previous.split(u'\n');
+	const auto after = current.isEmpty() ? QStringList() : current.split(u'\n');
+	const auto beforeCount = int(before.size());
+	const auto afterCount = int(after.size());
 	const auto inset = style::ConvertScale(10);
-	const auto column = style::ConvertScale(28);
+	const auto number = QString::number(std::max(beforeCount, afterCount));
+	const auto column = std::max(style::ConvertScale(28),
+		lineStyle.style.font->width(number) + inset);
 	const auto marker = style::ConvertScale(22);
 	const auto vertical = style::ConvertScale(3);
 	const auto lines = card->add(
@@ -347,11 +353,8 @@ void AddTextDiff(
 				p.drawText(2 * column + style::ConvertScale(7), y, QString(1, sign));
 			}
 		});
+		row->show();
 	};
-	const auto before = previous.isEmpty() ? QStringList() : previous.split(u'\n');
-	const auto after = current.isEmpty() ? QStringList() : current.split(u'\n');
-	const auto beforeCount = int(before.size());
-	const auto afterCount = int(after.size());
 	const auto width = afterCount + 1;
 	const auto bounded = (int64(beforeCount + 1) * width <= 100000);
 	auto lcs = std::vector<int>(bounded ? (beforeCount + 1) * width : 0);
@@ -385,6 +388,13 @@ void AddTextDiff(
 			++newLine;
 		}
 	}
+	// The card already has a width when an asynchronous page adds the diff.
+	// Justified children need an initial resize to lay out their rows.
+	const auto available = card->widthNoMargins() - 2 * inset;
+	if (available > 0) {
+		lines->resizeToWidth(available);
+	}
+	lines->show();
 }
 
 void HistoryBox(
