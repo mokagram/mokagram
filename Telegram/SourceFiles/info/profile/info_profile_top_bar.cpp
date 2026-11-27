@@ -127,17 +127,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QClipboard>
 #include <QtGui/QDragMoveEvent>
 #include <QtGui/QGuiApplication>
-#include <QtWidgets/QGraphicsDropShadowEffect>
+#include <QtGui/QPainterPath>
 
 namespace Info::Profile {
 
 constexpr auto kHeaderInset = 0;
 namespace {
 
-// Mokagram: the profile badge uses the compact toast from swrm.
-class MokaBadgeToast final : public Ui::RpWidget {
+// Mokagram: the profile badge uses the anchored tooltip from swrm.
+class MokaBadgeTooltip final : public Ui::RpWidget {
 public:
-	MokaBadgeToast(
+	MokaBadgeTooltip(
 		not_null<Ui::RpWidget*> parent,
 		not_null<Ui::RpWidget*> badge,
 		QString text)
@@ -146,13 +146,7 @@ public:
 	, _text(std::move(text)) {
 		hide();
 		setAttribute(Qt::WA_TransparentForMouseEvents);
-		const auto shadow = new QGraphicsDropShadowEffect(this);
-		shadow->setBlurRadius(style::ConvertScale(32));
-		shadow->setOffset(0, style::ConvertScale(8));
-		shadow->setColor(QColor(0, 0, 0, 100));
-		setGraphicsEffect(shadow);
-		_font.setPixelSize(style::ConvertScale(14));
-		_font.setWeight(QFont::Medium);
+		_font.setPixelSize(style::ConvertScale(16));
 		parent->sizeValue() | rpl::on_next([=] {
 			updatePosition();
 		}, lifetime());
@@ -181,18 +175,36 @@ protected:
 		auto p = QPainter(this);
 		p.setRenderHint(QPainter::Antialiasing);
 		p.setOpacity(progress);
-		p.translate(rect().center());
+		const auto tailHeight = style::ConvertScale(9);
+		const auto tip = QPointF(_tailX, _above ? height() : 0);
+		const auto edge = tip.y() + (_above ? -tailHeight : tailHeight);
+		const auto body = _above
+			? rect().adjusted(0, 0, 0, -tailHeight)
+			: rect().adjusted(0, tailHeight, 0, 0);
+		p.translate(tip);
 		const auto scale = 0.96 + 0.04 * progress;
 		p.scale(scale, scale);
-		p.translate(-rect().center());
-		const auto radius = style::ConvertScale(22);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBg->c);
-		p.drawRoundedRect(QRectF(rect()), radius, radius);
-		p.setPen(st::windowFg->c);
+		p.translate(-tip);
+
+		const auto radius = style::ConvertScale(12);
+		const auto halfTail = style::ConvertScale(16);
+		const auto base = edge + (_above ? -1 : 1);
+		auto shape = QPainterPath();
+		shape.setFillRule(Qt::WindingFill);
+		shape.addRoundedRect(QRectF(body), radius, radius);
+
+		auto tail = QPainterPath();
+		tail.moveTo(tip.x() - halfTail, base);
+		tail.cubicTo(tip.x() - halfTail / 2., edge,
+			tip.x() - halfTail / 4., tip.y(), tip.x(), tip.y());
+		tail.cubicTo(tip.x() + halfTail / 4., tip.y(),
+			tip.x() + halfTail / 2., edge, tip.x() + halfTail, base);
+		tail.closeSubpath();
+		p.fillPath(shape.united(tail), QColor(0, 0, 0, 204));
+		p.setPen(Qt::white);
 		p.setFont(_font);
-		const auto label = rect().adjusted(
-			style::ConvertScale(16), 0, -style::ConvertScale(10), 0);
+		const auto padding = style::ConvertScale(14);
+		const auto label = body.adjusted(padding, 0, -padding, 0);
 		p.drawText(label, Qt::AlignLeft | Qt::AlignVCenter,
 			QFontMetrics(_font).elidedText(_text, Qt::ElideRight, label.width()));
 	}
@@ -207,27 +219,32 @@ private:
 		const auto size = parent->size();
 		const auto metrics = QFontMetrics(_font);
 		const auto width = std::max(0, std::min({
-			metrics.horizontalAdvance(_text) + style::ConvertScale(26),
+			metrics.horizontalAdvance(_text) + style::ConvertScale(28),
 			style::ConvertScale(384),
 			size.width() - 2 * inset,
 		}));
-		const auto height = metrics.height() + style::ConvertScale(20);
+		const auto height = metrics.height() + style::ConvertScale(29);
 		const auto anchor = parent->mapFromGlobal(_badge->mapToGlobal(
 			QPoint(_badge->width() / 2, 0)));
 		const auto x = std::clamp(
 			anchor.x() - width / 2,
 			inset,
 			std::max(inset, size.width() - width - inset));
-		const auto below = anchor.y() + _badge->height() + inset;
-		const auto y = (below + height <= size.height() - inset)
-			? below
-			: std::max(inset, anchor.y() - height - inset);
+		const auto above = anchor.y() - height - inset;
+		_above = (above >= inset);
+		const auto tailInset = std::min(width / 2, style::ConvertScale(28));
+		_tailX = std::clamp(anchor.x() - x, tailInset, width - tailInset);
+		const auto y = _above
+			? above
+			: anchor.y() + _badge->height() + inset;
 		setGeometry(x, y, width, height);
 	}
 
 	QPointer<Ui::RpWidget> _badge;
 	QString _text;
 	QFont _font;
+	int _tailX = 0;
+	bool _above = true;
 	bool _hovered = false;
 	Ui::Animations::Simple _fade;
 };
@@ -686,7 +703,7 @@ TopBar::TopBar(
 				|| details->description.text.isEmpty()) {
 				return;
 			}
-			const auto toast = QPointer(new MokaBadgeToast(
+			const auto toast = QPointer(new MokaBadgeTooltip(
 				controller->widget(),
 				badge,
 				details->description.text));
