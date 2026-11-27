@@ -140,13 +140,24 @@ public:
 	MokaBadgeTooltip(
 		not_null<Ui::RpWidget*> parent,
 		not_null<Ui::RpWidget*> badge,
-		QString text)
+		QString text,
+		rpl::producer<std::optional<QColor>> profileColor)
 	: Ui::RpWidget(parent)
 	, _badge(badge)
 	, _text(std::move(text)) {
 		hide();
 		setAttribute(Qt::WA_TransparentForMouseEvents);
-		_font.setPixelSize(style::ConvertScale(16));
+		_font.setPixelSize(style::ConvertScale(13));
+		std::move(profileColor) | rpl::on_next([=](std::optional<QColor> color) {
+			const auto tint = color.value_or(QColor(Qt::black));
+			constexpr auto kTint = 0.16;
+			_background = QColor(
+				qRound(tint.red() * kTint),
+				qRound(tint.green() * kTint),
+				qRound(tint.blue() * kTint),
+				204);
+			update();
+		}, lifetime());
 		parent->sizeValue() | rpl::on_next([=] {
 			updatePosition();
 		}, lifetime());
@@ -175,7 +186,7 @@ protected:
 		auto p = QPainter(this);
 		p.setRenderHint(QPainter::Antialiasing);
 		p.setOpacity(progress);
-		const auto tailHeight = style::ConvertScale(9);
+		const auto tailHeight = style::ConvertScale(7);
 		const auto tip = QPointF(_tailX, _above ? height() : 0);
 		const auto edge = tip.y() + (_above ? -tailHeight : tailHeight);
 		const auto body = _above
@@ -186,8 +197,8 @@ protected:
 		p.scale(scale, scale);
 		p.translate(-tip);
 
-		const auto radius = style::ConvertScale(12);
-		const auto halfTail = style::ConvertScale(16);
+		const auto radius = style::ConvertScale(9);
+		const auto halfTail = style::ConvertScale(12);
 		const auto base = edge + (_above ? -1 : 1);
 		auto shape = QPainterPath();
 		shape.setFillRule(Qt::WindingFill);
@@ -200,10 +211,10 @@ protected:
 		tail.cubicTo(tip.x() + halfTail / 4., tip.y(),
 			tip.x() + halfTail / 2., edge, tip.x() + halfTail, base);
 		tail.closeSubpath();
-		p.fillPath(shape.united(tail), QColor(0, 0, 0, 204));
+		p.fillPath(shape.united(tail), _background);
 		p.setPen(Qt::white);
 		p.setFont(_font);
-		const auto padding = style::ConvertScale(14);
+		const auto padding = style::ConvertScale(9);
 		const auto label = body.adjusted(padding, 0, -padding, 0);
 		p.drawText(label, Qt::AlignLeft | Qt::AlignVCenter,
 			QFontMetrics(_font).elidedText(_text, Qt::ElideRight, label.width()));
@@ -219,30 +230,32 @@ private:
 		const auto size = parent->size();
 		const auto metrics = QFontMetrics(_font);
 		const auto width = std::max(0, std::min({
-			metrics.horizontalAdvance(_text) + style::ConvertScale(28),
+			metrics.horizontalAdvance(_text) + style::ConvertScale(18),
 			style::ConvertScale(384),
 			size.width() - 2 * inset,
 		}));
-		const auto height = metrics.height() + style::ConvertScale(29);
+		const auto height = metrics.height() + style::ConvertScale(19);
 		const auto anchor = parent->mapFromGlobal(_badge->mapToGlobal(
 			QPoint(_badge->width() / 2, 0)));
 		const auto x = std::clamp(
 			anchor.x() - width / 2,
 			inset,
 			std::max(inset, size.width() - width - inset));
-		const auto above = anchor.y() - height - inset;
+		const auto gap = style::ConvertScale(5);
+		const auto above = anchor.y() - height - gap;
 		_above = (above >= inset);
-		const auto tailInset = std::min(width / 2, style::ConvertScale(28));
+		const auto tailInset = std::min(width / 2, style::ConvertScale(21));
 		_tailX = std::clamp(anchor.x() - x, tailInset, width - tailInset);
 		const auto y = _above
 			? above
-			: anchor.y() + _badge->height() + inset;
+			: anchor.y() + _badge->height() + gap;
 		setGeometry(x, y, width, height);
 	}
 
 	QPointer<Ui::RpWidget> _badge;
 	QString _text;
 	QFont _font;
+	QColor _background = QColor(0, 0, 0, 204);
 	int _tailX = 0;
 	bool _above = true;
 	bool _hovered = false;
@@ -706,7 +719,8 @@ TopBar::TopBar(
 			const auto toast = QPointer(new MokaBadgeTooltip(
 				controller->widget(),
 				badge,
-				details->description.text));
+				details->description.text,
+				_edgeColor.value()));
 			badge->setAttribute(Qt::WA_TransparentForMouseEvents, false);
 			QObject::connect(badge, &QObject::destroyed, toast.data(), [=] {
 				toast->hide();
