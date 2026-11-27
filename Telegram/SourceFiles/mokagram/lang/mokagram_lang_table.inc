@@ -562,7 +562,7 @@
 	{ "Введи название альбома или исполнителя.", "Enter an album title or artist." },
 	{ "Ищу…", "Searching…" },
 	{ "Поиск музыки", "Music search" },
-	{ "вот блин, для этого трека текста не нашлось", "oh f*ck there is no text for this track" },
+	{ "ох черт для этой песни текста не нашлось", "oh hell no there is no text for this song" },
 	{ "Кажется тут ничего нет.. напиши что нибудь в поиск", "Looks like there is nothing here.. type something to search" },
 	{ "Действия с треком", "Track actions" },
 	{ "Каналу не хватает бустов для историй.", "The channel needs more boosts for stories." },

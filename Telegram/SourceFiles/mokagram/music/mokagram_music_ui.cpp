@@ -11971,7 +11971,7 @@ protected:
 			p.drawText(QRect(center - halfWidth, sticker.bottom() + s(12),
 				2 * halfWidth + 1, s(52)),
 				Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
-				QString::fromUtf8(Mokagram::Lang::Tr("вот блин, для этого трека текста не нашлось")));
+				QString::fromUtf8(Mokagram::Lang::Tr("ох черт для этой песни текста не нашлось")));
 		}
 		if (_tab != Tab::Now && !(_tab == Tab::Home && _homeAlbumOpen)) {
 			if (!_tabNote.isEmpty()) {
