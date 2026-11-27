@@ -6189,7 +6189,7 @@ private:
 				const auto size = HistoryView::DownscaledSize(
 					frame.size() / style::DevicePixelRatio(),
 					target.size());
-				p.drawImage(
+				paintStickerFrame(p,
 					QRect(
 						target.x() + (target.width() - size.width()) / 2,
 						target.y() + (target.height() - size.height()) / 2,
@@ -6206,7 +6206,9 @@ private:
 		if (fullscreen) {
 			if (!_missingStickerImage.isNull()) {
 				const auto size = _missingStickerImage.size().scaled(target.size(), Qt::KeepAspectRatio);
-				p.drawImage(QRect(target.center() - QPoint(size.width() / 2, size.height() / 2), size),
+				paintStickerFrame(p,
+					QRect(target.topLeft() + QPoint((target.width() - size.width()) / 2,
+						(target.height() - size.height()) / 2), size),
 					_missingStickerImage);
 			} else {
 				paintVideo(p, target, paused);
@@ -6258,7 +6260,22 @@ private:
 		}
 		const auto position = target.topLeft()
 			+ QPoint((target.width() - size.width()) / 2, (target.height() - size.height()) / 2);
-		p.drawImage(QRect(position, size), _video->current(request, paused ? 0 : crl::now()));
+		paintStickerFrame(p, QRect(position, size),
+			_video->current(request, paused ? 0 : crl::now()));
+	}
+
+	void paintStickerFrame(QPainter &p, QRect target, const QImage &frame) const {
+		if (_mode != Mode::MissingLyrics) {
+			p.drawImage(target, frame);
+			return;
+		}
+		const auto radius = style::ConvertScale(12);
+		auto clip = QPainterPath();
+		clip.addRoundedRect(QRectF(target), radius, radius);
+		p.save();
+		p.setClipPath(clip, Qt::IntersectClip);
+		p.drawImage(target, frame);
+		p.restore();
 	}
 
 	static constexpr auto kMissingLyricsDocumentId = DocumentId(5368763064789254071ULL);
@@ -11629,20 +11646,25 @@ protected:
 		}
 	}
 
+	[[nodiscard]] QString missingLyricsCaption() const {
+		return QString::fromUtf8(Mokagram::Lang::Tr("ох черт для этой песни текста не нашлось"));
+	}
+
 	[[nodiscard]] QRect missingLyricsStickerGeometry(const Layout &layout) const {
 		const auto area = layout.lyrics;
+		const auto gap = style::ConvertScale(12);
+		const auto captionWidth = std::max(1, area.width() - 2 * style::ConvertScale(10));
+		const auto captionHeight = QFontMetrics(PlayerStyle::kTrackTitle.musicFont())
+			.boundingRect(QRect(0, 0, captionWidth, 0), Qt::TextWordWrap, missingLyricsCaption())
+			.height();
 		const auto side = std::max(0, std::min({
 			style::ConvertScale(StickerHint::kMissingLyricsMaxSize),
 			area.width() / 2,
-			area.height() / 2,
+			area.height() - gap - captionHeight,
 		}));
-		const auto shift = std::clamp(
-			(area.width() - style::ConvertScale(360)) / 5,
-			0,
-			style::ConvertScale(120));
 		return QRect(
-			area.center().x() - shift - side / 2,
-			area.center().y() - (side + style::ConvertScale(64)) / 2,
+			area.x() + (area.width() - side) / 2,
+			area.y() + std::max(0, (area.height() - side - gap - captionHeight) / 2),
 			side, side);
 	}
 
@@ -11962,16 +11984,13 @@ protected:
 		p.setBrush(colors.selected);
 		p.drawRoundedRect(active, active.height() / 2., active.height() / 2.);
 		if (showsMissingLyrics() && _missingLyricsSticker) {
-			const auto sticker = _missingLyricsSticker->geometry();
-			const auto center = sticker.center().x();
-			const auto halfWidth = std::max(0, std::min(
-				center - layout.lyrics.left(), layout.lyrics.right() - center) - s(10));
+			const auto top = _missingLyricsSticker->y() + _missingLyricsSticker->height() + s(12);
 			p.setFont(PlayerStyle::kTrackTitle.musicFont());
 			p.setPen(MusicSecondaryColor());
-			p.drawText(QRect(center - halfWidth, sticker.bottom() + s(12),
-				2 * halfWidth + 1, s(52)),
-				Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
-				QString::fromUtf8(Mokagram::Lang::Tr("ох черт для этой песни текста не нашлось")));
+			p.drawText(QRect(layout.lyrics.x() + s(10), top,
+				std::max(0, layout.lyrics.width() - 2 * s(10)),
+				std::max(0, layout.lyrics.bottom() + 1 - top)),
+				Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap, missingLyricsCaption());
 		}
 		if (_tab != Tab::Now && !(_tab == Tab::Home && _homeAlbumOpen)) {
 			if (!_tabNote.isEmpty()) {
