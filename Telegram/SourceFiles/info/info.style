@@ -702,25 +702,19 @@ infoMediaGridSizeStep: 16px;
 infoMediaTabsMinBodyWidth: infoMediaMinGridSize + infoMediaSkip + infoMediaSkip + infoMediaTabsRightSkip;
 
 infoProfileTabsStrip: ProfileTabsStrip {
-	height: 48px;
-	margin: margins(8px, 9px, 8px, 6px);
+	// Mokagram: flat capsule with a tonal selection, like the music queue.
+	height: 55px;
+	margin: margins(4px, 9px, 4px, 6px);
 	skip: 0px;
 	tabPadding: margins(16px, 0px, 16px, 0px);
 	activeSkip: 4px;
 	style: semiboldTextStyle;
 	fg: windowSubTextFg;
-	fgActive: lightButtonFg;
-	bg: windowBg;
-	bgActive: lightButtonBgOver;
-	ripple: RippleAnimation(defaultRippleAnimation) {
-		color: lightButtonBgRipple;
-	}
+	fgActive: windowFg;
+	bg: boxBg;
+	bgActive: windowBgOver;
+	ripple: defaultRippleAnimationBgOver;
 	duration: 200;
-}
-infoProfileTabsShadow: BoxShadow {
-	blurRadius: 8px;
-	offset: point(0px, 2px);
-	opacity: 0.18;
 }
 
 infoCommonGroupsMargin: margins(0px, 2px, 0px, 2px);

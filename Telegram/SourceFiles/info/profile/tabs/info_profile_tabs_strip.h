@@ -10,7 +10,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rp_widget.h"
 #include "ui/effects/animations.h"
 #include "ui/text/text.h"
-#include "ui/widgets/shadow.h"
 
 namespace style {
 struct ProfileTabsStrip;
@@ -79,7 +78,6 @@ private:
 
 	const style::ProfileTabsStrip &_st;
 	Ui::Text::MarkedContext _context;
-	Ui::BoxShadow _shadow;
 	QImage _content;
 	std::vector<Button> _buttons;
 	rpl::event_stream<QString> _activated;

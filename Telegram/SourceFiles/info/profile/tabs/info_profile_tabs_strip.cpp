@@ -26,37 +26,11 @@ constexpr auto kScrollDuration = crl::time(150);
 constexpr auto kVerticalScrollGrace = crl::time(250);
 constexpr auto kVerticalScrollRest = crl::time(1000);
 
-void PaintIslandOutline(
-		QPainter &p,
-		const QRectF &island,
-		float64 radius,
-		const style::color &bg) {
-	const auto light = (bg->c.lightness() >= 128);
-	const auto width = light ? (0.6 * st::lineWidth) : double(st::lineWidth);
-	if (light) {
-		p.setPen(QPen(QColor(0, 0, 0, 20), width));
-	} else {
-		auto grad = QLinearGradient(0, island.top(), 0, island.bottom());
-		grad.setColorAt(0., QColor(255, 255, 255, 40));
-		grad.setColorAt(0.5, QColor(255, 255, 255, 0));
-		grad.setColorAt(1., QColor(255, 255, 255, 20));
-		p.setPen(QPen(QBrush(grad), width));
-	}
-	p.setBrush(Qt::NoBrush);
-	const auto half = 0.5 * width;
-	const auto stroke = light
-		? island.marginsAdded(QMarginsF(half, half, half, half))
-		: island.adjusted(half, half, -half, -half);
-	const auto strokeRadius = light ? (radius + half) : (radius - half);
-	p.drawRoundedRect(stroke, strokeRadius, strokeRadius);
-}
-
 } // namespace
 
 TabsStrip::TabsStrip(QWidget *parent, const style::ProfileTabsStrip &st)
 : RpWidget(parent)
 , _st(st)
-, _shadow(st::infoProfileTabsShadow)
 , _lastCursorPosition(QCursor::pos()) {
 	setObjectName(u"profileTabsStrip"_q);
 	setMouseTracking(true);
@@ -167,8 +141,7 @@ rpl::producer<QString> TabsStrip::contextMenuRequests() const {
 }
 
 QRect TabsStrip::islandRect() const {
-	// Mokagram: плашка вкладок во всю ширину карточек профиля.
-	return rect() - _st.margin + QMargins(15, 0, 15, 0);
+	return rect() - _st.margin;
 }
 
 int TabsStrip::islandInteriorWidth() const {
@@ -197,12 +170,14 @@ int TabsStrip::scrollValue() const {
 }
 
 void TabsStrip::setSelected(int index) {
-	const auto was = (_selected >= 0);
-	const auto now = (index >= 0);
-	_selected = index;
-	if (was != now) {
-		setCursor(now ? style::cur_pointer : style::cur_default);
+	if (_selected == index) {
+		return;
 	}
+	if ((_selected >= 0) != (index >= 0)) {
+		setCursor((index >= 0) ? style::cur_pointer : style::cur_default);
+	}
+	_selected = index;
+	invalidate();
 }
 
 void TabsStrip::setActive(int index) {
@@ -299,11 +274,16 @@ void TabsStrip::mouseMoveEvent(QMouseEvent *e) {
 		_dragx = _pressx;
 		_dragscroll = _scroll;
 		stopPressedRipple();
+		setSelected(-1);
+		return;
 	}
 	setSelected(indexAt(e->pos()));
 }
 
 int TabsStrip::indexAt(QPoint position) const {
+	if (!islandRect().contains(position)) {
+		return -1;
+	}
 	const auto shifted = position - contentOrigin();
 	for (auto i = 0, c = int(_buttons.size()); i != c; ++i) {
 		if (_buttons[i].geometry.contains(shifted)) {
@@ -417,8 +397,8 @@ void TabsStrip::mouseReleaseEvent(QMouseEvent *e) {
 	const auto dragx = std::exchange(_dragx, 0);
 	const auto pressed = std::exchange(_pressed, -1);
 	_pressx = 0;
-	if (!dragx
-		&& pressed >= 0
+	setSelected(indexAt(e->pos()));
+	if (!dragx && pressed >= 0
 		&& _selected == pressed
 		&& pressed < _buttons.size()) {
 		_activated.fire_copy(_buttons[pressed].tab.id);
@@ -431,8 +411,10 @@ void TabsStrip::paintEvent(QPaintEvent *e) {
 	}
 	auto p = QPainter(this);
 	const auto island = islandRect();
+	if (island.isEmpty()) {
+		return;
+	}
 	const auto radius = island.height() / 2.;
-	_shadow.paint(p, island, int(radius));
 
 	auto hq = PainterHighQualityEnabler(p);
 	p.setBrush(_st.bg);
@@ -445,9 +427,6 @@ void TabsStrip::paintEvent(QPaintEvent *e) {
 	clip.addRoundedRect(QRectF(island), radius, radius);
 	p.setClipPath(clip);
 	p.drawImage(island.topLeft(), _content);
-	p.setClipping(false);
-
-	PaintIslandOutline(p, QRectF(island), radius, _st.bg);
 }
 
 void TabsStrip::validateContent(QRect island) {
@@ -473,9 +452,19 @@ void TabsStrip::validateContent(QRect island) {
 			origin.x(),
 			origin.y());
 		const auto highlightRadius = highlight.height() / 2.;
-		p.setBrush(_st.bgActive);
+		p.setBrush(anim::color(_st.bgActive, _st.fgActive, 0.08));
 		p.setPen(Qt::NoPen);
 		p.drawRoundedRect(highlight, highlightRadius, highlightRadius);
+	}
+	// Mokagram: use the same tonal hover as the surrounding profile rows.
+	if (_selected >= 0) {
+		const auto hover = highlightRect(_selected).translated(origin);
+		auto color = _st.fgActive->c;
+		color.setAlphaF(0.08);
+		p.setPen(Qt::NoPen);
+		p.setBrush(color);
+		const auto radius = hover.height() / 2.;
+		p.drawRoundedRect(hover, radius, radius);
 	}
 	for (auto i = 0, c = int(_buttons.size()); i != c; ++i) {
 		auto &button = _buttons[i];
@@ -490,16 +479,17 @@ void TabsStrip::validateContent(QRect island) {
 	}
 	const auto textTop = (_buttons.front().geometry.height()
 		- _st.style.font->height) / 2;
+	const auto inactiveFg = anim::color(_st.fg, _st.fgActive, 0.35);
 	for (auto i = 0, c = int(_buttons.size()); i != c; ++i) {
 		const auto &button = _buttons[i];
 		if (i == _active) {
 			p.setPen(animating
-				? QPen(anim::color(_st.fg, _st.fgActive, progress))
+				? QPen(anim::color(inactiveFg, _st.fgActive->c, progress))
 				: QPen(_st.fgActive->c));
 		} else if (animating && i == _wasActive) {
-			p.setPen(anim::color(_st.fgActive, _st.fg, progress));
+			p.setPen(anim::color(_st.fgActive->c, inactiveFg, progress));
 		} else {
-			p.setPen(_st.fg->c);
+			p.setPen(inactiveFg);
 		}
 		button.text.draw(p, {
 			.position = origin

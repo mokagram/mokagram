@@ -752,7 +752,8 @@ void TabsHost::paintEvent(QPaintEvent *e) {
 	if (!_slideAnimation) {
 		return;
 	}
-	p.fillRect(_slideRect, st::windowBg);
+	// Mokagram: keep the profile card surface behind both tab snapshots.
+	p.fillRect(_slideRect, st::windowBgOver);
 	_slideAnimation->paintFrame(
 		p,
 		_slideRect.x(),
