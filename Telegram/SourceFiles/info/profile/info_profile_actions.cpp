@@ -1388,6 +1388,7 @@ public:
 			_collectible = user->emojiStatusId().collectible;
 			if (_collectible) {
 				_profileColor.reset();
+				updateCollectibleContrast();
 			} else {
 				const auto colors = user->session().api().peerColors(
 				).colorProfileFor(user);
@@ -1520,6 +1521,42 @@ private:
 		return AbstractButton::eventHook(e);
 	}
 
+	void updateCollectibleContrast() {
+		const auto &gift = *_collectible;
+		const auto &center = gift.centerColor;
+		const auto &edge = gift.edgeColor;
+		const auto &pattern = gift.patternColor.isValid() ? gift.patternColor : edge;
+		// Mokagram: bound the brightness of the gradient and the pattern together.
+		const auto brightest = QColor(
+			std::max({ center.red(), edge.red(), pattern.red() }),
+			std::max({ center.green(), edge.green(), pattern.green() }),
+			std::max({ center.blue(), edge.blue(), pattern.blue() }));
+		constexpr auto kTextContrast = 4.5;
+		const auto brightness = Ui::CountContrast(brightest, Qt::black);
+		_collectibleText = gift.textColor;
+		_collectibleShade = 0.;
+		if (Ui::CountContrast(_collectibleText, Qt::black)
+			< brightness * kTextContrast) {
+			_collectibleText = Qt::white;
+			const auto limit = Ui::CountContrast(Qt::white, Qt::black) / kTextContrast;
+			if (brightness > limit) {
+				auto low = 0.;
+				auto high = 1.;
+				for (auto i = 0; i != 8; ++i) {
+					const auto middle = (low + high) / 2.;
+					const auto shaded = Ui::BlendColors(brightest, Qt::black, middle);
+					if (Ui::CountContrast(shaded, Qt::black) > limit) {
+						low = middle;
+					} else {
+						high = middle;
+					}
+				}
+				_collectibleShade = high;
+			}
+		}
+		_collectiblePattern = Ui::BlendColors(pattern, Qt::black, _collectibleShade);
+	}
+
 	void paintEvent(QPaintEvent *e) override {
 		auto p = Painter(this);
 		auto hq = PainterHighQualityEnabler(p);
@@ -1535,12 +1572,15 @@ private:
 			&& Ui::CountContrast(edge, Qt::black) > Ui::CountContrast(edge, Qt::white);
 		const auto stateTint = lightSurface ? Qt::white : Qt::black;
 		const auto stateOpacity = isDown() ? 0.16 : isOver() ? 0.08 : 0.;
+		const auto opacity = _collectible
+			? _collectibleShade + (1. - _collectibleShade) * stateOpacity
+			: stateOpacity;
 		const auto shade = [&](QColor color) {
-			return Ui::BlendColors(color, stateTint, stateOpacity);
+			return Ui::BlendColors(color, stateTint, opacity);
 		};
 		const auto background = shade(edge);
 		const auto primary = _collectible
-			? _collectible->textColor
+			? _collectibleText
 			: _profileColor
 			? QColor(lightSurface ? Qt::black : Qt::white)
 			: st::windowFg->c;
@@ -1569,8 +1609,8 @@ private:
 		}
 		p.drawRoundedRect(rect(), cardRadius, cardRadius);
 		// Mokagram: paint a muted profile pattern behind the track details.
-		const auto patternTint = (_collectible && _collectible->patternColor.isValid())
-			? _collectible->patternColor
+		const auto patternTint = _collectible
+			? _collectiblePattern
 			: Ui::BlendColors(edge, primary, 0.5);
 		paintPattern(p, cardRadius, patternTint);
 		const auto inset = style::ConvertScale(2);
@@ -1629,6 +1669,9 @@ private:
 	QImage _cover;
 	std::optional<QColor> _profileColor;
 	std::shared_ptr<Data::EmojiStatusCollectible> _collectible;
+	QColor _collectibleText;
+	QColor _collectiblePattern;
+	float64 _collectibleShade = 0.;
 	DocumentId _patternId = 0;
 	std::unique_ptr<Ui::Text::CustomEmoji> _patternEmoji;
 	QColor _patternTint;
