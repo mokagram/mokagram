@@ -1451,7 +1451,7 @@ Fn<bool(QImage&)> PeerQrSurface::prepareProfileGif() {
 	const auto margin = _cardGeometry.left();
 	const auto width = _cardGeometry.width() + 2 * margin;
 	const auto size = QSize(width, _cardGeometry.height() + 2 * margin)
-		.scaled(512, 768, Qt::KeepAspectRatio);
+		.scaled(720, 1080, Qt::KeepAspectRatio);
 	if (size.isEmpty()) {
 		return nullptr;
 	}

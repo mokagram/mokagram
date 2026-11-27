@@ -399,7 +399,8 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
 
 //PERF TODO: is it possible to use the same array for both `used` and `tlb`?
 static MsfGifBuffer * msf_compress_frame(void * allocContext, int width, int height, int centiSeconds,
-                                         MsfCookedFrame frame, MsfGifState * handle, uint8_t * used, uint8_t * tlb, int16_t * lzwMem)
+                                         MsfCookedFrame frame, MsfGifState * handle, uint8_t * used, uint8_t * tlb, int16_t * lzwMem,
+                                         const uint8_t * indexedPalette)
 { MsfTimeFunc
     //NOTE: We reserve enough memory for the theoretical worst case upfront because it's a reasonable amount,
     //      and prevents us from ever having to check size or realloc during compression.
@@ -424,6 +425,13 @@ static MsfGifBuffer * msf_compress_frame(void * allocContext, int width, int hei
     MsfTimeLoop("table") for (int i = 0; i < tlbSize-1; ++i) {
         if (used[i]) {
             tlb[i] = tableIdx;
+            if (indexedPalette) {
+                table[tableIdx].r = indexedPalette[i * 3];
+                table[tableIdx].g = indexedPalette[i * 3 + 1];
+                table[tableIdx].b = indexedPalette[i * 3 + 2];
+                ++tableIdx;
+                continue;
+            }
             int rmask = (1 << frame.rbits) - 1;
             int gmask = (1 << frame.gbits) - 1;
             //isolate components
@@ -617,7 +625,7 @@ int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPer
         msf_imin(quality, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)));
 
     MsfGifBuffer * buffer = msf_compress_frame(handle->customAllocatorContext, handle->width, handle->height,
-        centiSecondsPerFrame, handle->currentFrame, handle, handle->usedMem, handle->tlbMem, handle->lzwMem);
+        centiSecondsPerFrame, handle->currentFrame, handle, handle->usedMem, handle->tlbMem, handle->lzwMem, NULL);
     if (!buffer) { msf_free_gif_state(handle); return 0; }
     handle->listTail->next = buffer;
     handle->listTail = buffer;
@@ -670,8 +678,7 @@ int msf_gif_begin_to_file(MsfGifState * handle, int width, int height, MsfGifFil
     return msf_gif_begin(handle, width, height);
 }
 
-int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFrame, int quality, int pitchInBytes) {
-    if (!msf_gif_frame(handle, pixelData, centiSecondsPerFrame, quality, pitchInBytes)) { return 0; }
+static int msf_flush_frame_to_file(MsfGifState * handle) {
 
     //NOTE: this is a somewhat hacky implementation which is not perfectly efficient, but it's good enough for now
     MsfGifBuffer * head = handle->listHead;
@@ -679,6 +686,31 @@ int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSe
     handle->listHead = head->next;
     MSF_GIF_FREE(handle->customAllocatorContext, head, offsetof(MsfGifBuffer, data) + head->size);
     return 1;
+}
+
+int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFrame, int quality, int pitchInBytes) {
+    return msf_gif_frame(handle, pixelData, centiSecondsPerFrame, quality, pitchInBytes)
+        && msf_flush_frame_to_file(handle);
+}
+
+// Mokagram: the caller supplies 255 RGB entries and 0..254 indices in
+// currentFrame.pixels. Keep the palette fixed until the end of the GIF.
+static int msf_gif_indexed_frame_to_file(MsfGifState * handle, const uint8_t * palette, int centiseconds) {
+    MsfCookedFrame * frame = &handle->currentFrame;
+    frame->rbits = 8;
+    frame->gbits = frame->bbits = 0;
+    memset(handle->usedMem, 1, 255);
+    memset(handle->usedMem + 255, 0, 2);
+    MsfGifBuffer * buffer = msf_compress_frame(handle->customAllocatorContext, handle->width, handle->height,
+        centiseconds, *frame, handle, handle->usedMem, handle->tlbMem, handle->lzwMem, palette);
+    if (!buffer) { msf_free_gif_state(handle); return 0; }
+    handle->listTail->next = buffer;
+    handle->listTail = buffer;
+    MsfCookedFrame previous = handle->previousFrame;
+    handle->previousFrame = *frame;
+    *frame = previous;
+    ++handle->framesSubmitted;
+    return msf_flush_frame_to_file(handle);
 }
 
 int msf_gif_end_to_file(MsfGifState * handle) {
