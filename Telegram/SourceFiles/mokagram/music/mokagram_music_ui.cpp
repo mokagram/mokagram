@@ -7537,6 +7537,30 @@ constexpr auto kBarRadius = 40;
 constexpr auto kHomeTrendingSection = 3;
 constexpr auto kSeekFrameInterval = 33;
 constexpr auto kBackdropFrameInterval = 100;
+constexpr auto kHomeSideGlowMin = 96;
+
+[[nodiscard]] int HomeSideGlowWidth(int width) {
+	return std::max((width - style::ConvertScale(kMusicListMaxWidth)) / 2, 0);
+}
+
+void PaintHomeSideGlow(QPainter &p, QRect band, QColor tint, bool light) {
+	const auto side = HomeSideGlowWidth(band.width());
+	const auto minimum = style::ConvertScale(kHomeSideGlowMin);
+	if (side <= minimum || band.isEmpty() || !tint.alpha()) {
+		return;
+	}
+	const auto strength = std::min(
+		(side - minimum) / double(style::ConvertScale(64)), 1.);
+	tint.setAlphaF(tint.alphaF() * strength * (light ? .08 : .15));
+	auto glow = QRadialGradient(QPointF(.5, .5), .5);
+	glow.setCoordinateMode(QGradient::ObjectMode);
+	glow.setColorAt(0., tint);
+	tint.setAlpha(0);
+	glow.setColorAt(1., tint);
+	const auto height = band.height() * .8;
+	p.fillRect(QRectF(band.x() - side, band.y(), 2. * side, height), glow);
+	p.fillRect(QRectF(band.x() + band.width() - side, band.y(), 2. * side, height), glow);
+}
 
 struct PlayerSpringSpec {
 	double damping;
@@ -7798,6 +7822,7 @@ public:
 				return;
 			}
 			animateHomeBackExit();
+			clearHomeSideGlow();
 			_homeAlbumOpen = false;
 			_homeArtistOpen = false;
 			++_homeAlbumGeneration;
@@ -8305,6 +8330,10 @@ public:
 					_motionCover = nullptr;
 					_spotifyCanvas = nullptr;
 				}
+				if ((key == u"player.cover_colors"_q || key == u"player.dynamic_background"_q)
+					&& !Mokagram::Settings::Bool(key)) {
+					_homeSideGlowFade.stop();
+				}
 				refresh();
 				updateAmbientTimer();
 				repaintBackdrop();
@@ -8330,6 +8359,9 @@ public:
 
 		PowerSaving::Changes(
 		) | rpl::on_next([=] {
+			if (!PlayerMotionEnabled()) {
+				_homeSideGlowFade.stop();
+			}
 			updateAmbientTimer();
 			repaintBackdrop();
 		}, lifetime());
@@ -8412,6 +8444,7 @@ protected:
 		updateAmbientTimer();
 	}
 	void hideEvent(QHideEvent *event) override {
+		_homeSideGlowFade.stop();
 		_searchHintMenu.hide();
 		_ambientTimer.stop();
 		_canvas.setVisible(false);
@@ -9537,6 +9570,7 @@ protected:
 		_homeBackOverlay.reset();
 	}
 	void resetHomeNavigation() {
+		clearHomeSideGlow();
 		_homeSection = 0;
 		_homeAlbumOpen = false;
 		_homeArtistOpen = false;
@@ -9801,6 +9835,48 @@ protected:
 		return accent.isValid() ? TintedNavTrack(accent) : st::windowBgOver->c;
 	}
 
+	[[nodiscard]] QColor homeSideGlowColor() const {
+		if (!_homeSideGlowFade.animating()) {
+			return _homeSideGlow;
+		}
+		auto from = _homeSideGlowFrom;
+		auto to = _homeSideGlow;
+		if (!from.alpha()) {
+			from = to;
+			from.setAlpha(0);
+		} else if (!to.alpha()) {
+			to = from;
+			to.setAlpha(0);
+		}
+		return anim::color(from, to, _homeSideGlowFade.value(1.));
+	}
+
+	void setHomeSideGlow(QColor accent) {
+		const auto target = accent.isValid() ? accent : QColor(Qt::transparent);
+		if (_homeSideGlow == target) {
+			return;
+		}
+		_homeSideGlowFrom = homeSideGlowColor();
+		_homeSideGlow = target;
+		_homeSideGlowFade.stop();
+		if (isVisible() && PlayerMotionEnabled()
+			&& HomeSideGlowWidth(width()) > style::ConvertScale(kHomeSideGlowMin)
+			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)
+			&& Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
+			_homeSideGlowFade.start([=] {
+				const auto side = HomeSideGlowWidth(width());
+				const auto top = _tabScroll->y();
+				update(QRect(0, top, side, height() - top));
+				update(QRect(width() - side, top, side, height() - top));
+			}, 0., 1., 250, anim::easeOutCubic);
+		}
+	}
+
+	void clearHomeSideGlow() {
+		_homeSideGlowFade.stop();
+		_homeSideGlow = Qt::transparent;
+	}
+
 	void loadHomeAccent(const QString &url, int generation) {
 		_homeAccent = QColor();
 		update();
@@ -9810,6 +9886,7 @@ protected:
 				return;
 			}
 			_homeAccent = ComputeAccent(image);
+			setHomeSideGlow(_homeAccent);
 			_queuePanel->update();
 			update();
 		}));
@@ -11211,6 +11288,11 @@ protected:
 			p.setOpacity(1.);
 		}
 		const auto layout = computeLayout();
+		if (_tab == Tab::Home && _homeAlbumOpen
+			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
+			PaintHomeSideGlow(p, QRect(0, layout.scrollTop, width(),
+				layout.contentBottom - layout.scrollTop), homeSideGlowColor(), IsLightMusicTheme());
+		}
 		if (_tab == Tab::Search && showCatalogFilterSkeleton()) {
 			auto color = st::windowSubTextFg->c;
 			color.setAlphaF(0.18);
@@ -11996,6 +12078,9 @@ private:
 	std::vector<Track> _homeSimilarTracks;
 	bool _homeSimilarLoading = false;
 	QColor _homeAccent;
+	QColor _homeSideGlow = Qt::transparent;
+	QColor _homeSideGlowFrom = Qt::transparent;
+	Ui::Animations::Simple _homeSideGlowFade;
 	Album _homeAlbum;
 	Track _homeArtistSeed;
 	ArtistInfo _homeArtistProfile;
