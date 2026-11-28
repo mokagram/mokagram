@@ -12922,6 +12922,12 @@ private:
 							rebuildTab();
 						}
 					}
+				}),
+				/*syncPlain=*/true,
+				crl::guard(this, [=](bool syncing) {
+					if (_lyricsFor == id && _lyricsProvider == provider) {
+						_view->setSyncing(syncing);
+					}
 				}));
 		}
 	}

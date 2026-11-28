@@ -620,6 +620,14 @@ void LyricsView::setLyrics(Lyrics lyrics) {
 	update();
 }
 
+void LyricsView::setSyncing(bool syncing) {
+	if (_syncing != syncing) {
+		_syncing = syncing;
+		layoutComments();
+		update();
+	}
+}
+
 void LyricsView::updateCover() {
 	if (!_big) {
 		_backdrop.refresh([=] { update(); }, isVisible());
@@ -786,6 +794,7 @@ QPointF LyricsView::lineOrigin(double top) const {
 
 void LyricsView::reset() {
 	_lyrics = {};
+	_syncing = false;
 	_timedLines.clear();
 	_current = -1;
 	_scroll = 0.;
@@ -1190,16 +1199,29 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 	} else {
 		p.fillRect(e->rect(), surface);
 	}
-	p.setClipRect(QRect(0, 0, width(), lyricsHeight()));
+	const auto contentHeight = lyricsHeight();
 	const auto ink = st::windowFg->c;
-	if (!_lyrics.found) {
-		auto status = ink;
-		status.setAlphaF(light ? .74 : .60);
-		p.setPen(status);
+	if (_syncing || !_lyrics.found) {
+		auto color = ink;
+		color.setAlphaF(light ? .74 : .60);
+		p.setPen(color);
 		p.setFont(st::normalFont);
-		p.drawText(QRect(0, 0, width(), lyricsHeight()), Qt::AlignCenter, _status);
-		return;
+		const auto top = _lyrics.found ? contentHeight : 0;
+		const auto inset = style::ConvertScale(PlayerStyle::kSpace8);
+		const auto status = QRect(inset, top, width() - 2 * inset, height() - top);
+		if (status.isValid()) {
+			const auto text = !_syncing
+				? _status
+				: QString::fromUtf8(Mokagram::Lang::Tr(_lyrics.found
+					? "Добавляю таймкоды…"
+					: "Распознаю текст песни…"));
+			p.drawText(status, Qt::AlignCenter, st::normalFont->elided(text, status.width()));
+		}
+		if (!_lyrics.found) {
+			return;
+		}
 	}
+	p.setClipRect(QRect(0, 0, width(), contentHeight));
 	const auto count = int(_lyrics.lines.size());
 	const auto offset = _lyrics.synced ? (anchorY() - _scroll) : (12. - _plainScroll);
 	const auto first = std::clamp(lineAtOffset(-20. - offset) - 1, 0, count);
@@ -1257,7 +1279,9 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 }
 
 int LyricsView::lyricsHeight() const {
-	return height();
+	return (_syncing && _lyrics.found)
+		? std::max(0, height() - style::ConvertScale(32))
+		: height();
 }
 
 void LyricsView::layoutComments() {
@@ -1274,7 +1298,8 @@ void LyricsView::layoutComments() {
 	const auto lineHeight = _current >= 0 ? heightOf(_current) : size;
 	const auto geometry = QRect(
 		std::max(0, width() - rowWidth - style::ConvertScale(8)),
-		std::clamp(int(top + lineHeight / 2.) - size / 2, 0, std::max(0, height() - size)),
+		std::clamp(int(top + lineHeight / 2.) - size / 2,
+			0, std::max(0, lyricsHeight() - size)),
 		rowWidth,
 		size);
 	if (_comments->geometry() != geometry) {
@@ -1550,6 +1575,12 @@ private:
 			crl::guard(this, [=](Lyrics lyrics) {
 				if (_lyricsFor == id && _lyricsProvider == provider) {
 					_view->setLyrics(std::move(lyrics));
+				}
+			}),
+			/*syncPlain=*/true,
+			crl::guard(this, [=](bool syncing) {
+				if (_lyricsFor == id && _lyricsProvider == provider) {
+					_view->setSyncing(syncing);
 				}
 			}));
 	}

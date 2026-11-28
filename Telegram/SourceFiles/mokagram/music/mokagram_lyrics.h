@@ -53,10 +53,12 @@ void FetchLyrics(
 
 // Вызывает done в главном потоке: статичный текст приходит сразу, а если
 // удалось расставить таймкоды, затем приходит синхронизированная версия.
+// syncing сообщает о начале и завершении обработки текущего трека.
 void FetchPlaybackLyrics(
 	const Track &track,
 	Fn<void(Lyrics)> done,
-	bool syncPlain = true);
+	bool syncPlain = true,
+	Fn<void(bool)> syncing = nullptr);
 
 // Обложка в высоком качестве из открытых каталогов (iTunes, затем Deezer),
 // только если совпали название, исполнитель и длительность. Пустая, если нет.

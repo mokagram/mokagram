@@ -20,6 +20,15 @@
 
 #include <crl/crl.h>
 
+#include <QtCore/QCryptographicHash>
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QSaveFile>
+#include <QtCore/QStandardPaths>
+
 #include <map>
 #include <tuple>
 
@@ -29,6 +38,8 @@ namespace {
 constexpr auto kSong = AudioMsgId::Type::Song;
 constexpr auto kMaxAudioBytes = int64(64 * 1024 * 1024);
 constexpr auto kPartTimeout = crl::time(30000);
+constexpr auto kMaxTranscriptBytes = 1024 * 1024;
+constexpr auto kMaxDiskTranscripts = 96;
 
 [[nodiscard]] const char *SongLanguages(const QString &title, const QString &artist) {
 	const auto clean = CleanTitle(title, artist);
@@ -114,6 +125,101 @@ struct Transcript {
 
 using TranscriptPtr = std::shared_ptr<Transcript>;
 
+[[nodiscard]] QString TranscriptKey(
+		uint64 accountId,
+		const QString &trackId,
+		int durationMs,
+		const char *languages) {
+	const auto key = QJsonDocument(QJsonArray{
+		QString::number(accountId),
+		trackId,
+		durationMs,
+		QString::fromLatin1(languages),
+	}).toJson(QJsonDocument::Compact);
+	return QString::fromLatin1(
+		QCryptographicHash::hash(key, QCryptographicHash::Sha256).toHex());
+}
+
+[[nodiscard]] QString TranscriptPath(const QString &key) {
+	const auto base = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+	return base.isEmpty()
+		? QString()
+		: base + u"/mokagram_music/asr_lyrics_v1/"_q + key + u".json"_q;
+}
+
+crl::queue &TranscriptDiskQueue() {
+	static const auto result = new crl::queue();
+	return *result;
+}
+
+[[nodiscard]] TranscriptPtr ReadTranscript(const QString &path) {
+	const auto info = QFileInfo(path);
+	auto file = QFile(path);
+	if (!info.isFile() || info.isSymLink()
+		|| !file.open(QIODevice::ReadOnly) || file.size() > kMaxTranscriptBytes) {
+		return {};
+	}
+	const auto bytes = file.read(kMaxTranscriptBytes + 1);
+	if (bytes.size() > kMaxTranscriptBytes) {
+		return {};
+	}
+	const auto rows = QJsonDocument::fromJson(bytes).array();
+	if (rows.isEmpty()) {
+		return {};
+	}
+	auto words = std::vector<Asr::TimedWord>();
+	words.reserve(rows.size());
+	auto previousEnd = qint64(0);
+	for (const auto &row : rows) {
+		const auto fields = row.toArray();
+		if (fields.size() != 4 || !fields.at(3).isBool()) {
+			return {};
+		}
+		const auto start = fields.at(0).toInteger(-1);
+		const auto end = fields.at(1).toInteger(-1);
+		auto text = fields.at(2).toString();
+		if (start < previousEnd || end <= start || end > Asr::kMaxRecordingDurationMs
+			|| text.trimmed().isEmpty()) {
+			return {};
+		}
+		words.push_back({ start, end, std::move(text), fields.at(3).toBool() });
+		previousEnd = end;
+	}
+	return std::make_shared<Transcript>(std::move(words));
+}
+
+void SaveTranscript(const QString &path, TranscriptPtr transcript) {
+	if (path.isEmpty()) {
+		return;
+	}
+	TranscriptDiskQueue().async([path, transcript = std::move(transcript)] {
+		auto rows = QJsonArray();
+		for (const auto &word : transcript->words) {
+			rows.push_back(QJsonArray{ word.startMs, word.endMs, word.text, word.join });
+		}
+		const auto bytes = QJsonDocument(rows).toJson(QJsonDocument::Compact);
+		if (bytes.size() > kMaxTranscriptBytes) {
+			return;
+		}
+		const auto directory = QFileInfo(path).absoluteDir();
+		if (!directory.mkpath(u"."_q)) {
+			return;
+		}
+		auto file = QSaveFile(path);
+		if (!file.open(QIODevice::WriteOnly)
+			|| !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+			|| file.write(bytes) != bytes.size()
+			|| !file.commit()) {
+			return;
+		}
+		const auto entries = directory.entryInfoList(
+			{ u"*.json"_q }, QDir::Files | QDir::NoSymLinks, QDir::Time);
+		for (auto i = kMaxDiskTranscripts; i < entries.size(); ++i) {
+			QFile::remove(entries[i].absoluteFilePath());
+		}
+	});
+}
+
 std::map<QString, TranscriptPtr> &TranscriptCache() {
 	static auto cache = std::map<QString, TranscriptPtr>();
 	return cache;
@@ -126,9 +232,7 @@ void SyncPlainLyrics(
 		Fn<void(Lyrics)> done) {
 	const auto entry = &transcript->aligned[std::move(key)];
 	if (entry->result) {
-		if (entry->result->synced) {
-			done(*entry->result);
-		}
+		done(*entry->result);
 		return;
 	}
 	const auto start = entry->waiting.empty();
@@ -142,10 +246,8 @@ void SyncPlainLyrics(
 				(void)transcript; // Keeps the map entry alive.
 				entry->result = aligned.synced ? std::move(aligned) : Lyrics();
 				const auto waiting = std::exchange(entry->waiting, {});
-				if (entry->result->synced) {
-					for (const auto &done : waiting) {
-						done(*entry->result);
-					}
+				for (const auto &done : waiting) {
+					done(*entry->result);
 				}
 			});
 		});
@@ -163,6 +265,7 @@ public:
 		const char *languages,
 		Fn<void(TranscriptPtr)> done)
 	: _key(std::move(key))
+	, _path(TranscriptPath(_key))
 	, _audio(audio)
 	, _languages(languages)
 	, _timeout([this] { finish({}); }) {
@@ -187,6 +290,28 @@ public:
 				finish({});
 			}
 		}, _lifetime);
+
+		if (_path.isEmpty()) {
+			startAudio();
+			return;
+		}
+		const auto loaded = crl::guard(this, [this](TranscriptPtr transcript) {
+			if (transcript) {
+				finish(std::move(transcript));
+			} else {
+				startAudio();
+			}
+		});
+		TranscriptDiskQueue().async([path = _path, loaded] {
+			crl::on_main([loaded, transcript = ReadTranscript(path)]() mutable {
+				loaded(std::move(transcript));
+			});
+		});
+	}
+
+private:
+	void startAudio() {
+		const auto document = _audio.audio();
 
 		if (const auto media = document->activeMediaView()) {
 			auto bytes = media->bytes();
@@ -229,6 +354,7 @@ public:
 		loadNext();
 	}
 
+public:
 	void finish(TranscriptPtr result) {
 		if (result) {
 			auto &cache = TranscriptCache();
@@ -260,13 +386,18 @@ private:
 		Asr::Engine::Instance().transcribeSong(
 			std::move(bytes), std::move(location), _languages, _guard.make_guard(),
 			[this](std::vector<Asr::TimedWord> words) {
-				finish(words.empty()
-					? nullptr
-					: std::make_shared<Transcript>(std::move(words)));
+				if (words.empty()) {
+					finish({});
+					return;
+				}
+				auto transcript = std::make_shared<Transcript>(std::move(words));
+				SaveTranscript(_path, transcript);
+				finish(std::move(transcript));
 			});
 	}
 
 	const QString _key;
+	const QString _path;
 	const AudioMsgId _audio;
 	const char *const _languages;
 	std::vector<Fn<void(TranscriptPtr)>> _waiting;
@@ -284,7 +415,11 @@ std::unique_ptr<Recognition> &Active() {
 
 } // namespace
 
-void FetchPlaybackLyrics(const Track &track, Fn<void(Lyrics)> done, bool syncPlain) {
+void FetchPlaybackLyrics(
+		const Track &track,
+		Fn<void(Lyrics)> done,
+		bool syncPlain,
+		Fn<void(bool)> syncing) {
 	const auto audio = Media::Player::instance()->current(kSong);
 	const auto provider = Settings::Int(u"lyrics.provider"_q);
 	const auto session = audio.audio()
@@ -297,14 +432,16 @@ void FetchPlaybackLyrics(const Track &track, Fn<void(Lyrics)> done, bool syncPla
 			&& SameAudio(audio, Media::Player::instance()->current(kSong));
 	};
 	FetchLyrics(track.id, track.title, track.artist, track.durationMs,
-		[key = track.id, duration = track.durationMs, audio, current, syncPlain,
+		[id = track.id, duration = track.durationMs, audio, current, syncPlain,
 		 languages = SongLanguages(track.title, track.artist),
-		 done = std::move(done)](Lyrics source) {
+		 done = std::move(done), syncing = std::move(syncing)](Lyrics source) {
 			if (source.synced || (source.found && !syncPlain)
 				|| duration > Asr::kMaxRecordingDurationMs || !current()) {
 				done(std::move(source));
 				return;
 			}
+			const auto key = TranscriptKey(
+				audio.audio()->session().uniqueId(), id, duration, languages);
 			const auto &cache = TranscriptCache();
 			const auto i = cache.find(key);
 			const auto cached = (i != cache.end()) ? i->second : nullptr;
@@ -324,28 +461,45 @@ void FetchPlaybackLyrics(const Track &track, Fn<void(Lyrics)> done, bool syncPla
 					return;
 				}
 			}
-			auto useTranscript = [done, current, alignmentKey = std::move(alignmentKey),
-					source = std::move(source)](
+			if (syncing) {
+				syncing(true);
+			}
+			auto complete = [done, current, syncing](std::optional<Lyrics> lyrics) {
+				if (!current()) {
+					return;
+				}
+				if (lyrics) {
+					done(std::move(*lyrics));
+				}
+				if (syncing) {
+					syncing(false);
+				}
+			};
+			auto useTranscript = [current, complete = std::move(complete),
+					alignmentKey = std::move(alignmentKey), source = std::move(source)](
 					TranscriptPtr transcript) mutable {
 				if (!current()) {
 					return;
 				}
 				if (source.found) {
 					if (transcript) {
-						SyncPlainLyrics(std::move(transcript), std::move(alignmentKey), std::move(source),
-							[done, current](Lyrics aligned) {
-								if (current()) {
-									done(std::move(aligned));
-								}
+						SyncPlainLyrics(
+							std::move(transcript), std::move(alignmentKey), std::move(source),
+							[complete](Lyrics aligned) {
+								complete(aligned.synced
+									? std::optional(std::move(aligned))
+									: std::nullopt);
 							});
+					} else {
+						complete(std::nullopt);
 					}
 				} else if (transcript) {
 					if (!transcript->generated.found) {
 						transcript->generated = LyricsFromWords(transcript->words);
 					}
-					done(transcript->generated);
+					complete(transcript->generated);
 				} else {
-					done(std::move(source));
+					complete(std::move(source));
 				}
 			};
 			if (cached) {

@@ -54,6 +54,7 @@ public:
 	void setCoverTint(bool on);
 	void setLoading(const QString &trackId);
 	void setLyrics(Lyrics lyrics);
+	void setSyncing(bool syncing);
 	void updateCover();
 	void setCommentsTrack(const QString &id);
 	void followPlayback();
@@ -149,6 +150,7 @@ private:
 	qint64 _manualUntil = 0;
 	int _current = -1;
 	bool _scrollReady = false;
+	bool _syncing = false;
 	bool _coverTint = true;
 	bool _playing = false;
 	bool _big = false;
