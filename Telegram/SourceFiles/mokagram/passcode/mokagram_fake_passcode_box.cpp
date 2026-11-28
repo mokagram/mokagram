@@ -58,28 +58,9 @@ void Notify() {
 	Changes().fire({});
 }
 
-[[nodiscard]] const style::owned_color &Clear() {
-	static const auto result = style::owned_color(QColor(0, 0, 0, 0));
-	return result;
-}
-
 void SetupRounded(not_null<Ui::GenericBox*> box) {
-	static const auto noButtons = [] {
-		auto result = st::defaultBox;
-		result.buttonPadding = style::margins();
-		result.buttonHeight = 0;
-		result.bg = Clear().color();
-		return result;
-	}();
-	box->setStyle(noButtons);
-	box->paintOn([=](QPainter &p) {
-		auto hq = PainterHighQualityEnabler(p);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::boxBg);
-		p.drawRoundedRect(box->rect(), S(kBoxRadius), S(kBoxRadius));
-	});
+	StyleCustomBox(box, S(kBoxRadius));
 	box->setWidth(S(kBoxWidth));
-	box->setNoContentMargin(true);
 }
 
 void AddHeader(
@@ -526,10 +507,11 @@ void FillList(
 		row->paintRequest() | rpl::on_next([=] {
 			auto p = QPainter(row);
 			auto path = QPainterPath();
+			const auto radius = CardRadius();
 			path.addRoundedRect(
 				QRectF(-row->x(), -row->y(), list->width(), list->height()),
-				S(kCardRadius),
-				S(kCardRadius));
+				radius,
+				radius);
 			p.save();
 			p.setClipPath(path);
 			row->paintRipple(p, 0, 0);

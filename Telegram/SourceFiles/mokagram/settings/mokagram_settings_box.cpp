@@ -5,6 +5,7 @@
 // Mokagram: окно «Кастомизация», строится из реестра настроек.
 // Вид как у настроек iOS: разделы всегда раскрыты, над группой строк серая
 // заглавная надпись, под группой сноска. Сверху чипы быстрого перехода.
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/pet/mokagram_pet.h"
 #include "mokagram/plugins/mokagram_plugin_store.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
@@ -433,23 +434,8 @@ struct Category {
 
 // Прозрачный фон окна и скруглённая подложка, как в окне «Плагины».
 void RoundedNoButtons(not_null<Ui::GenericBox*> box) {
-	static const auto clear = style::owned_color(QColor(0, 0, 0, 0));
-	static const auto noButtons = [] {
-		auto result = st::defaultBox;
-		result.buttonPadding = style::margins();
-		result.buttonHeight = 0;
-		result.bg = clear.color();
-		return result;
-	}();
-	box->setStyle(noButtons);
-	box->paintOn([=](QPainter &p) {
-		auto hq = PainterHighQualityEnabler(p);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::boxBg);
-		p.drawRoundedRect(box->rect(), 28, 28);
-	});
+	BoxParts::StyleCustomBox(box);
 	box->setWidth(kBoxWidth);
-	box->setNoContentMargin(true);
 }
 
 // Стили подписей без минимальной ширины: иначе текст обрезается.
@@ -486,32 +472,10 @@ void RoundedNoButtons(not_null<Ui::GenericBox*> box) {
 		not_null<QWidget*> parent,
 		bool back,
 		Fn<void()> callback) {
-	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
-	button->resize(36, 36);
-	button->setPointerCursor(true);
-	button->paintRequest(
-	) | rpl::on_next([=] {
-		auto p = QPainter(button);
-		auto hq = PainterHighQualityEnabler(p);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBg);
-		p.drawEllipse(button->rect());
-		p.scale(0.75, 0.75);
-		auto pen = QPen(st::windowFg->c, 2.2);
-		pen.setCapStyle(Qt::RoundCap);
-		pen.setJoinStyle(Qt::RoundJoin);
-		p.setPen(pen);
-		p.setBrush(Qt::NoBrush);
-		if (back) {
-			p.drawLine(QPointF(17, 17), QPointF(31, 31));
-			p.drawLine(QPointF(31, 17), QPointF(17, 31));
-		} else {
-			p.drawEllipse(QPointF(22.5, 22.5), 7.5, 7.5);
-			p.drawLine(QPointF(28, 28), QPointF(34, 34));
-		}
-	}, button->lifetime());
-	button->setClickedCallback(std::move(callback));
-	return button;
+	return BoxParts::MakeRoundButton(
+		parent,
+		back ? BoxParts::RoundIcon::Close : BoxParts::RoundIcon::Search,
+		std::move(callback));
 }
 
 // Кнопка сброса с плавным появлением: значок или текстовая ссылка.
@@ -1173,6 +1137,7 @@ void ShowColorBox(const QString &title, const QString &key) {
 		: MakeExample(row, entry.example).get();
 	const auto reset = MakeResetButton(row, QString(), [=] {
 		Reset(key);
+		afterChange();
 	});
 
 	Ui::AbstractButton *toggle = nullptr;
@@ -1213,6 +1178,9 @@ void ShowColorBox(const QString &title, const QString &key) {
 					: CompactChoiceMenuStyle());
 			for (auto i = 0; i != int(entry.choices.size()); ++i) {
 				const auto choose = [=] {
+					if (Int(key) == i) {
+						return;
+					}
 					SetInt(key, i);
 					afterChange();
 				};
@@ -1446,10 +1414,11 @@ void ShowColorBox(const QString &title, const QString &key) {
 			// Волна не выходит за скруглённые углы группы.
 			const auto origin = row->mapTo(card, QPoint());
 			auto path = QPainterPath();
+			const auto radius = BoxParts::SurfaceRadius(kGroupRadius);
 			path.addRoundedRect(
 				QRectF(-origin.x(), -origin.y(), card->width(), card->height()),
-				kGroupRadius,
-				kGroupRadius);
+				radius,
+				radius);
 			p.save();
 			p.setClipPath(path);
 			row->paintRipple(p, 0, 0);
@@ -1555,10 +1524,11 @@ void AddActionRow(
 		auto p = QPainter(row);
 		const auto origin = row->mapTo(card, QPoint());
 		auto path = QPainterPath();
+		const auto radius = BoxParts::SurfaceRadius(kGroupRadius);
 		path.addRoundedRect(
 			QRectF(-origin.x(), -origin.y(), card->width(), card->height()),
-			kGroupRadius,
-			kGroupRadius);
+			radius,
+			radius);
 		p.save();
 		p.setClipPath(path);
 		row->paintRipple(p, 0, 0);
@@ -1590,7 +1560,8 @@ void PaintGroupBg(not_null<Ui::RpWidget*> card) {
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
-		p.drawRoundedRect(card->rect(), kGroupRadius, kGroupRadius);
+		const auto radius = BoxParts::SurfaceRadius(kGroupRadius);
+		p.drawRoundedRect(card->rect(), radius, radius);
 	});
 }
 
@@ -1770,7 +1741,8 @@ void CustomizeBox(
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
-		p.drawRoundedRect(pill->rect(), 18, 18);
+		const auto radius = BoxParts::SurfaceRadius(18);
+		p.drawRoundedRect(pill->rect(), radius, radius);
 	});
 	const auto field = Ui::CreateChild<Ui::InputField>(
 		header,
@@ -1876,10 +1848,15 @@ void CustomizeBox(
 			head,
 			U(Mokagram::Lang::Tr("Сбросить")),
 			[=] {
+				auto restart = false;
 				for (const auto &entry : Entries()) {
-					if (SectionOf(entry) == name) {
+					if (SectionOf(entry) == name && IsChanged(entry.key)) {
+						restart = restart || entry.requiresRestart;
 						Reset(entry.key);
 					}
+				}
+				if (restart) {
+					AskForRestart();
 				}
 			});
 		head->widthValue() | rpl::on_next([=](int width) {
@@ -2146,10 +2123,10 @@ void CustomizeBox(
 			const auto t = chip->animation.value(chip->active ? 1. : 0.);
 			p.setPen(Qt::NoPen);
 			p.setBrush(anim::color(st::windowBg->c, st::windowBgActive->c, t));
-			p.drawRoundedRect(
-				button->rect(),
-				kChipHeight / 2.,
-				kChipHeight / 2.);
+			const auto radius = Appearance::UseMaterial3()
+				? kChipHeight / 2.
+				: 0.;
+			p.drawRoundedRect(button->rect(), radius, radius);
 			p.setFont(st::normalFont);
 			p.setPen(anim::color(st::windowFg->c, st::windowFgActive->c, t));
 			p.drawText(button->rect(), Qt::AlignCenter, text);

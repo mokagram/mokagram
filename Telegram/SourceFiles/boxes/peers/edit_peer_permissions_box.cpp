@@ -38,6 +38,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "window/window_controller.h"
 #include "main/main_session.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mtproto/mtproto_config.h" // megagroupSizeMax
 #include "apiwrap.h"
 #include "settings/settings_common.h"
@@ -450,11 +451,11 @@ not_null<Ui::RpWidget*> AddInnerToggle(
 	const auto checkView = &state->checkView;
 	{
 		const auto separator = Ui::CreateChild<Ui::RpWidget>(container.get());
-		separator->paintRequest(
-		) | rpl::on_next([=, bg = st.textBgOver] {
-			auto p = QPainter(separator);
-			Q_UNUSED(bg); Q_UNUSED(p);
-		}, separator->lifetime());
+		if (!Mokagram::Appearance::UseMaterial3()) {
+			separator->paintOn([=, bg = st.textBgOver](QPainter &p) {
+				p.fillRect(separator->rect(), bg);
+			});
+		}
 		const auto separatorHeight = 2 * st.toggle.border
 			+ st.toggle.diameter;
 		button->geometryValue(

@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_options.h"
 #include "ui/toast/toast.h"
 #include "ui/widgets/box_content_divider.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/dropdown_menu.h"
@@ -997,12 +998,14 @@ void Rows::paintEvent(QPaintEvent *e) {
 
 		const auto selected = (selectedIndex == i);
 		if (selected && !row.removed) {
-			{
-			auto hq = PainterHighQualityEnabler(p);
-			p.setPen(Qt::NoPen);
-			p.setBrush(st::windowBgOver);
-			p.drawRoundedRect(QRectF(0, 0, width(), row.height).marginsRemoved({ 6., 1., 6., 1. }), 16, 16);
-		}
+			if (Mokagram::Appearance::UseMaterial3()) {
+				auto hq = PainterHighQualityEnabler(p);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::windowBgOver);
+				p.drawRoundedRect(QRectF(6., 1., width() - 12., row.height - 2.), 16, 16);
+			} else {
+				p.fillRect(0, 0, width(), row.height, st::windowBgOver);
+			}
 		}
 
 		if (row.ripple) {

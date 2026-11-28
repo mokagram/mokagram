@@ -8,6 +8,7 @@
 namespace Ui {
 class AbstractButton;
 class BoxContent;
+class GenericBox;
 class RpWidget;
 } // namespace Ui
 
@@ -28,6 +29,7 @@ enum class RoundIcon {
 	Close,
 	Back,
 	Menu,
+	Search,
 };
 
 [[nodiscard]] not_null<Ui::AbstractButton*> MakeRoundButton(
@@ -42,7 +44,12 @@ enum class RoundIcon {
 	rpl::producer<bool> active = rpl::single(true));
 void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg);
 
+void StyleCustomBox(
+	not_null<Ui::GenericBox*> box,
+	int materialRadius = kBoxRadius);
 void RoundLayer(not_null<Ui::BoxContent*> box);
+[[nodiscard]] int SurfaceRadius(int materialRadius);
+[[nodiscard]] int CardRadius();
 void PaintCard(QPainter &p, QRect rect);
 
 [[nodiscard]] const style::Box &PillButtonsBox();

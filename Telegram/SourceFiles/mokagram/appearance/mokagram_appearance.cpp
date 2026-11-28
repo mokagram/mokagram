@@ -9,6 +9,7 @@
 #include "mokagram/settings/mokagram_settings.h"
 #include "mokagram/music/mokagram_motion.h"
 #include "mokagram/music/mokagram_music_presence.h"
+#include "ui/mokagram_style.h"
 #include "ui/style/style_core.h"
 #include "ui/style/style_core_palette.h"
 #include "styles/palette.h"
@@ -27,6 +28,7 @@ constexpr auto kOutColor = "bubbles.out_color";
 constexpr auto kInColor = "bubbles.in_color";
 constexpr auto kOutText = "bubbles.out_text";
 constexpr auto kInText = "bubbles.in_text";
+const auto kInterfaceStyle = u"look.interface_style"_q;
 
 rpl::lifetime Lifetime;
 bool Applying = false;
@@ -128,7 +130,25 @@ int SelectionLimit() {
 	return S::Bool(u"chats.select_3000"_q) ? 3000 : 100;
 }
 
+bool UseMaterial3() {
+	return Ui::MokagramStyle::UseMaterial3();
+}
+
 void RegisterSettings() {
+	S::Register({
+		.key = kInterfaceStyle,
+		.section = QString::fromUtf8(Lang::Tr("Оформление")),
+		.title = QString::fromUtf8(Lang::Tr("Стиль интерфейса")),
+		.description = QString::fromUtf8(Lang::Tr("Применяется после перезапуска.")),
+		.kind = S::Kind::Choice,
+		.defaultValue = 0,
+		.choices = { u"Material 3"_q, u"Telegram Desktop"_q },
+		.requiresRestart = true,
+		.category = u"look"_q,
+		.sectionIcon = u"hide"_q,
+	});
+	Ui::MokagramStyle::SetMaterial3(S::Int(kInterfaceStyle) == 0);
+
 	const auto section = QString::fromUtf8(Mokagram::Lang::Tr("Пузыри сообщений"));
 	const auto add = [&](S::Entry entry) {
 		entry.section = section;

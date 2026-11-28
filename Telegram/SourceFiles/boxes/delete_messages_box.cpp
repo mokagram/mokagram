@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "menu/menu_ttl_validator.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/ui/mokagram_box_parts.h"
 #include "mokagram/effects/mokagram_black_hole.h"
 #include "ui/boxes/confirm_box.h"
@@ -87,8 +88,11 @@ crl::time DeleteMessagesBox::layerAnimationDuration() const {
 }
 
 void DeleteMessagesBox::prepare() {
-	Mokagram::BoxParts::RoundLayer(this);
-	setStyle(Mokagram::BoxParts::PillButtonsBox());
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	if (material) {
+		Mokagram::BoxParts::RoundLayer(this);
+		setStyle(Mokagram::BoxParts::PillButtonsBox());
+	}
 
 	auto details = TextWithEntities();
 	const auto appendDetails = [&](TextWithEntities &&text) {
@@ -266,20 +270,24 @@ void DeleteMessagesBox::prepare() {
 	}
 
 	if (canDelete) {
-		// Mokagram: удаление всегда выглядит как опасное действие.
+		const auto &deleteStyle = material
+			? Mokagram::BoxParts::PillAttention()
+			: _wipeHistoryPeer
+			? st::attentionBoxButton
+			: st::defaultBoxButton;
 		addButton(
 			deleteText->value(),
 			[=] { deleteAndClear(); },
-			Mokagram::BoxParts::PillAttention());
+			deleteStyle);
 		addButton(
 			tr::lng_cancel(),
 			[=] { closeBox(); },
-			Mokagram::BoxParts::PillLight());
+			material ? Mokagram::BoxParts::PillLight() : st::defaultBoxButton);
 	} else {
 		addButton(
 			tr::lng_about_done(),
 			[=] { closeBox(); },
-			Mokagram::BoxParts::PillActive());
+			material ? Mokagram::BoxParts::PillActive() : st::defaultBoxButton);
 	}
 
 	const auto &padding = st::boxPadding;
@@ -295,7 +303,7 @@ void DeleteMessagesBox::prepare() {
 		if (_revoke) {
 			fullHeight += st::boxMediumSkip
 				+ _revoke->heightNoMargins()
-				+ kMokaCardPad;
+				+ (material ? kMokaCardPad : 0);
 		}
 		if (_autoDeleteSettings) {
 			fullHeight += st::boxMediumSkip
@@ -454,7 +462,9 @@ void DeleteMessagesBox::resizeEvent(QResizeEvent *e) {
 	auto top = _text->bottomNoMargins() + st::boxMediumSkip;
 	if (_revoke) {
 		using Mokagram::BoxParts::kOuterSide;
-		const auto left = kOuterSide + kMokaCardPad;
+		const auto left = Mokagram::Appearance::UseMaterial3()
+			? kOuterSide + kMokaCardPad
+			: padding.left();
 		const auto availableWidth = width() - 2 * left;
 		_revoke->resizeToNaturalWidth(availableWidth);
 		_revoke->moveToLeft(left, top);
@@ -466,7 +476,8 @@ void DeleteMessagesBox::resizeEvent(QResizeEvent *e) {
 		}
 	}
 	if (_autoDeleteSettings) {
-		top += st::boxMediumSkip - st::boxLittleSkip + kMokaCardPad;
+		top += st::boxMediumSkip - st::boxLittleSkip
+			+ (Mokagram::Appearance::UseMaterial3() ? kMokaCardPad : 0);
 		_autoDeleteSettings->moveToLeft(padding.left(), top);
 	}
 }
@@ -474,7 +485,7 @@ void DeleteMessagesBox::resizeEvent(QResizeEvent *e) {
 void DeleteMessagesBox::paintEvent(QPaintEvent *e) {
 	BoxContent::paintEvent(e);
 
-	if (!_revoke) {
+	if (!_revoke || !Mokagram::Appearance::UseMaterial3()) {
 		return;
 	}
 	using Mokagram::BoxParts::kOuterSide;

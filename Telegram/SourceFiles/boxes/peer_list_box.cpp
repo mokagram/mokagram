@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/session/session_show.h"
 #include "main/main_session.h"
 #include "mainwidget.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "ui/effects/loading_element.h"
 #include "ui/effects/outline_segments.h"
 #include "ui/effects/round_checkbox.h"
@@ -2000,7 +2001,7 @@ void PeerListContent::mousePressEvent(QMouseEvent *e) {
 			} else {
 				const auto maskGenerator = [&] {
 					const auto size = QSize(width(), _rowHeight);
-					if (_roundedRows) {
+					if (_roundedRows && Mokagram::Appearance::UseMaterial3()) {
 						const auto pill = roundedRowRect(size.width());
 						const auto radius = pill.height() / 2.;
 						return Ui::RippleAnimation::MaskByDrawer(
@@ -2224,7 +2225,8 @@ void PeerListContent::paintRowContent(
 		}
 	});
 
-	if (_roundedRows) {
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	if (material && _roundedRows) {
 		p.fillRect(0, 0, outerWidth, _rowHeight, st.button.textBg);
 		if (selected) {
 			const auto pill = roundedRowRect(outerWidth);
@@ -2234,7 +2236,7 @@ void PeerListContent::paintRowContent(
 			p.setBrush(bg);
 			p.drawRoundedRect(pill, radius, radius);
 		}
-	} else if (selected) {
+	} else if (material && selected) {
 		p.fillRect(0, 0, outerWidth, _rowHeight, st.button.textBg);
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);

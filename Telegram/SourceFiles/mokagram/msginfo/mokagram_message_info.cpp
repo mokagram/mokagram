@@ -4,6 +4,7 @@
 // mokagram-id: 297a43d6
 // Mokagram: окно «Информация о сообщении» (ID, даты, пересылка, вложение, кодировщик голосового).
 #include "mokagram/msginfo/mokagram_message_info.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/msginfo/mokagram_media_fingerprint.h"
 #include "mokagram/misc/mokagram_datereg.h"
@@ -22,6 +23,7 @@
 #include "history/history_item_components.h"
 #include "ui/layers/generic_box.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/vertical_list.h"
@@ -281,7 +283,8 @@ void Show(
 			auto hq = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::windowBg);
-			p.drawRoundedRect(card->rect(), 22, 22);
+			const auto radius = BoxParts::SurfaceRadius(22);
+			p.drawRoundedRect(card->rect(), radius, radius);
 		});
 
 		static const auto stCopy = [] {
@@ -295,11 +298,14 @@ void Show(
 		const auto row = content->add(
 			object_ptr<Ui::RpWidget>(content),
 			QMargins(14, 12, 14, 14));
-		row->resize(row->width(), stCopy.height);
+		const auto &buttonStyle = Appearance::UseMaterial3()
+			? stCopy
+			: st::defaultActiveButton;
+		row->resize(row->width(), buttonStyle.height);
 		const auto copy = Ui::CreateChild<Ui::RoundButton>(
 			row,
 			rpl::single(U(Mokagram::Lang::Tr("Копировать"))),
-			stCopy);
+			buttonStyle);
 		row->widthValue() | rpl::on_next([=](int width) {
 			copy->setFullWidth(width);
 			copy->moveToLeft(0, 0);

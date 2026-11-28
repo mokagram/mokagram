@@ -41,6 +41,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "mainwidget.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "payments/payments_checkout_process.h"
 #include "payments/payments_form.h"
 #include "settings/settings_credits_graphics.h"
@@ -1508,7 +1509,7 @@ void AddStarGiftTable(
 			st.table ? *st.table : st::giveawayGiftCodeTable),
 		st::giveawayGiftCodeTableMargin);
 	// Mokagram: таблица лежит на скруглённой карточке, как в окне плагинов.
-	{
+	if (Mokagram::Appearance::UseMaterial3()) {
 		const auto back = Ui::CreateChild<Ui::RpWidget>(container.get());
 		back->setAttribute(Qt::WA_TransparentForMouseEvents);
 		back->lower();

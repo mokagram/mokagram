@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_wrap_widget.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "base/call_delayed.h"
 
@@ -65,7 +66,9 @@ namespace {
 
 const style::InfoTopBar &TopBarStyle(Wrap wrap) {
 	return (wrap == Wrap::Layer)
-		? st::infoLayerTopBar
+		? (Mokagram::Appearance::UseMaterial3()
+			? st::infoLayerTopBar
+			: st::infoLayerTopBarClassic)
 		: st::infoTopBar;
 }
 
@@ -510,7 +513,8 @@ void WrapWidget::createTopBar() {
 	_topBar->show();
 
 	// Mokagram: список уходит под шапку мягко, но на старте ничего не закрыто.
-	if (wrap() == Wrap::Layer
+	if (Mokagram::Appearance::UseMaterial3()
+		&& wrap() == Wrap::Layer
 		&& _content
 		&& !HasCustomTopBar(_controller.get())
 		&& !findChild<QWidget*>(u"moka-fade"_q)) {
@@ -976,7 +980,7 @@ void WrapWidget::doSetInnerFocus() {
 }
 
 void WrapWidget::showFinishedHook() {
-	if (wrap() == Wrap::Layer) {
+	if (Mokagram::Appearance::UseMaterial3() && wrap() == Wrap::Layer) {
 		clearMask();
 		// Mokagram: после показа окна перерисовываем углы, иначе в них может
 		// остаться кусок старого содержимого (светлый «уголок»).
@@ -1147,16 +1151,20 @@ void WrapWidget::showNewContent(
 			animationParams);
 		const auto layer = (wrap() == Wrap::Layer);
 		animationParams.withFade = layer;
-		animationParams.topSkip = layer ? 32 : 0;
+		const auto material = Mokagram::Appearance::UseMaterial3();
+		const auto radius = material ? 32 : st::boxRadius;
+		animationParams.topSkip = layer ? radius : 0;
 
-		if (layer) {
+		if (layer && (material
+			|| HasCustomTopBar(_controller.get())
+			|| HasCustomTopBar(newController.get()))) {
 			const auto s = QSize(
 				newContent->width(),
 				animationParams.topSkip);
 			auto image = Ui::RippleAnimation::MaskByDrawer(s, false, [&](
 					QPainter &p) {
 				const auto r = QRect(0, 0, s.width(), s.height() * 2);
-				p.drawRoundedRect(r, 32, 32);
+				p.drawRoundedRect(r, radius, radius);
 			});
 			animationParams.topMask = Ui::PixmapFromImage(std::move(image));
 		}

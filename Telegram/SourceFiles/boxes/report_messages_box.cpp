@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "history/history_item.h"
 #include "main/main_session.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/ui/mokagram_report_box.h"
 #include "lang/lang_keys.h"
 #include "ui/boxes/report_box_graphics.h"
@@ -111,7 +112,7 @@ void ShowReportFlowBox(
 				return;
 			}
 			if (!result.options.empty() || result.commentOption) {
-				if (!stOverride) {
+				if (!stOverride && Mokagram::Appearance::UseMaterial3()) {
 					show->show(Box(
 						Mokagram::Report::FlowBox,
 						result,

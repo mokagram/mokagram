@@ -430,10 +430,9 @@ void Application::run() {
 			crl::now() - started));
 	});
 
-	// Mokagram: use packaged Adwaita Sans for every UI context. Its variable
-	// face covers Latin and Cyrillic and supplies UI weights through Qt.
+	// Mokagram: Material 3 uses the packaged Adwaita Sans for UI text.
 	style::SetCustomFont(
-		LoadMokagramUiFont()
+		Mokagram::Appearance::UseMaterial3() && LoadMokagramUiFont()
 			? u"Adwaita Sans"_q
 			: settings().customFontFamily());
 	style::internal::StartFonts();

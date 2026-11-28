@@ -4,6 +4,7 @@
 // mokagram-id: fec14fab
 // Mokagram: магазин плагинов (подписанный каталог в репозитории mokagram-plugins).
 #include "mokagram/plugins/mokagram_plugin_store.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/plugins/mokagram_plugin_sources.h"
 #include "mokagram/lang/mokagram_lang.h"
 
@@ -464,13 +465,16 @@ void StoreBox(
 		result.radius = S(22);
 		return result;
 	}();
+	const auto &sourcesButtonStyle = Appearance::UseMaterial3()
+		? sourcesStyle
+		: st::defaultBoxButton;
 	const auto sourcesRow = content->add(
-		object_ptr<Ui::FixedHeightWidget>(content, sourcesStyle.height),
+		object_ptr<Ui::FixedHeightWidget>(content, sourcesButtonStyle.height),
 		QMargins(S(14), S(12), S(14), 0));
 	const auto sources = Ui::CreateChild<Ui::RoundButton>(
 		sourcesRow,
 		rpl::single(U(Mokagram::Lang::Tr("Источники плагинов"))),
-		sourcesStyle);
+		sourcesButtonStyle);
 	sources->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 	sourcesRow->widthValue() | rpl::on_next([=](int width) {
 		sources->setFullWidth(width);
@@ -655,7 +659,9 @@ void StoreBox(
 			const auto button = Ui::CreateChild<Ui::RoundButton>(actions,
 				rpl::single(U(Mokagram::Lang::Tr(installed.isEmpty()
 					? "Установить" : (current ? "Установлен" : "Обновить")))),
-				current ? storeAction : installStyle);
+				Appearance::UseMaterial3()
+					? (current ? storeAction : installStyle)
+					: (current ? st::defaultBoxButton : st::defaultActiveButton));
 			button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 			button->setDisabled(current);
 			const auto installs = Ui::CreateChild<Ui::FlatLabel>(actions,

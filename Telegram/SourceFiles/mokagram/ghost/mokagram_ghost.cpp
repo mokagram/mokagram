@@ -3,10 +3,12 @@
 // of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
 // mokagram-id: 26415de3
 #include "mokagram/ghost/mokagram_ghost.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/perf/mokagram_perf.h"
 
 #include "mokagram/settings/mokagram_settings.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 
 #include "api/api_updates.h"
 #include "core/application.h"
@@ -78,7 +80,8 @@ struct Flags {
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
-		p.drawRoundedRect(card->rect(), 22, 22);
+		const auto radius = BoxParts::SurfaceRadius(22);
+		p.drawRoundedRect(card->rect(), radius, radius);
 	}, card->lifetime());
 	return card;
 }
@@ -94,16 +97,29 @@ void AddScheduleToggle(
 		style::al_justify);
 	row->resize(row->width(), 52);
 	row->setPointerCursor(true);
-	const auto anim = row->lifetime().make_state<Ui::Animations::Simple>();
+	const auto animation = Appearance::UseMaterial3()
+		? row->lifetime().make_state<Ui::Animations::Simple>()
+		: nullptr;
+	if (!animation) {
+		const auto toggle = BoxParts::MakeSwitch(row, Settings::BoolValue(key));
+		row->widthValue() | rpl::on_next([=](int width) {
+			toggle->moveToRight(
+				style::ConvertScale(18),
+				(row->height() - toggle->height()) / 2,
+				width);
+		}, row->lifetime());
+	}
 	row->setClickedCallback([=] {
 		const auto now = !Settings::Bool(key);
 		Settings::SetBool(key, now);
-		anim->start(
-			[=] { row->update(); },
-			now ? 0. : 1.,
-			now ? 1. : 0.,
-			180,
-			anim::easeOutCubic);
+		if (animation) {
+			animation->start(
+				[=] { row->update(); },
+				now ? 0. : 1.,
+				now ? 1. : 0.,
+				180,
+				anim::easeOutCubic);
+		}
 	});
 	row->paintRequest(
 	) | rpl::on_next([=] {
@@ -115,7 +131,10 @@ void AddScheduleToggle(
 			QRect(18, 0, row->width() - 90, row->height()),
 			Qt::AlignVCenter | Qt::AlignLeft,
 			title);
-		const auto t = anim->value(Settings::Bool(key) ? 1. : 0.);
+		if (!animation) {
+			return;
+		}
+		const auto t = animation->value(Settings::Bool(key) ? 1. : 0.);
 		const auto pill = QRectF(row->width() - 18 - 46, (row->height() - 28) / 2., 46, 28);
 		p.setPen(Qt::NoPen);
 		p.setBrush(anim::color(QColor(0x3A, 0x3A, 0x3C), QColor(0x0A, 0x84, 0xFF), t));

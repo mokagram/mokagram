@@ -72,6 +72,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwindow.h"
 #include "media/stories/media_stories_post.h"
 #include "menu/menu_mute.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/misc/mokagram_misc.h"
 #include <QtCore/QCache>
@@ -2377,12 +2378,13 @@ auto TopBar::effectiveCollectible() const
 }
 
 bool TopBar::clipTouchesRoundedCorners(const QRect &clip) const {
-	if (!_roundEdges || _wrap.current() == Wrap::Side) {
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	if (!_roundEdges || (material && _wrap.current() == Wrap::Side)) {
 		return false;
 	}
 	// Mokagram: радиус шапки 32, иначе при частичной перерисовке (наведение,
 	// ripple) участок углов рисуется квадратным и торчит «уголком».
-	constexpr auto radius = 32;
+	const auto radius = material ? 32 : st::boxRadius;
 	return (clip.top() < radius)
 		&& ((clip.left() < radius) || (clip.right() >= width() - radius));
 }
@@ -2391,8 +2393,22 @@ void TopBar::paintEdges(
 		QPainter &p,
 		const QRect &clip,
 		const QBrush &brush) const {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		if (clipTouchesRoundedCorners(clip)) {
+			const auto radius = st::boxRadius;
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(brush);
+			p.drawRoundedRect(
+				rect() + QMargins(0, 0, 0, radius + 1),
+				radius,
+				radius);
+		} else {
+			p.fillRect(rect().intersected(clip), brush);
+		}
+		return;
+	}
 	// Mokagram: боковая панель примыкает к краям окна без верхних скруглений.
-	Q_UNUSED(clip);
 	const auto kRadius = (_wrap.current() == Wrap::Side)
 		? 0
 		: style::ConvertScale(32);
@@ -2409,7 +2425,8 @@ void TopBar::paintEdges(
 void TopBar::paintEdges(QPainter &p, const QRect &clip) const {
 	if (!_solidBg) {
 		// Mokagram: use the card surface for the default personal preview.
-		paintEdges(p, clip, (_source == Source::Preview && _peer->isSelf())
+		paintEdges(p, clip, (Mokagram::Appearance::UseMaterial3()
+			&& _source == Source::Preview && _peer->isSelf())
 			? st::windowBg
 			: st::boxDividerBg);
 	} else {
@@ -3188,21 +3205,23 @@ void TopBar::updateRightButtonsPosition() {
 		return;
 	}
 	// Mokagram: кнопки отступают от скруглённого угла, иначе круг обрезается.
-	auto right = 4;
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	const auto top = material ? 1 : 0;
+	auto right = material ? 4 : 0;
 	if (_close) {
-		_close->moveToRight(right, 1);
+		_close->moveToRight(right, top);
 		right += _close->width();
 	}
 	if (_tabMenuToggle && _tabMenuToggle->toggled()) {
-		_tabMenuToggle->moveToRight(right, 1);
+		_tabMenuToggle->moveToRight(right, top);
 		right += _tabMenuToggle->width();
 	}
 	if (_tabSearchToggle && _tabSearchToggle->toggled()) {
-		_tabSearchToggle->moveToRight(right, 1);
+		_tabSearchToggle->moveToRight(right, top);
 		right += _tabSearchToggle->width();
 	}
 	if (_tabGroupToggle && _tabGroupToggle->toggled()) {
-		_tabGroupToggle->moveToRight(right, 1);
+		_tabGroupToggle->moveToRight(right, top);
 		right += _tabGroupToggle->width();
 	}
 }
@@ -3373,7 +3392,7 @@ void TopBar::paintUserpic(QPainter &p, const QRect &geometry) {
 
 void TopBar::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
-	{
+	if (Mokagram::Appearance::UseMaterial3()) {
 		// Mokagram: в боковой панели скруглён только низ шапки.
 		const auto personalPreview = (_source == Source::Preview)
 			&& _peer->isSelf();
@@ -3425,9 +3444,13 @@ void TopBar::paintEvent(QPaintEvent *e) {
 				/ 2;
 		if (clipTouchesRoundedCorners(clipBounds)) {
 			// Mokagram: радиус 32.
-			constexpr auto radius = 32;
+			const auto material = Mokagram::Appearance::UseMaterial3();
+			const auto radius = material ? 32 : st::boxRadius;
 			auto clipPath = QPainterPath();
-			clipPath.addRoundedRect(rect(), radius, radius);
+			const auto bounds = material
+				? rect()
+				: (rect() + QMargins(0, 0, 0, radius + 1));
+			clipPath.addRoundedRect(bounds, radius, radius);
 			auto hq = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
 			p.setClipPath(clipPath);

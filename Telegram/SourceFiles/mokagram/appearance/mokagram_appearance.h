@@ -11,6 +11,9 @@ namespace Mokagram::Appearance {
 
 void RegisterSettings();
 
+// The interface style is fixed for the current process at startup.
+[[nodiscard]] bool UseMaterial3();
+
 // Применяет настройки к палитре и следит за их изменением и сменой темы.
 void Start();
 

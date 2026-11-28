@@ -74,6 +74,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/ui/mokagram_box_parts.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h"
@@ -737,7 +738,8 @@ SendFilesBox::SendFilesBox(QWidget*, SendFilesBoxDescriptor &&descriptor)
 , _st(descriptor.stOverride
 	? *descriptor.stOverride
 	: st::defaultComposeControls)
-, _moka(&_st != &st::storiesComposeControls)
+, _moka(Mokagram::Appearance::UseMaterial3()
+	&& &_st != &st::storiesComposeControls)
 , _captionSt(_moka
 	? Mokagram::BoxParts::CardField(_st.files.caption)
 	: _st.files.caption)

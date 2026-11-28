@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_translate_bar.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 
 #include "boxes/translate_box.h"
 #include "ui/boxes/about_cocoon_box.h"
@@ -281,6 +282,8 @@ void TranslateBar::setup(not_null<History*> history) {
 	};
 	const auto button = static_cast<Ui::AbstractButton*>(_wrap.entity());
 	button->resize(0, st::historyTranslateBarHeight);
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	button->setAttribute(Qt::WA_OpaquePaintEvent, !material);
 	// Mokagram: keep the strip on a tonal surface in the active chat palette.
 	const auto stripBackground = [] {
 		return anim::color(st::topBarBg->c, st::windowFg->c, .035);
@@ -297,6 +300,10 @@ void TranslateBar::setup(not_null<History*> history) {
 	};
 	button->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
+		if (!material) {
+			QPainter(button).fillRect(clip, st::historyComposeButtonBg);
+			return;
+		}
 		// Mokagram: square top edge, rounded bottom edge.
 		auto p = QPainter(button);
 		auto hq = PainterHighQualityEnabler(p);
@@ -320,7 +327,11 @@ void TranslateBar::setup(not_null<History*> history) {
 	icon->resize(st::historyTranslateIcon.size());
 	icon->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(icon);
-		st::historyTranslateIcon.paintInCenter(p, icon->rect(), stripForeground());
+		if (material) {
+			st::historyTranslateIcon.paintInCenter(p, icon->rect(), stripForeground());
+		} else {
+			st::historyTranslateIcon.paint(p, 0, 0, icon->width());
+		}
 	}, icon->lifetime());
 	const auto settings = Ui::CreateChild<Ui::IconButton>(
 		button,
@@ -334,8 +345,10 @@ void TranslateBar::setup(not_null<History*> history) {
 		button->update();
 		icon->update();
 	};
-	updateStripPalette();
-	style::PaletteChanged() | rpl::on_next(updateStripPalette, button->lifetime());
+	if (material) {
+		updateStripPalette();
+		style::PaletteChanged() | rpl::on_next(updateStripPalette, button->lifetime());
+	}
 
 	const auto updateLabelGeometry = [=] {
 		const auto full = _wrap.width() - icon->width();

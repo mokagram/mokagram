@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_values.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/music/mokagram_player_style.h"
 #include "mokagram/settings/mokagram_settings.h"
@@ -405,7 +406,7 @@ void SaveProfileLook(
 	Mokagram::BoxParts::PaintCard(p, QRect(0, 0, width, height));
 	p.save();
 	auto clip = QPainterPath();
-	const auto radius = style::ConvertScale(Mokagram::BoxParts::kCardRadius);
+	const auto radius = Mokagram::BoxParts::CardRadius();
 	clip.addRoundedRect(QRectF(0, 0, width, height), radius, radius);
 	p.setClipPath(clip);
 	const auto lightBackdrop = backdrop.lightnessF() >= 0.5;
@@ -722,7 +723,15 @@ void AboutAction::paintEvent(QPaintEvent *e) {
 	if (selected && _st.itemBgOver->c.alpha() < 255) {
 		p.fillRect(0, 0, width(), _height, _st.itemBg);
 	}
-	Ui::Menu::PaintItemBackground(p, QRect(0, 0, width(), _height), _st, selected);
+	if (Mokagram::Appearance::UseMaterial3()) {
+		Ui::Menu::PaintItemBackground(
+			p,
+			QRect(0, 0, width(), _height),
+			_st,
+			selected);
+	} else {
+		p.fillRect(0, 0, width(), _height, selected ? _st.itemBgOver : _st.itemBg);
+	}
 	paintRipple(p, 0, 0);
 	if (_icon) {
 		_icon->paint(
@@ -2014,7 +2023,7 @@ static void FillPeerQrBoxImpl(
 		rpl::producer<QString> title,
 		bool profileExport) {
 	box->setStyle(st::peerQrBox);
-	if (profileExport) {
+	if (profileExport && Mokagram::Appearance::UseMaterial3()) {
 		Mokagram::BoxParts::RoundLayer(box);
 	}
 	box->setWidth(st::peerQrBoxWidth);
@@ -2158,7 +2167,9 @@ static void FillPeerQrBoxImpl(
 			auto hq = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::windowBg);
-			const auto radius = titlePlate->height() / 2.;
+			const auto radius = Mokagram::Appearance::UseMaterial3()
+				? titlePlate->height() / 2.
+				: float64(st::boxRadius);
 			p.drawRoundedRect(titlePlate->rect(), radius, radius);
 		});
 	}

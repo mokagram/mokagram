@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "window/window_session_controller.h"
 #include "lang/lang_keys.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/painter.h"
@@ -386,7 +387,9 @@ object_ptr<Ui::RpWidget> CreatePeerListSectionSubtitle(
 	raw->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
 		auto p = QPainter(raw);
-		p.fillRect(clip, st::boxBg);
+		p.fillRect(clip, Mokagram::Appearance::UseMaterial3()
+			? st::boxBg
+			: st::searchedBarBg);
 	}, raw->lifetime());
 
 	const auto label = Ui::CreateChild<Ui::FlatLabel>(

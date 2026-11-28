@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_layer_widget.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "ui/painter.h"
 
 #include "info/info_content_widget.h"
@@ -25,13 +26,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 
 namespace Info {
-
-namespace {
-
-// Mokagram: углы слоя обрезаются по скруглению (сверху 32, снизу 20),
-// чтобы ничего из содержимого не торчало за углы.
-
-} // namespace
 
 LayerWidget::LayerWidget(
 	not_null<Window::SessionController*> controller,
@@ -129,10 +123,26 @@ void LayerWidget::setupHeightConsumers() {
 			return;
 		}
 		std::swap(_desiredHeight, height);
-		// Mokagram: высота окна меняется сразу, без растяжения при переходах.
-		_heightAnimation.stop();
-		_heightAnimated = false;
-		setContentHeight(_desiredHeight);
+		if (Mokagram::Appearance::UseMaterial3()) {
+			// Resize immediately instead of stretching the Material surface.
+			_heightAnimation.stop();
+			_heightAnimated = false;
+			setContentHeight(_desiredHeight);
+		} else if (!height
+			|| (_heightAnimated && !_heightAnimation.animating())) {
+			_heightAnimated = true;
+			setContentHeight(_desiredHeight);
+		} else {
+			_heightAnimated = true;
+			_heightAnimation.start([=] {
+				setContentHeight(_heightAnimation.value(_desiredHeight));
+			}, _contentWrapHeight, _desiredHeight, st::slideDuration);
+			if (_inResize) {
+				_pendingResize = true;
+			} else {
+				resizeToWidth(width());
+			}
+		}
 	}, lifetime());
 }
 
@@ -304,7 +314,9 @@ QRect LayerWidget::countGeometry(int newWidth) {
 		st::infoLayerTopMaximal);
 	const auto newBottom = newTop;
 
-	const auto bottomRadius = 20;
+	const auto bottomRadius = Mokagram::Appearance::UseMaterial3()
+		? 20
+		: st::boxRadius;
 	const auto maxVisibleHeight = windowHeight - newTop;
 	// Top rounding is included in _contentWrapHeight.
 	auto desiredHeight = _contentWrapHeight + bottomRadius;
@@ -358,6 +370,36 @@ void LayerWidget::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 
 	const auto clip = e->rect();
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		const auto radius = st::boxRadius;
+		const auto &corners = Ui::CachedCornerPixmaps(Ui::BoxCorners);
+		if (!_tillBottom) {
+			const auto bottom = QRect(0, height() - radius, width(), radius);
+			if (clip.intersects(bottom)) {
+				if (const auto rounding = _contentWrap->bottomSkipRounding()) {
+					rounding->paint(p, rect(), RectPart::FullBottom);
+				} else {
+					Ui::FillRoundRect(p, bottom, st::boxBg, {
+						.p = { QPixmap(), QPixmap(), corners.p[2], corners.p[3] }
+					});
+				}
+			}
+		} else if (!_contentTillBottom) {
+			const auto rounding = _contentWrap->bottomSkipRounding();
+			const auto &color = rounding ? rounding->color() : st::boxBg;
+			p.fillRect(0, height() - radius, width(), radius, color);
+		}
+		if (_contentWrap->animatingShow()) {
+			const auto top = QRect(0, 0, width(), radius);
+			if (clip.intersects(top)) {
+				Ui::FillRoundRect(p, top, st::boxBg, {
+					.p = { corners.p[0], corners.p[1], QPixmap(), QPixmap() }
+				});
+			}
+			p.fillRect(0, radius, width(), height() - 2 * radius, st::boxBg);
+		}
+		return;
+	}
 	const auto radius = 32;
 	// Mokagram: нижние углы слоя скруглены радиусом 20.
 	{

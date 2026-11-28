@@ -52,6 +52,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_file_utilities.h"
 #include "main/main_session.h"
 #include "menu/menu_send.h"
+#include "mokagram/appearance/mokagram_appearance.h"
+#include "settings/detailed_settings_button.h"
 #include "settings/settings_common.h"
 #include "storage/file_upload.h"
 #include "storage/localimageloader.h"
@@ -88,6 +90,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/vertical_layout.h"
 #include "ui/wrap/vertical_layout_reorder.h"
 #include "ui/ui_utility.h"
+#include "ui/style/style_core_palette.h"
 #include "window/section_widget.h"
 #include "window/window_session_controller.h"
 #include "apiwrap.h"
@@ -206,6 +209,7 @@ private:
 
 		void setPlaceholder() const;
 		void removePlaceholder() const;
+		void showAddIcon(bool show);
 
 		[[nodiscard]] not_null<Ui::InputField*> field() const;
 		[[nodiscard]] not_null<Ui::RpWidget*> wrapWidget() const;
@@ -225,6 +229,7 @@ private:
 		base::unique_qptr<Ui::FadeWrapScaled<Ui::Checkbox>> _correct;
 		base::unique_qptr<Ui::FadeWrapScaled<Ui::RpWidget>> _handle;
 		bool _hasCorrect = false;
+		Ui::FadeWrapScaled<Ui::RpWidget> *_addIcon = nullptr;
 		Ui::InputField *_field = nullptr;
 		base::unique_qptr<Ui::PlainShadow> _shadow;
 		base::unique_qptr<PollMediaButton> _attach;
@@ -366,11 +371,130 @@ void FocusAtEnd(not_null<Ui::InputField*> field) {
 	return result;
 }
 
-not_null<Ui::SettingsButton*> AddPollToggleButton(
+[[nodiscard]] style::InputField ClassicField(style::InputField result) {
+	result.textBg = result.textBgActive = st::windowBgOver;
+	result.placeholderFg = st::placeholderFg;
+	result.placeholderFgActive = st::placeholderFgActive;
+	result.border = 0;
+	return result;
+}
+
+[[nodiscard]] const style::InputField &ClassicPollOptionField() {
+	static const auto result = [] {
+		auto value = ClassicField(st::createPollOptionFieldPremium);
+		value.textMargins.setRight(style::ConvertScale(72));
+		return value;
+	}();
+	return result;
+}
+
+[[nodiscard]] const style::InputField &ClassicPollQuestionField() {
+	static const auto result = ClassicField(st::createPollField);
+	return result;
+}
+
+[[nodiscard]] const style::InputField &ClassicPollDescriptionField() {
+	static const auto result = ClassicField(st::pollDescriptionField);
+	return result;
+}
+
+[[nodiscard]] const style::InputField &ClassicPollMediaField() {
+	static const auto result = ClassicField(st::pollMediaField);
+	return result;
+}
+
+[[nodiscard]] const style::icon &ClassicPollIcon(const style::icon &icon) {
+	struct Icons {
+		Icons() {
+			palette.finalize();
+			updateColor();
+			style::PaletteChanged() | rpl::on_next([this] {
+				updateColor();
+				for (const auto &icon : tinted) {
+					if (icon) {
+						icon->reset();
+					}
+				}
+			}, lifetime);
+		}
+
+		void updateColor() {
+			palette.setColor(QLatin1String("windowSubTextFg"), st::activeButtonFg->c);
+		}
+
+		style::palette palette;
+		std::array<const style::icon*, 9> originals = {
+			&st::pollBoxFilledPollViewIcon,
+			&st::pollBoxFilledPollMultipleIcon,
+			&st::pollBoxFilledPollAddIcon,
+			&st::pollBoxFilledPollRevoteIcon,
+			&st::pollBoxFilledPollShuffleIcon,
+			&st::pollBoxFilledPollCorrectIcon,
+			&st::pollBoxFilledPollSubscribersIcon,
+			&st::pollBoxFilledPollCountryIcon,
+			&st::pollBoxFilledPollDeadlineIcon,
+		};
+		std::array<std::optional<style::icon>, 9> tinted;
+		rpl::lifetime lifetime;
+	};
+	static auto icons = Icons();
+	const auto i = ranges::find(icons.originals, &icon);
+	Assert(i != end(icons.originals));
+	auto &tinted = icons.tinted[i - begin(icons.originals)];
+	if (!tinted) {
+		tinted.emplace(icon.withPalette(icons.palette));
+	}
+	return *tinted;
+}
+
+// Both presentations use the same poll state and event handlers.
+struct PollToggle {
+	Ui::SettingsButton *compact = nullptr;
+	DetailedSettingsButton *detailed = nullptr;
+
+	explicit operator bool() const {
+		return compact || detailed;
+	}
+	[[nodiscard]] bool toggled() const {
+		return compact ? compact->toggled() : detailed->toggled();
+	}
+	[[nodiscard]] rpl::producer<bool> toggledChanges() const {
+		return compact ? compact->toggledChanges() : detailed->toggledChanges();
+	}
+	[[nodiscard]] rpl::lifetime &lifetime() const {
+		return compact ? compact->lifetime() : detailed->lifetime();
+	}
+	void setToggleLocked(bool locked) const {
+		if (compact) {
+			compact->setToggleLocked(locked);
+		} else {
+			detailed->setToggleLocked(locked);
+		}
+	}
+	void finishAnimating() const {
+		if (compact) {
+			compact->finishAnimating();
+		} else {
+			detailed->finishAnimating();
+		}
+	}
+};
+
+PollToggle AddPollToggleButton(
 		not_null<Ui::VerticalLayout*> container,
 		rpl::producer<QString> title,
 		rpl::producer<QString> description,
-		rpl::producer<bool> toggled) {
+		rpl::producer<bool> toggled,
+		const style::icon &icon) {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		return { .detailed = AddDetailedSettingsButton(
+			container,
+			std::move(title),
+			std::move(description),
+			{ .icon = &ClassicPollIcon(icon), .background = &st::windowBgActive },
+			std::move(toggled),
+			st::detailedSettingsButtonStyle) };
+	}
 	const auto button = container->add(object_ptr<Ui::SettingsButton>(
 		container,
 		std::move(title),
@@ -380,7 +504,7 @@ not_null<Ui::SettingsButton*> AddPollToggleButton(
 		button->setToolTip(text);
 		button->setAccessibleDescription(text);
 	}, button->lifetime());
-	return button;
+	return { .compact = button };
 }
 
 Options::Option::Option(
@@ -401,7 +525,9 @@ Options::Option::Option(
 , _field(
 	Ui::CreateChild<Ui::InputField>(
 		_content.get(),
-		st::createPollOptionFieldPremium,
+		Mokagram::Appearance::UseMaterial3()
+			? st::createPollOptionFieldPremium
+			: ClassicPollOptionField(),
 		Ui::InputField::Mode::MultiLine,
 		tr::lng_polls_create_option_add()))
 , _attachCallback(std::move(attachCallback))
@@ -416,6 +542,11 @@ Options::Option::Option(
 	}
 
 	_wrap->hide(anim::type::instant);
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		_content->paintOn([content = _content.get()](QPainter &p) {
+			p.fillRect(content->rect(), st::boxBg);
+		});
+	}
 
 	_content->widthValue(
 	) | rpl::on_next([=] {
@@ -551,9 +682,12 @@ void Options::Option::createHandle() {
 
 	_content->sizeValue(
 	) | rpl::on_next([=](QSize size) {
-		wrap->moveToRight(
-			st::createPollFieldPadding.right() + 80,
-			(size.height() - wrap->heightNoMargins()) / 2);
+		const auto top = (size.height() - wrap->heightNoMargins()) / 2;
+		if (Mokagram::Appearance::UseMaterial3()) {
+			wrap->moveToRight(st::createPollFieldPadding.right() + 80, top);
+		} else {
+			wrap->moveToLeft(st::createPollFieldPadding.left(), top);
+		}
 	}, wrap->lifetime());
 
 	_handle.reset(wrap);
@@ -671,8 +805,13 @@ void Options::Option::enableChooseCorrect(
 }
 
 void Options::Option::updateFieldGeometry() {
-	const auto skip = st::createPollFieldPadding.left();
-	_field->setAdditionalMargins(QMargins(_hasCorrect ? 32 : 0, 0, 0, 0));
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	const auto skip = material
+		? st::createPollFieldPadding.left()
+		: st::defaultRadio.diameter + st::defaultCheckbox.textPosition.x();
+	if (material) {
+		_field->setAdditionalMargins(QMargins(_hasCorrect ? 32 : 0, 0, 0, 0));
+	}
 	_field->resizeToWidth(
 		_content->width() - skip - st::createPollFieldPadding.right());
 	_field->moveToLeft(skip, 4);
@@ -688,6 +827,38 @@ not_null<Ui::RpWidget*> Options::Option::wrapWidget() const {
 
 void Options::Option::removePlaceholder() const {
 	field()->setPlaceholder(rpl::single(QString()));
+}
+
+void Options::Option::showAddIcon(bool show) {
+	if (Mokagram::Appearance::UseMaterial3()) {
+		return;
+	}
+	if (show && !_addIcon) {
+		const auto icon = std::make_shared<Settings::Icon>(Settings::IconDescriptor{
+			.icon = &st::settingsIconAdd,
+			.type = Settings::IconType::Round,
+			.background = &st::windowBgActive,
+		});
+		auto widget = object_ptr<Ui::RpWidget>(_content.get());
+		widget->resize(icon->size());
+		widget->paintOn([=](QPainter &p) { icon->paint(p, 0, 0); });
+		_addIcon = Ui::CreateChild<Ui::FadeWrapScaled<Ui::RpWidget>>(
+			_content.get(),
+			std::move(widget));
+		_addIcon->setAttribute(Qt::WA_TransparentForMouseEvents);
+		_addIcon->hide(anim::type::instant);
+		_content->sizeValue(
+		) | rpl::on_next([=, wrap = _addIcon](QSize size) {
+			const auto left = st::createPollFieldPadding.left()
+				+ (st::pollBoxMenuPollOrderIcon.width() - icon->width()) / 2;
+			wrap->moveToLeft(
+				left,
+				(size.height() - wrap->heightNoMargins()) / 2);
+		}, _addIcon->lifetime());
+	}
+	if (_addIcon) {
+		_addIcon->toggle(show, anim::type::normal);
+	}
 }
 
 PollAnswer Options::Option::toPollAnswer(int index) const {
@@ -919,8 +1090,10 @@ void Options::fixAfterErase() {
 
 	const auto last = _list.end() - 1;
 	(*last)->setPlaceholder();
+	(*last)->showAddIcon(true);
 	if (last != begin(_list)) {
 		(*(last - 1))->setPlaceholder();
+		(*(last - 1))->showAddIcon(false);
 	}
 	fixShadows();
 }
@@ -947,6 +1120,9 @@ void Options::insertOption(
 	Assert(beforeIndex >= 0 && beforeIndex <= int(_list.size()));
 
 	const auto isAppend = (beforeIndex == int(_list.size()));
+	if (isAppend && !_list.empty()) {
+		_list.back()->showAddIcon(false);
+	}
 	if (isAppend && _list.size() > 1) {
 		(*(_list.end() - 2))->removePlaceholder();
 	}
@@ -978,6 +1154,9 @@ void Options::insertOption(
 	}
 	initOptionField(raw->field());
 
+	if (isAppend) {
+		raw->showAddIcon(true);
+	}
 	raw->show(animated);
 	fixShadows();
 	restartReorder();
@@ -991,7 +1170,11 @@ void Options::initOptionField(not_null<Ui::InputField*> field) {
 			_box,
 			_controller,
 			emojiPanel,
-			st::createPollMediaEmojiPosition);
+			Mokagram::Appearance::UseMaterial3()
+				? st::createPollMediaEmojiPosition
+				: QPoint(
+					-ClassicPollOptionField().textMargins.right(),
+					st::createPollOptionEmojiPositionSkip));
 		emojiToggle->shownValue() | rpl::on_next([=](bool shown) {
 			if (!shown) {
 				return;
@@ -1302,7 +1485,9 @@ not_null<Ui::InputField*> CreatePollBox::setupQuestion(
 	const auto question = container->add(
 		object_ptr<Ui::InputField>(
 			container,
-			st::createPollField,
+			Mokagram::Appearance::UseMaterial3()
+				? st::createPollField
+				: ClassicPollQuestionField(),
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_polls_create_question_placeholder()),
 		st::createPollFieldPadding);
@@ -1338,7 +1523,9 @@ not_null<Ui::InputField*> CreatePollBox::setupQuestion(
 			this,
 			_controller,
 			emojiPanel,
-			st::createPollTitleEmojiPosition);
+			Mokagram::Appearance::UseMaterial3()
+				? st::createPollTitleEmojiPosition
+				: QPoint(-st::defaultComposeFiles.emoji.inner.width - 4, 2));
 		emojiToggle->show();
 		emojiPanel->selector()->emojiChosen(
 		) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
@@ -1389,7 +1576,9 @@ not_null<Ui::InputField*> CreatePollBox::setupDescription(
 	const auto description = container->add(
 		object_ptr<Ui::InputField>(
 			container,
-			st::pollDescriptionField,
+			Mokagram::Appearance::UseMaterial3()
+				? st::pollDescriptionField
+				: ClassicPollDescriptionField(),
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_polls_create_description_placeholder()),
 		st::pollDescriptionFieldPadding);
@@ -1406,7 +1595,9 @@ not_null<Ui::InputField*> CreatePollBox::setupDescription(
 			this,
 			_controller,
 			emojiPanel,
-			st::createPollMediaEmojiPosition);
+			Mokagram::Appearance::UseMaterial3()
+				? st::createPollMediaEmojiPosition
+				: QPoint(-ClassicPollDescriptionField().textMargins.right(), 2));
 		emojiToggle->shownValue() | rpl::on_next([=](bool shown) {
 			if (!shown) {
 				return;
@@ -1451,7 +1642,9 @@ not_null<Ui::InputField*> CreatePollBox::setupSolution(
 	const auto solution = inner->add(
 		object_ptr<Ui::InputField>(
 			inner,
-			st::pollMediaField,
+			Mokagram::Appearance::UseMaterial3()
+				? st::pollMediaField
+				: ClassicPollMediaField(),
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_polls_solution_placeholder()),
 		st::createPollFieldPadding);
@@ -2727,38 +2920,43 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			tr::lng_polls_create_show_who_voted(),
 			tr::lng_polls_create_show_who_voted_about(),
 			rpl::single(!!(_chosen & PollData::Flag::PublicVotes))
-				| rpl::then(state->showWhoVotedForceOn.events())).get()
-		: nullptr;
+				| rpl::then(state->showWhoVotedForceOn.events()),
+			st::pollBoxFilledPollViewIcon)
+		: PollToggle();
 	const auto multiple = AddPollToggleButton(
 		container,
 		tr::lng_polls_create_allow_multiple_answers(),
 		tr::lng_polls_create_allow_multiple_answers_about(),
 		rpl::single(!!(_chosen & PollData::Flag::MultiChoice))
-			| rpl::then(state->multipleForceOff.events()));
+			| rpl::then(state->multipleForceOff.events()),
+		st::pollBoxFilledPollMultipleIcon);
 	const auto addOptions = (!(_disabled & PollData::Flag::OpenAnswers))
 		? AddPollToggleButton(
 			container,
 			tr::lng_polls_create_allow_adding_options(),
 			tr::lng_polls_create_allow_adding_options_about(),
 			rpl::single(!!(_chosen & PollData::Flag::OpenAnswers))
-				| rpl::then(state->addOptionsForceOff.events())).get()
-		: nullptr;
+				| rpl::then(state->addOptionsForceOff.events()),
+			st::pollBoxFilledPollAddIcon)
+		: PollToggle();
 	const auto revoting = AddPollToggleButton(
 		container,
 		tr::lng_polls_create_allow_revoting(),
 		tr::lng_polls_create_allow_revoting_about(),
 		rpl::single(!(_chosen & PollData::Flag::RevotingDisabled))
-			| rpl::then(state->revotingForceOff.events()));
+			| rpl::then(state->revotingForceOff.events()),
+		st::pollBoxFilledPollRevoteIcon);
 	const auto shuffle = AddPollToggleButton(
 		container,
 		tr::lng_polls_create_shuffle_options(),
 		tr::lng_polls_create_shuffle_options_about(),
-		rpl::single(!!(_chosen & PollData::Flag::ShuffleAnswers)));
+		rpl::single(!!(_chosen & PollData::Flag::ShuffleAnswers)),
+		st::pollBoxFilledPollShuffleIcon);
 	const auto quiz = AddPollToggleButton(
 		container,
 		tr::lng_polls_create_set_correct_answer(),
-		rpl::single(multiple->toggled()) | rpl::then(
-			multiple->toggledChanges()
+		rpl::single(multiple.toggled()) | rpl::then(
+			multiple.toggledChanges()
 		) | rpl::map([](bool multi) {
 			return multi
 				? tr::lng_polls_create_set_correct_answer_about_multi(
@@ -2766,7 +2964,8 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 				: tr::lng_polls_create_set_correct_answer_about(tr::now);
 		}),
 		rpl::single(!!(_chosen & PollData::Flag::Quiz))
-			| rpl::then(state->quizForceOff.events()));
+			| rpl::then(state->quizForceOff.events()),
+		st::pollBoxFilledPollCorrectIcon);
 
 	const auto show = uiShow();
 
@@ -2775,15 +2974,17 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			container,
 			tr::lng_polls_create_restrict_to_subscribers(),
 			tr::lng_polls_create_restrict_to_subscribers_about(),
-			rpl::single(!!(_chosen & PollData::Flag::SubscribersOnly))).get()
-		: nullptr;
+			rpl::single(!!(_chosen & PollData::Flag::SubscribersOnly)),
+			st::pollBoxFilledPollSubscribersIcon)
+		: PollToggle();
 	const auto limitByCountry = isBroadcastChannel
 		? AddPollToggleButton(
 			container,
 			tr::lng_polls_create_limit_by_country(),
 			tr::lng_polls_create_limit_by_country_about(),
-			rpl::single(false)).get()
-		: nullptr;
+			rpl::single(false),
+			st::pollBoxFilledPollCountryIcon)
+		: PollToggle();
 	const auto countriesWrap = limitByCountry
 		? container->add(
 			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
@@ -2817,8 +3018,8 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	}();
 	if (countriesWrap) {
 		countriesWrap->toggleOn(
-			rpl::single(limitByCountry->toggled())
-				| rpl::then(limitByCountry->toggledChanges()));
+			rpl::single(limitByCountry.toggled())
+				| rpl::then(limitByCountry.toggledChanges()));
 	}
 	if (countriesButton) {
 		countriesButton->setClickedCallback([=] {
@@ -2850,15 +3051,16 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		container,
 		tr::lng_polls_create_limit_duration(),
 		tr::lng_polls_create_limit_duration_about(),
-		rpl::single(false));
+		rpl::single(false),
+		st::pollBoxFilledPollDeadlineIcon);
 
 	const auto durationWrap = container->add(
 		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 			container,
 			object_ptr<Ui::VerticalLayout>(container))
 	)->toggleOn(
-		rpl::single(duration->toggled())
-			| rpl::then(duration->toggledChanges()));
+		rpl::single(duration.toggled())
+			| rpl::then(duration.toggledChanges()));
 	const auto durationInner = durationWrap->entity();
 
 	auto pollEndsLabelText = state->closePeriod.value(
@@ -2942,13 +3144,13 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		state->durationMenu->popup(QCursor::pos());
 	});
 
-	duration->toggledChanges(
+	duration.toggledChanges(
 	) | rpl::on_next([=](bool checked) {
 		if (checked && state->closePeriod.current() == 0
 				&& state->closeDate.current() == 0) {
 			state->closePeriod = 24 * 3600;
 		}
-	}, duration->lifetime());
+	}, duration.lifetime());
 
 	const auto hideResults = durationInner->add(
 		object_ptr<Ui::SettingsButton>(
@@ -2964,14 +3166,14 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 
 	const auto solution = setupSolution(
 		container,
-		rpl::single(quiz->toggled()) | rpl::then(quiz->toggledChanges()));
+		rpl::single(quiz.toggled()) | rpl::then(quiz.toggledChanges()));
 	addMediaButton(solution, state->solutionMedia);
 
 	question->tabbed(
 	) | rpl::on_next([=](not_null<TabbedRequest*> request) {
 		if (!request->backward) {
 			description->setFocus();
-		} else if (quiz->toggled()) {
+		} else if (quiz.toggled()) {
 			solution->setFocus();
 		} else {
 			options->focusLast();
@@ -2983,7 +3185,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	) | rpl::on_next([=](bool backward) {
 		if (backward) {
 			description->setFocus();
-		} else if (quiz->toggled()) {
+		} else if (quiz.toggled()) {
 			solution->setFocus();
 		} else {
 			question->setFocus();
@@ -3003,9 +3205,9 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	const auto updateAddOptionsLocked = [=] {
 		if (addOptions) {
 			const auto locked = (_disabled & PollData::Flag::OpenAnswers)
-				|| quiz->toggled()
-				|| (showWhoVoted && !showWhoVoted->toggled());
-			addOptions->setToggleLocked(locked);
+				|| quiz.toggled()
+				|| (showWhoVoted && !showWhoVoted.toggled());
+			addOptions.setToggleLocked(locked);
 			if (locked) {
 				state->addOptionsForceOff.fire(false);
 			}
@@ -3013,19 +3215,19 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	};
 	const auto updateQuizDependentLocks = [=](bool checked) {
 		updateAddOptionsLocked();
-		revoting->setToggleLocked(
+		revoting.setToggleLocked(
 			_disabled & PollData::Flag::RevotingDisabled);
 	};
-	quiz->setToggleLocked(_disabled & PollData::Flag::Quiz);
-	shuffle->setToggleLocked(_disabled & PollData::Flag::ShuffleAnswers);
+	quiz.setToggleLocked(_disabled & PollData::Flag::Quiz);
+	shuffle.setToggleLocked(_disabled & PollData::Flag::ShuffleAnswers);
 	if (restrictToSubscribers) {
-		restrictToSubscribers->setToggleLocked(
+		restrictToSubscribers.setToggleLocked(
 			_disabled & PollData::Flag::SubscribersOnly);
 	}
-	updateQuizDependentLocks(quiz->toggled());
+	updateQuizDependentLocks(quiz.toggled());
 
 	using namespace rpl::mappers;
-	quiz->toggledChanges(
+	quiz.toggledChanges(
 	) | rpl::on_next([=](bool checked) {
 		if (checked && (_disabled & PollData::Flag::Quiz)) {
 			state->quizForceOff.fire(false);
@@ -3037,22 +3239,22 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			solution->setFocus();
 		}
 		updateQuizDependentLocks(checked);
-		options->enableChooseCorrect(checked, multiple->toggled());
-	}, quiz->lifetime());
+		options->enableChooseCorrect(checked, multiple.toggled());
+	}, quiz.lifetime());
 
-	multiple->toggledChanges(
+	multiple.toggledChanges(
 	) | rpl::on_next([=](bool checked) {
-		if (quiz->toggled()) {
+		if (quiz.toggled()) {
 			options->enableChooseCorrect(true, checked);
 		}
-	}, multiple->lifetime());
+	}, multiple.lifetime());
 
 	if (addOptions && showWhoVoted) {
 		updateAddOptionsLocked();
-		showWhoVoted->toggledChanges(
+		showWhoVoted.toggledChanges(
 		) | rpl::on_next([=](bool) {
 			updateAddOptionsLocked();
-		}, showWhoVoted->lifetime());
+		}, showWhoVoted.lifetime());
 	}
 
 	const auto isValidQuestion = [=] {
@@ -3085,7 +3287,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			textWithTags.tags);
 		TextUtilities::Trim(result.question);
 		result.answers = options->toPollAnswers();
-		const auto solutionWithTags = quiz->toggled()
+		const auto solutionWithTags = quiz.toggled()
 			? solution->getTextWithAppliedMarkdown()
 			: TextWithTags();
 		result.solution = TextWithEntities{
@@ -3093,10 +3295,10 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			TextUtilities::ConvertTextTagsToEntities(solutionWithTags.tags)
 		};
 		result.attachedMedia = state->descriptionMedia->media;
-		if (quiz->toggled()) {
+		if (quiz.toggled()) {
 			result.solutionMedia = state->solutionMedia->media;
 		}
-		if (duration->toggled()) {
+		if (duration.toggled()) {
 			const auto closeDate = state->closeDate.current();
 			const auto closePeriod = state->closePeriod.current();
 			if (closeDate > 0) {
@@ -3107,23 +3309,23 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 				result.closeDate = base::unixtime::now() + closePeriod;
 			}
 		}
-		const auto publicVotes = (showWhoVoted && showWhoVoted->toggled());
-		const auto multiChoice = multiple->toggled();
+		const auto publicVotes = (showWhoVoted && showWhoVoted.toggled());
+		const auto multiChoice = multiple.toggled();
 		const auto subscribersOnly = (restrictToSubscribers
-			&& restrictToSubscribers->toggled());
-		const auto hideResultsEnabled = duration->toggled()
+			&& restrictToSubscribers.toggled());
+		const auto hideResultsEnabled = duration.toggled()
 			&& hideResults->toggled();
 		result.countries = (limitByCountry
-			&& limitByCountry->toggled())
+			&& limitByCountry.toggled())
 			? state->countriesValue.current()
 			: std::vector<QString>();
 		result.setFlags(Flag(0)
 			| (publicVotes ? Flag::PublicVotes : Flag(0))
 			| (multiChoice ? Flag::MultiChoice : Flag(0))
-			| ((addOptions && addOptions->toggled()) ? Flag::OpenAnswers : Flag(0))
-			| (!revoting->toggled() ? Flag::RevotingDisabled : Flag(0))
-			| (shuffle->toggled() ? Flag::ShuffleAnswers : Flag(0))
-			| (quiz->toggled() ? Flag::Quiz : Flag(0))
+			| ((addOptions && addOptions.toggled()) ? Flag::OpenAnswers : Flag(0))
+			| (!revoting.toggled() ? Flag::RevotingDisabled : Flag(0))
+			| (shuffle.toggled() ? Flag::ShuffleAnswers : Flag(0))
+			| (quiz.toggled() ? Flag::Quiz : Flag(0))
 			| (subscribersOnly ? Flag::SubscribersOnly : Flag(0))
 			| (hideResultsEnabled
 				? Flag::HideResultsUntilClose
@@ -3153,25 +3355,25 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		} else {
 			state->error &= ~(Error::Options | Error::Other);
 		}
-		if (quiz->toggled() && !options->hasCorrect()) {
+		if (quiz.toggled() && !options->hasCorrect()) {
 			state->error |= Error::Correct;
 		} else {
 			state->error &= ~Error::Correct;
 		}
-		if (quiz->toggled()
+		if (quiz.toggled()
 			&& solution->getLastText().trimmed().size() > kSolutionLimit) {
 			state->error |= Error::Solution;
 		} else {
 			state->error &= ~Error::Solution;
 		}
 		if (state->descriptionMedia->uploading
-			|| (quiz->toggled() && state->solutionMedia->uploading)
+			|| (quiz.toggled() && state->solutionMedia->uploading)
 			|| options->hasUploadingMedia()) {
 			state->error |= Error::Media;
 		} else {
 			state->error &= ~Error::Media;
 		}
-		if (duration->toggled()) {
+		if (duration.toggled()) {
 			const auto now = base::unixtime::now();
 			const auto closeDate = state->closeDate.current();
 			const auto closePeriod = state->closePeriod.current();
@@ -3189,7 +3391,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			state->error &= ~Error::Deadline;
 		}
 		if (limitByCountry
-			&& limitByCountry->toggled()
+			&& limitByCountry.toggled()
 			&& state->countriesValue.current().empty()) {
 			state->error |= Error::Country;
 		} else {
@@ -3227,7 +3429,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			}
 		};
 		tryRefresh(state->descriptionMedia);
-		if (quiz->toggled()) {
+		if (quiz.toggled()) {
 			tryRefresh(state->solutionMedia);
 		}
 		if (options->refreshStaleMedia(kStaleTimeout)) {
@@ -3305,23 +3507,23 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	addButton(tr::lng_cancel(), [=] { closeBox(); });
 
 	if (showWhoVoted) {
-		showWhoVoted->finishAnimating();
+		showWhoVoted.finishAnimating();
 	}
-	multiple->finishAnimating();
+	multiple.finishAnimating();
 	if (addOptions) {
-		addOptions->finishAnimating();
+		addOptions.finishAnimating();
 	}
-	revoting->finishAnimating();
-	shuffle->finishAnimating();
-	quiz->finishAnimating();
-	duration->finishAnimating();
+	revoting.finishAnimating();
+	shuffle.finishAnimating();
+	quiz.finishAnimating();
+	duration.finishAnimating();
 	durationWrap->finishAnimating();
 	hideResults->finishAnimating();
 	if (restrictToSubscribers) {
-		restrictToSubscribers->finishAnimating();
+		restrictToSubscribers.finishAnimating();
 	}
 	if (limitByCountry) {
-		limitByCountry->finishAnimating();
+		limitByCountry.finishAnimating();
 	}
 	if (countriesWrap) {
 		countriesWrap->finishAnimating();

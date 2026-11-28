@@ -355,6 +355,9 @@ infoLayerTopBar: InfoTopBar(infoTopBar) {
 	searchRow: infoTopBarSearchRow;
 	radius: 32px;
 }
+infoLayerTopBarClassic: InfoTopBar(infoLayerTopBar) {
+	radius: boxRadius;
+}
 
 infoLayerTopBarMenuPosition: point(48px, 37px);
 
@@ -715,6 +718,21 @@ infoProfileTabsStrip: ProfileTabsStrip {
 	bgActive: windowBgOver;
 	ripple: defaultRippleAnimationBgOver;
 	duration: 200;
+}
+infoProfileTabsStripClassic: ProfileTabsStrip(infoProfileTabsStrip) {
+	height: 48px;
+	margin: margins(8px, 6px, 8px, 6px);
+	fgActive: lightButtonFg;
+	bg: windowBg;
+	bgActive: lightButtonBgOver;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: lightButtonBgRipple;
+	}
+}
+infoProfileTabsShadowClassic: BoxShadow {
+	blurRadius: 8px;
+	offset: point(0px, 2px);
+	opacity: 0.18;
 }
 
 infoCommonGroupsMargin: margins(0px, 2px, 0px, 2px);

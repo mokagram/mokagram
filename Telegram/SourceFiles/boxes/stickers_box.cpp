@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lottie/lottie_single_player.h"
 #include "main/main_session.h"
 #include "media/clip/media_clip_reader.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "storage/storage_account.h"
 #include "ui/boxes/boost_box.h"
 #include "ui/effects/animations.h"
@@ -1445,12 +1446,14 @@ void StickersBox::Inner::paintRow(
 
 	if (_megagroupSet) {
 		if (index >= 0 && index == IndexOf(_selected)) {
-			{
-			auto hq = PainterHighQualityEnabler(p);
-			p.setPen(Qt::NoPen);
-			p.setBrush(_st.button.textBgOver);
-			p.drawRoundedRect(QRectF(0, 0, width(), _rowHeight).marginsRemoved({ 6., 1., 6., 1. }), 16, 16);
-		}
+			if (Mokagram::Appearance::UseMaterial3()) {
+				auto hq = PainterHighQualityEnabler(p);
+				p.setPen(Qt::NoPen);
+				p.setBrush(_st.button.textBgOver);
+				p.drawRoundedRect(QRectF(6., 1., width() - 12., _rowHeight - 2.), 16, 16);
+			} else {
+				p.fillRect(0, 0, width(), _rowHeight, _st.button.textBgOver);
+			}
 			if (row->ripple) {
 				row->ripple->paint(p, 0, 0, width());
 			}

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_information.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/ui/mokagram_box_parts.h"
 
@@ -81,9 +82,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Settings {
 
-// Mokagram: строки аккаунтов и «Добавить аккаунт» пилюлей, как остальные
-// пункты меню.
-[[nodiscard]] const style::SettingsButton &PillAccountButtonStyle() {
+[[nodiscard]] const style::SettingsButton &AccountButtonStyle() {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		return st::mainMenuAddAccountButton;
+	}
+	// Mokagram: пилюли аккаунтов, как пункты бокового меню.
 	static const auto result = [] {
 		auto copy = st::mainMenuAddAccountButton;
 		copy.padding = style::margins(
@@ -390,9 +393,12 @@ void ShowMenu(
 	menu->popup(QCursor::pos());
 }
 
-// Mokagram: группа строк лежит на одной скруглённой подложке.
 [[nodiscard]] not_null<Ui::VerticalLayout*> AddCard(
 		not_null<Ui::VerticalLayout*> outer) {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		return outer;
+	}
+	// Mokagram: группа строк лежит на одной скруглённой подложке.
 	const auto card = outer->add(
 		object_ptr<Ui::VerticalLayout>(outer),
 		QMargins(12, 0, 12, 0));
@@ -923,7 +929,7 @@ void SetupAccountsWrap(
 	auto result = object_ptr<Ui::SettingsButton>(
 		parent,
 		rpl::duplicate(text),
-		PillAccountButtonStyle());
+		AccountButtonStyle());
 	const auto raw = result.data();
 
 	{
@@ -957,7 +963,7 @@ void SetupAccountsWrap(
 		+ userpicSkip * 2;
 	raw->heightValue(
 	) | rpl::on_next([=](int height) {
-		const auto left = PillAccountButtonStyle().iconLeft
+		const auto left = AccountButtonStyle().iconLeft
 			+ (st::settingsIconAdd.width() - userpicSize) / 2;
 		const auto top = (height - userpicSize) / 2;
 		state->userpic.setGeometry(left, top, userpicSize, userpicSize);
@@ -1110,13 +1116,15 @@ not_null<Ui::SlideWrap<Ui::SettingsButton>*> AccountsList::setupAdd() {
 			CreateButtonWithIcon(
 				_outer.get(),
 				tr::lng_menu_add_account(),
-				PillAccountButtonStyle(),
+				AccountButtonStyle(),
 				{
 					&st::settingsIconAdd,
 					IconType::Round,
 					&st::windowBgActive
 				}),
-			QMargins(10, 1, 10, 1)))->setDuration(0);
+			Mokagram::Appearance::UseMaterial3()
+				? QMargins(10, 1, 10, 1)
+				: QMargins()))->setDuration(0);
 	const auto button = result->entity();
 	Mokagram::BoxParts::MakePill(button, [] { return st::mainMenuBg->c; });
 
@@ -1256,7 +1264,10 @@ void AccountsList::rebuild() {
 				_controller,
 				account,
 				std::move(callback),
-				nextIsLocked), QMargins(10, 0, 10, 0)));
+				nextIsLocked),
+				Mokagram::Appearance::UseMaterial3()
+					? QMargins(10, 0, 10, 0)
+					: QMargins()));
 			Mokagram::BoxParts::MakePill(
 				button.get(),
 				[] { return st::mainMenuBg->c; });

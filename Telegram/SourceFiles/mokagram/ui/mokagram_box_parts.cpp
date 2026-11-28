@@ -3,14 +3,18 @@
 // of MOKAGRAM_NOTICE.md (section 7(b)): keep this notice when copying.
 // mokagram-id: 2760f29f
 #include "mokagram/ui/mokagram_box_parts.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 
 #include "base/call_delayed.h"
 #include "ui/abstract_button.h"
 #include "ui/rp_widget.h"
 #include "ui/effects/animations.h"
-#include "ui/layers/box_content.h"
+#include "ui/layers/generic_box.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/checkbox.h"
 #include "ui/painter.h"
 #include "styles/style_layers.h"
+#include "styles/style_info.h"
 #include "styles/style_widgets.h"
 
 #include <map>
@@ -47,6 +51,27 @@ void PaintSwitch(QPainter &p, float64 t) {
 	p.drawEllipse(QPointF(cx, 12.), size / 2, size / 2);
 }
 
+struct ClassicSwitch {
+	not_null<Ui::AbstractButton*> button;
+	not_null<Ui::ToggleView*> view;
+};
+
+[[nodiscard]] ClassicSwitch MakeClassicSwitch(
+		not_null<QWidget*> parent,
+		bool checked) {
+	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
+	const auto view = button->lifetime().make_state<Ui::ToggleView>(
+		st::defaultSettingsToggle,
+		checked,
+		[=] { button->update(); });
+	button->resize(view->getSize());
+	button->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(button);
+		view->paint(p, 0, 0, button->width());
+	}, button->lifetime());
+	return { button, view };
+}
+
 } // namespace
 
 // Переключатель в стиле Material 3: переключатель 40x24, при включении бегунок растёт.
@@ -55,6 +80,25 @@ not_null<Ui::AbstractButton*> MakeSwitch(
 		bool checked,
 		Fn<void(bool)> changed,
 		rpl::producer<bool> active) {
+	if (!Appearance::UseMaterial3()) {
+		const auto [button, view] = MakeClassicSwitch(parent, checked);
+		struct State {
+			bool checked;
+			bool active;
+		};
+		const auto state = button->lifetime().make_state<State>(checked, true);
+		button->setPointerCursor(true);
+		button->setClickedCallback([=, changed = std::move(changed)] {
+			state->checked = !state->checked;
+			view->setChecked(state->checked && state->active, anim::type::normal);
+			changed(state->checked);
+		});
+		std::move(active) | rpl::on_next([=](bool value) {
+			state->active = value;
+			view->setChecked(state->checked && value, anim::type::normal);
+		}, button->lifetime());
+		return button;
+	}
 	struct State {
 		Ui::Animations::Simple animation;
 		bool checked = false;
@@ -109,6 +153,18 @@ not_null<Ui::AbstractButton*> MakeSwitch(
 not_null<Ui::AbstractButton*> MakeSwitch(
 		not_null<QWidget*> parent,
 		rpl::producer<bool> value) {
+	if (!Appearance::UseMaterial3()) {
+		const auto [button, view] = MakeClassicSwitch(parent, false);
+		button->setAttribute(Qt::WA_TransparentForMouseEvents);
+		const auto started = button->lifetime().make_state<bool>();
+		std::move(value) | rpl::on_next([=](bool checked) {
+			view->setChecked(
+				checked,
+				*started ? anim::type::normal : anim::type::instant);
+			*started = true;
+		}, button->lifetime());
+		return button;
+	}
 	struct State {
 		Ui::Animations::Simple animation;
 		bool checked = false;
@@ -146,6 +202,9 @@ not_null<Ui::AbstractButton*> MakeSwitch(
 }
 
 void MakePill(not_null<Ui::RpWidget*> widget, Fn<QColor()> pageBg) {
+	if (!Appearance::UseMaterial3()) {
+		return;
+	}
 	struct Corner {
 		not_null<Ui::RpWidget*> widget;
 		bool right;
@@ -198,6 +257,32 @@ not_null<Ui::AbstractButton*> MakeRoundButton(
 		not_null<QWidget*> parent,
 		RoundIcon icon,
 		Fn<void()> callback) {
+	if (!Appearance::UseMaterial3()) {
+		static const auto compact = [](const style::IconButton &base) {
+			auto result = base;
+			const auto size = style::ConvertScale(kRoundSize);
+			result.width = size;
+			result.height = size;
+			result.iconPosition = QPoint(-1, -1);
+			result.rippleAreaPosition = QPoint();
+			result.rippleAreaSize = size;
+			return result;
+		};
+		static const auto close = compact(st::boxTitleClose);
+		static const auto back = compact(st::backButton);
+		static const auto menu = compact(st::boxTitleMenu);
+		static const auto search = compact(st::infoTopBarSearch);
+		const auto &st = (icon == RoundIcon::Close)
+			? close
+			: (icon == RoundIcon::Back)
+			? back
+			: (icon == RoundIcon::Menu)
+			? menu
+			: search;
+		const auto button = Ui::CreateChild<Ui::IconButton>(parent.get(), st);
+		button->setClickedCallback(std::move(callback));
+		return button;
+	}
 	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
 	button->resize(kRoundSize, kRoundSize);
 	button->setPointerCursor(true);
@@ -221,6 +306,11 @@ not_null<Ui::AbstractButton*> MakeRoundButton(
 		pen.setJoinStyle(Qt::RoundJoin);
 		p.setPen(pen);
 		p.setBrush(Qt::NoBrush);
+		if (icon == RoundIcon::Search) {
+			p.drawEllipse(QPointF(22.5, 22.5), 7.5, 7.5);
+			p.drawLine(QPointF(28, 28), QPointF(34, 34));
+			return;
+		}
 		if (icon == RoundIcon::Back) {
 			p.drawLine(QPointF(27, 16), QPointF(19, 24));
 			p.drawLine(QPointF(19, 24), QPointF(27, 32));
@@ -233,7 +323,32 @@ not_null<Ui::AbstractButton*> MakeRoundButton(
 	return button;
 }
 
+void StyleCustomBox(not_null<Ui::GenericBox*> box, int materialRadius) {
+	static const auto boxStyle = [] {
+		auto result = st::defaultBox;
+		result.buttonPadding = style::margins();
+		result.buttonHeight = 0;
+		if (Appearance::UseMaterial3()) {
+			result.bg = Clear().color();
+		}
+		return result;
+	}();
+	box->setStyle(boxStyle);
+	if (Appearance::UseMaterial3()) {
+		box->paintOn([=](QPainter &p) {
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::boxBg);
+			p.drawRoundedRect(box->rect(), materialRadius, materialRadius);
+		});
+	}
+	box->setNoContentMargin(true);
+}
+
 void RoundLayer(not_null<Ui::BoxContent*> box) {
+	if (!Appearance::UseMaterial3()) {
+		return;
+	}
 	const auto apply = [=] {
 		if (const auto layer = box->parentWidget()) {
 			layer->setProperty("moka-radius", kBoxRadius);
@@ -244,17 +359,26 @@ void RoundLayer(not_null<Ui::BoxContent*> box) {
 	base::call_delayed(0, box, apply);
 }
 
+int SurfaceRadius(int materialRadius) {
+	return Appearance::UseMaterial3() ? materialRadius : st::boxRadius;
+}
+
+int CardRadius() {
+	return SurfaceRadius(style::ConvertScale(kCardRadius));
+}
+
 void PaintCard(QPainter &p, QRect rect) {
 	auto hq = PainterHighQualityEnabler(p);
-	const auto radius = std::min(
-		style::ConvertScale(kCardRadius),
-		rect.height() / 2);
+	const auto radius = std::min(CardRadius(), rect.height() / 2);
 	p.setPen(Qt::NoPen);
 	p.setBrush(st::windowBg);
 	p.drawRoundedRect(rect, radius, radius);
 }
 
 const style::Box &PillButtonsBox() {
+	if (!Appearance::UseMaterial3()) {
+		return st::defaultBox;
+	}
 	static const auto result = [] {
 		auto result = st::defaultBox;
 		result.buttonPadding = style::margins(8, 8, 14, 14);
@@ -266,11 +390,17 @@ const style::Box &PillButtonsBox() {
 }
 
 const style::RoundButton &PillActive() {
+	if (!Appearance::UseMaterial3()) {
+		return st::defaultActiveButton;
+	}
 	static const auto result = Pill(st::defaultActiveButton);
 	return result;
 }
 
 const style::RoundButton &PillLight() {
+	if (!Appearance::UseMaterial3()) {
+		return st::defaultBoxButton;
+	}
 	static const auto result = [] {
 		auto result = Pill(st::defaultBoxButton);
 		result.textBg = st::windowBg;
@@ -281,6 +411,9 @@ const style::RoundButton &PillLight() {
 }
 
 const style::RoundButton &PillAttention() {
+	if (!Appearance::UseMaterial3()) {
+		return st::attentionBoxButton;
+	}
 	static const auto result = [] {
 		auto result = Pill(st::attentionBoxButton);
 		result.textBg = st::attentionButtonBgOver;
@@ -291,6 +424,9 @@ const style::RoundButton &PillAttention() {
 }
 
 const style::InputField &CardField(const style::InputField &base) {
+	if (!Appearance::UseMaterial3()) {
+		return base;
+	}
 	static auto cache = std::map<
 		const style::InputField*,
 		std::unique_ptr<style::InputField>>();

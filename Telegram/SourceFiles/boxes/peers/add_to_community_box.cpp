@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_hardcoded.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "settings/settings_common.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/controls/userpic_button.h"
@@ -185,10 +186,13 @@ void CommunityIdentityBox::prepare() {
 	addButton(tr::lng_create_group_next(), [=] { submit(); });
 	addButton(tr::lng_cancel(), [=] { closeBox(); });
 
+	const auto topPadding = Mokagram::Appearance::UseMaterial3()
+		? st::newGroupInfoPadding.top()
+		: style::ConvertScale(-4);
 	setDimensions(
 		st::boxWideWidth,
 		st::boxPadding.top()
-			+ st::newGroupInfoPadding.top()
+			+ topPadding
 			+ st::defaultUserpicButton.size.height()
 			+ st::boxPadding.bottom()
 			+ st::newGroupInfoPadding.bottom());
@@ -200,24 +204,28 @@ void CommunityIdentityBox::setInnerFocus() {
 
 void CommunityIdentityBox::resizeEvent(QResizeEvent *e) {
 	BoxContent::resizeEvent(e);
+	auto padding = st::newGroupInfoPadding;
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		padding.setTop(style::ConvertScale(-4));
+	}
 
 	_photo->moveToLeft(
-		st::boxPadding.left() + st::newGroupInfoPadding.left(),
-		st::boxPadding.top() + st::newGroupInfoPadding.top());
+		st::boxPadding.left() + padding.left(),
+		st::boxPadding.top() + padding.top());
 
 	const auto nameLeft = st::defaultUserpicButton.size.width()
 		+ st::newGroupNamePosition.x();
 	_title->resize(
 		width()
 			- st::boxPadding.left()
-			- st::newGroupInfoPadding.left()
+			- padding.left()
 			- st::boxPadding.right()
 			- nameLeft,
 		_title->height());
 	_title->moveToLeft(
-		st::boxPadding.left() + st::newGroupInfoPadding.left() + nameLeft,
+		st::boxPadding.left() + padding.left() + nameLeft,
 		st::boxPadding.top()
-			+ st::newGroupInfoPadding.top()
+			+ padding.top()
 			+ st::newGroupNamePosition.y());
 }
 

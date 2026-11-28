@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_actions.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "ui/text/text_options.h"
 
@@ -1593,7 +1594,7 @@ private:
 			? muted
 			: primary;
 		const auto cardRadius = std::min(
-			style::ConvertScale(Mokagram::BoxParts::kCardRadius),
+			Mokagram::BoxParts::CardRadius(),
 			std::min(width(), height()) / 2);
 		p.setPen(Qt::NoPen);
 		if (_collectible) {
@@ -2128,6 +2129,7 @@ BlockPart DetailsFiller::makeInfo() {
 
 	// Mokagram: строки профиля одной карточкой, без разделителей.
 	const auto paintSeparator = [](not_null<Ui::RpWidget*>) {};
+	const auto material = Mokagram::Appearance::UseMaterial3();
 
 	Ui::SlideWrap<Ui::RpWidget> *lastLineOuter = nullptr;
 	// Контекст с фабрикой кастомных эмодзи: так глаза режима стримера
@@ -2147,11 +2149,13 @@ BlockPart DetailsFiller::makeInfo() {
 			std::move(text),
 			st::infoLabel,
 			textSt,
-			QMargins(
-				18,
-				padding.top() - 2,
-				padding.right(),
-				padding.bottom() - 2),
+			material
+				? QMargins(
+					18,
+					padding.top() - 2,
+					padding.right(),
+					padding.bottom() - 2)
+				: padding,
 			stMenu,
 			emojiContext);
 		{
@@ -2557,7 +2561,7 @@ BlockPart DetailsFiller::makeInfo() {
 					object_ptr<Ui::SlideWrap<Ui::RpWidget>>(
 						result,
 						std::move(widget),
-						QMargins(-5, 0, -5, 0)),
+						material ? QMargins(-5, 0, -5, 0) : QMargins()),
 					{},
 					style::al_justify);
 				paintSeparator(outer);
@@ -4159,8 +4163,11 @@ void ActionsFiller::fillUserActions(not_null<UserData*> user) {
 	}
 	if (CanReportBot(user)) {
 		addBotCommandActions(user);
-		// Mokagram: keep bot information separate from destructive actions.
-		startPart();
+		if (Mokagram::Appearance::UseMaterial3()) {
+			startPart();
+		} else {
+			_wrap->add(CreateSkipWidget(_wrap, st::infoBlockButtonSkip));
+		}
 		addReportAction();
 	}
 	if (!user->isSelf() && !user->isSupport() && !user->isVerifyCodes()) {
@@ -4201,10 +4208,17 @@ void AddProfileCard(Ui::VerticalBlocks blocks, Ui::VerticalBlocks::Part part) {
 	if (slide && !part.shown) {
 		part.shown = slide->toggledValue();
 	}
-	blocks.add({
-		.widget = object_ptr<ProfileCard>(blocks.layout(), std::move(part.widget)),
-		.shown = std::move(part.shown),
-	});
+	if (Mokagram::Appearance::UseMaterial3()) {
+		blocks.add({
+			.widget = object_ptr<ProfileCard>(
+				blocks.layout(),
+				std::move(part.widget)),
+			.shown = std::move(part.shown),
+		});
+	} else {
+		blocks.addSeparator();
+		blocks.add(std::move(part));
+	}
 	if (slide && !slide->toggled()) {
 		slide->finishAnimating();
 	}

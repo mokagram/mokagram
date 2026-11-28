@@ -101,6 +101,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/settings/mokagram_settings_box.h"
 #include "styles/style_menu_icons.h"
@@ -152,7 +153,10 @@ Cover::Cover(
 	not_null<UserData*> user)
 : FixedHeightWidget(
 	parent,
-	st::infoProfileCover.photo.size.height() + style::ConvertScale(32))
+	Mokagram::Appearance::UseMaterial3()
+		? (st::infoProfileCover.photo.size.height()
+			+ style::ConvertScale(32))
+		: st::infoProfileCover.height)
 , _controller(controller)
 , _user(user)
 , _badge(
@@ -188,15 +192,17 @@ Cover::Cover(
 , _username(this, st::infoProfileMegagroupCover.status) {
 	_user->updateFull();
 
-	// Mokagram: keep account identity and sharing actions on one surface.
-	paintRequest(
-	) | rpl::on_next([=] {
-		auto p = QPainter(this);
-		const auto side = style::ConvertScale(10);
-		const auto vertical = style::ConvertScale(4);
-		Mokagram::BoxParts::PaintCard(p,
-			rect().marginsRemoved(QMargins(side, vertical, side, vertical)));
-	}, lifetime());
+	if (Mokagram::Appearance::UseMaterial3()) {
+		// Mokagram: keep account identity and sharing actions on one surface.
+		paintRequest(
+		) | rpl::on_next([=] {
+			auto p = QPainter(this);
+			const auto side = style::ConvertScale(10);
+			const auto vertical = style::ConvertScale(4);
+			Mokagram::BoxParts::PaintCard(p,
+				rect().marginsRemoved(QMargins(side, vertical, side, vertical)));
+		}, lifetime());
+	}
 
 	_name->setSelectable(true);
 	_name->setContextCopyText(tr::lng_profile_copy_fullname(tr::now));

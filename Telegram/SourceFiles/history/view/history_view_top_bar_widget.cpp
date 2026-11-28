@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_top_bar_widget.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/peek/mokagram_peek.h"
 #include "mokagram/notes/mokagram_notes.h"
 #include "mokagram/music/mokagram_music_presence.h"
@@ -138,6 +139,7 @@ TopBarWidget::TopBarWidget(
 , _menuToggle(this, st::topBarMenuToggle)
 , _titlePeerText(st::windowMinWidth / 3)
 , _onlineUpdater([=] { updateOnlineDisplay(); }) {
+	setAttribute(Qt::WA_OpaquePaintEvent, !Mokagram::Appearance::UseMaterial3());
 
 	_clear->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
 	_forward->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
@@ -549,7 +551,7 @@ void TopBarWidget::paintEvent(QPaintEvent *e) {
 	const auto slidingTop = std::max(selectedButtonsTop, searchFieldTop);
 
 	// Mokagram: шапка чата со скруглёнными нижними углами, как карточка в профиле.
-	{
+	if (Mokagram::Appearance::UseMaterial3()) {
 		auto hq = PainterHighQualityEnabler(p);
 		// Под скруглёнными углами шапки виден цвет плашки ниже (как музыка в профиле).
 		auto stripBelow = QColor();
@@ -591,6 +593,8 @@ void TopBarWidget::paintEvent(QPaintEvent *e) {
 			QRectF(0, -radius, width(), st::topBarHeight + radius),
 			radius,
 			radius);
+	} else {
+		p.fillRect(QRect(0, 0, width(), st::topBarHeight), st::topBarBg);
 	}
 	if (slidingTop < 0) {
 		p.translate(0, slidingTop + st::topBarHeight);
@@ -1463,7 +1467,9 @@ void TopBarWidget::finishAnimating() {
 void TopBarWidget::setAnimatingMode(bool enabled) {
 	if (_animatingMode != enabled) {
 		_animatingMode = enabled;
-		setAttribute(Qt::WA_OpaquePaintEvent, false);
+		setAttribute(
+			Qt::WA_OpaquePaintEvent,
+			!_animatingMode && !Mokagram::Appearance::UseMaterial3());
 		finishAnimating();
 	} else if (!enabled) {
 		finishAnimating();

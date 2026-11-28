@@ -39,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/peer_gifts/info_peer_gifts_common.h"
 #include "info/profile/info_profile_emoji_status_panel.h"
 #include "info/profile/info_profile_top_bar.h"
+#include "info/profile/tabs/info_profile_tabs_strip.h"
 #include "info/info_controller.h" // Key
 #include "info/info_memento.h"
 #include "iv/iv_data.h"
@@ -46,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lottie/lottie_icon.h"
 #include "lottie/lottie_single_player.h"
 #include "main/main_session.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/misc/mokagram_misc.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/ui/mokagram_box_parts.h"
@@ -76,7 +78,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h"
 #include "styles/style_credits.h"
-#include "styles/style_info.h" // defaultSubTabs.
+#include "styles/style_info.h" // defaultSubTabs, infoProfileTabsStrip.
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
@@ -161,13 +163,14 @@ base::unique_qptr<Ui::RpWidget> CreateEmptyPlaceholder(
 		+ (nextLabelHeight ? st::normalFont->height : 0)
 		+ padding.top() + padding.bottom();
 	container->resize(width, totalHeight);
-	const auto inset = style::ConvertScale(kAppearanceInset);
-	// Mokagram: frame the empty state without changing the gift grid.
-	container->paintOn([=](QPainter &p) {
-		Mokagram::BoxParts::PaintCard(
-			p,
-			container->rect().marginsRemoved(QMargins(inset, 0, inset, 0)));
-	});
+	if (Mokagram::Appearance::UseMaterial3()) {
+		const auto inset = style::ConvertScale(kAppearanceInset);
+		container->paintOn([=](QPainter &p) {
+			Mokagram::BoxParts::PaintCard(
+				p,
+				container->rect().marginsRemoved(QMargins(inset, 0, inset, 0)));
+		});
+	}
 
 	container->sizeValue(
 	) | rpl::on_next([=](QSize size) {
@@ -385,8 +388,9 @@ void PreviewWrap::paintEvent(QPaintEvent *e) {
 
 	p.setClipRect(clip);
 	// Mokagram: keep the chat wallpaper and message inside the preview card.
-	if (_peer->isSelf()) {
-		const auto radius = style::ConvertScale(Mokagram::BoxParts::kCardRadius);
+	const auto inset = _peer->isSelf() && Mokagram::Appearance::UseMaterial3();
+	if (inset) {
+		const auto radius = Mokagram::BoxParts::CardRadius();
 		auto path = QPainterPath();
 		path.addRoundedRect(QRectF(rect()), radius, radius);
 		p.setRenderHint(QPainter::Antialiasing);
@@ -395,7 +399,7 @@ void PreviewWrap::paintEvent(QPaintEvent *e) {
 	Window::SectionWidget::PaintBackground(
 		p,
 		_theme.get(),
-		QSize(_peer->isSelf() ? width() : _box->width(), _box->window()->height()),
+		QSize(inset ? width() : _box->width(), _box->window()->height()),
 		clip);
 
 	auto context = _theme->preparePaintContext(
@@ -1538,6 +1542,30 @@ Fn<void(int)> CreateTabsWidget(
 		const std::vector<QString> &labels,
 		int initialIndex,
 		Fn<void(int)> activate) {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		const auto tabs = container->add(
+			object_ptr<Info::Profile::TabsStrip>(
+				container,
+				st::infoProfileTabsStrip),
+			st::boxRowPadding,
+			style::al_top);
+		auto list = std::vector<Info::Profile::StripTab>();
+		list.reserve(labels.size());
+		for (auto i = 0, count = int(labels.size()); i != count; ++i) {
+			list.push_back({ QString::number(i), { labels[i] } });
+		}
+		tabs->setTabs(std::move(list));
+		tabs->setActiveTab(QString::number(initialIndex));
+		const auto select = [tabs, activate = std::move(activate)](int index) {
+			tabs->setActiveTab(QString::number(index));
+			activate(index);
+		};
+		tabs->activated() | rpl::on_next([=](const QString &id) {
+			select(id.toInt());
+		}, tabs->lifetime());
+		return select;
+	}
+
 	// Mokagram: a tonal pill with the theme accent, without the profile strip's
 	// shadow and outline (which are clipped in this compact header).
 	static const auto tabsStyle = [] {
@@ -1593,7 +1621,9 @@ not_null<Info::Profile::TopBar*> CreateProfilePreview(
 				.backToggles = rpl::single(false),
 				.showFinished = box->showFinishes(),
 			}),
-		peer->isSelf() ? QMargins(inset, 0, inset, 0) : QMargins());
+		(peer->isSelf() && Mokagram::Appearance::UseMaterial3())
+			? QMargins(inset, 0, inset, 0)
+			: QMargins());
 	preview->resize(
 		preview->width(),
 		st::infoProfileTopBarNoActionsHeightMax);
@@ -1929,6 +1959,8 @@ void EditPeerColorSection(
 	if (group) {
 		appendProfileSettings(container, peer->asChannel());
 	} else {
+		const auto material = peer->isSelf()
+			&& Mokagram::Appearance::UseMaterial3();
 		const auto inset = style::ConvertScale(kAppearanceInset);
 		container->add(object_ptr<PreviewWrap>(
 			box,
@@ -1938,14 +1970,12 @@ void EditPeerColorSection(
 			state->index.value(),
 			state->emojiId.value(),
 			state->collectible.value()),
-			peer->isSelf() ? QMargins(inset, 0, inset, 0) : QMargins());
+			material ? QMargins(inset, 0, inset, 0) : QMargins());
 
 		// Mokagram: use a shared card for the personal color and reply options.
-		const auto options = peer->isSelf()
-			? AddAppearanceCard(container)
-			: container;
+		const auto options = material ? AddAppearanceCard(container) : container;
 		const auto pad = style::ConvertScale(16);
-		const auto descriptionMargin = peer->isSelf()
+		const auto descriptionMargin = material
 			? QMargins(pad, style::ConvertScale(8), pad, style::ConvertScale(12))
 			: st::peerAppearanceDividerTextMargin;
 		auto indices = peer->session().api().peerColors().suggestedValue();
@@ -2202,9 +2232,9 @@ void EditPeerProfileColorSection(
 
 	ProcessButton(button);
 
-	// Mokagram: use the same side insets for the preview and its controls.
+	const auto material = Mokagram::Appearance::UseMaterial3();
 	const auto preview = CreateProfilePreview(box, container, show, peer);
-	const auto options = AddAppearanceCard(container);
+	const auto options = material ? AddAppearanceCard(container) : container;
 
 	const auto peerColors = &peer->session().api().peerColors();
 	const auto indices = peerColors->profileColorIndices();
@@ -2270,6 +2300,9 @@ void EditPeerProfileColorSection(
 			}
 		}));
 
+	if (!material) {
+		Ui::AddSkip(container, st::settingsColorSampleSkip);
+	}
 	const auto emojiButton = options->add(CreateEmojiIconButton(
 		options,
 		show,
@@ -2317,6 +2350,9 @@ void EditPeerProfileColorSection(
 	) | rpl::map([](uint8 index) { return index != kUnsetColorIndex; }));
 	resetWrap->finishAnimating();
 
+	if (!material) {
+		Ui::AddSkip(container, st::settingsColorSampleSkip);
+	}
 	const auto pad = style::ConvertScale(16);
 	const auto about = Ui::AddDividerText(
 		options,
@@ -2330,7 +2366,12 @@ void EditPeerProfileColorSection(
 				return tr::link(std::move(t), u"internal:"_q);
 			}),
 			tr::rich),
-		QMargins(pad, style::ConvertScale(8), pad, pad));
+		material
+			? QMargins(pad, style::ConvertScale(8), pad, pad)
+			: st::defaultBoxDividerLabelPadding);
+	if (!material) {
+		Ui::AddSkip(container, st::settingsColorSampleSkip);
+	}
 	about->setClickHandlerFilter([=](auto...) {
 		aboutCallback();
 		return false;
@@ -2498,69 +2539,100 @@ void EditPeerColorBox(
 			Window::Theme::DefaultChatThemeOn(box->lifetime()));
 		style->apply(theme.get());
 	}
-	if (peer->isChannel()) {
-		box->setTitle(tr::lng_edit_channel_color());
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	const auto channel = peer->isChannel();
+	if (channel || !material) {
+		box->setTitle(channel
+			? tr::lng_edit_channel_color()
+			: tr::lng_settings_color_title());
 		box->setWidth(st::boxWideWidth);
 		box->setStyle(st::giftBox);
 		box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
+	}
+	if (channel) {
 		const auto button = box->addButton(
 			tr::lng_settings_color_apply(),
 			[] {});
 		EditPeerColorSection(box, box->verticalLayout(), button, show, peer, style, theme, nullptr);
 		return;
 	}
-	// Mokagram: pin the personal appearance header and apply action.
-	Mokagram::Plugins::RoundedWindow(box);
-	const auto inset = style::ConvertScale(kAppearanceInset);
+	const auto materialInsets = style::ConvertScale(kAppearanceInset);
 	const auto gap = style::ConvertScale(kAppearanceGap);
-	const auto pinned = box->setPinnedToTopContent(
-		object_ptr<Ui::VerticalLayout>(box));
-	const auto header = pinned->add(
-		object_ptr<Ui::RpWidget>(pinned),
-		QMargins(inset, style::ConvertScale(10), inset, 0));
-	header->resize(header->width(), style::ConvertScale(40));
-	const auto close = Mokagram::Plugins::MakeHeaderButton(
-		header,
-		true,
-		[=] { box->closeBox(); });
-	close->setAccessibleName(tr::lng_close(tr::now));
-	const auto title = Ui::CreateChild<Ui::FlatLabel>(
-		header,
-		tr::lng_settings_color_title(),
-		st::boxTitle);
-	rpl::combine(header->widthValue(), title->sizeValue(), close->sizeValue()
-	) | rpl::on_next([=](int width, QSize label, QSize button) {
-		close->moveToLeft(0, (header->height() - button.height()) / 2);
-		title->moveToLeft(
-			(width - label.width()) / 2,
-			(header->height() - label.height()) / 2);
-	}, header->lifetime());
+	auto pinned = (Ui::VerticalLayout*)nullptr;
+	auto footer = (Ui::RpWidget*)nullptr;
+	const auto buttonContainer = [&]() -> Ui::RpWidget* {
+		if (!material) {
+			return box->addButton(rpl::single(QString()), [] {}).data();
+		}
+		Mokagram::Plugins::RoundedWindow(box);
+		pinned = box->setPinnedToTopContent(
+			object_ptr<Ui::VerticalLayout>(box));
+		const auto header = pinned->add(
+			object_ptr<Ui::RpWidget>(pinned),
+			QMargins(materialInsets, style::ConvertScale(10), materialInsets, 0));
+		header->resize(header->width(), style::ConvertScale(40));
+		const auto close = Mokagram::Plugins::MakeHeaderButton(
+			header,
+			true,
+			[=] { box->closeBox(); });
+		close->setAccessibleName(tr::lng_close(tr::now));
+		const auto title = Ui::CreateChild<Ui::FlatLabel>(
+			header,
+			tr::lng_settings_color_title(),
+			st::boxTitle);
+		rpl::combine(header->widthValue(), title->sizeValue(), close->sizeValue()
+		) | rpl::on_next([=](int width, QSize label, QSize button) {
+			close->moveToLeft(0, (header->height() - button.height()) / 2);
+			title->moveToLeft(
+				(width - label.width()) / 2,
+				(header->height() - label.height()) / 2);
+		}, header->lifetime());
+		footer = box->setPinnedToBottomContent(object_ptr<Ui::RpWidget>(box));
+		return footer;
+	}();
 
-	static const auto applyStyle = [] {
-		auto result = Mokagram::BoxParts::PillActive();
-		result.height = style::ConvertScale(44);
-		result.textTop = (result.height - result.style.font->height) / 2;
+	const auto &applyStyle = [&]() -> const style::RoundButton& {
+		if (!material) {
+			return box->getDelegate()->style().button;
+		}
+		static const auto result = [] {
+			auto result = Mokagram::BoxParts::PillActive();
+			result.height = style::ConvertScale(44);
+			result.textTop = (result.height - result.style.font->height) / 2;
+			return result;
+		}();
 		return result;
 	}();
-	const auto footer = box->setPinnedToBottomContent(
-		object_ptr<Ui::RpWidget>(box));
-	footer->resize(box->width(), gap + applyStyle.height + inset);
 	const auto content = box->verticalLayout();
 
 	const auto profileButton = Ui::CreateChild<Ui::RoundButton>(
-		footer,
+		buttonContainer,
 		tr::lng_settings_color_apply(),
 		applyStyle);
 	const auto nameButton = Ui::CreateChild<Ui::RoundButton>(
-		footer,
+		buttonContainer,
 		tr::lng_settings_color_apply(),
 		applyStyle);
-	footer->widthValue() | rpl::on_next([=](int width) {
-		for (const auto button : { profileButton, nameButton }) {
-			button->setFullWidth(width - 2 * inset);
-			button->moveToLeft(inset, gap);
-		}
-	}, footer->lifetime());
+	if (footer) {
+		footer->resize(box->width(), gap + applyStyle.height + materialInsets);
+		footer->widthValue() | rpl::on_next([=](int width) {
+			for (const auto button : { profileButton, nameButton }) {
+				button->setFullWidth(width - 2 * materialInsets);
+				button->moveToLeft(materialInsets, gap);
+			}
+		}, footer->lifetime());
+	} else {
+		profileButton->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
+		nameButton->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
+		rpl::combine(
+			buttonContainer->widthValue(),
+			profileButton->sizeValue(),
+			nameButton->sizeValue()
+		) | rpl::on_next([=](int width, QSize, QSize) {
+			profileButton->resizeToWidth(width);
+			nameButton->resizeToWidth(width);
+		}, buttonContainer->lifetime());
+	}
 
 	auto nameOwned = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		content,
@@ -2573,11 +2645,13 @@ void EditPeerColorBox(
 	const auto name = nameWrap->entity();
 	const auto profile = profileWrap->entity();
 
-	// Mokagram: fade the visible old pane over the live new one. On a
-	// rapid switch, the next snapshot includes the still-fading frame.
-	const auto overlay = Ui::CreateChild<Ui::RpWidget>(box);
-	overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
-	overlay->hide();
+	// Fade the old pane over the live one, including any in-flight fade.
+	const auto overlay = material ? Ui::CreateChild<Ui::RpWidget>(box) : nullptr;
+	struct TabFade {
+		QPixmap previous;
+		Ui::Animations::Simple opacity;
+	};
+	const auto fade = overlay ? overlay->lifetime().make_state<TabFade>() : nullptr;
 	const auto bodyRect = [=] {
 		const auto top = pinned->height();
 		return QRect(
@@ -2586,44 +2660,45 @@ void EditPeerColorBox(
 			box->width(),
 			std::max(box->height() - top - footer->height(), 0));
 	};
-	rpl::combine(box->sizeValue(), pinned->heightValue(), footer->heightValue()
-	) | rpl::on_next([=] {
-		overlay->setGeometry(bodyRect());
-	}, overlay->lifetime());
-	struct TabFade {
-		QPixmap previous;
-		Ui::Animations::Simple opacity;
-	};
-	const auto fade = overlay->lifetime().make_state<TabFade>();
-	overlay->paintOn([=](QPainter &p) {
-		p.setOpacity(fade->opacity.value(0.));
-		p.drawPixmap(0, 0, fade->previous);
-	});
+	if (overlay) {
+		overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+		overlay->hide();
+		rpl::combine(box->sizeValue(), pinned->heightValue(), footer->heightValue()
+		) | rpl::on_next([=] {
+			overlay->setGeometry(bodyRect());
+		}, overlay->lifetime());
+		overlay->paintOn([=](QPainter &p) {
+			p.setOpacity(fade->opacity.value(0.));
+			p.drawPixmap(0, 0, fade->previous);
+		});
+	}
 
 	const auto showTab = [=](int index) {
 		const auto nameShown = (index == 1);
 		if (nameWrap->toggled() == nameShown) {
 			return;
 		}
-		const auto body = bodyRect();
-		fade->previous = !anim::Disabled() && box->isVisible() && !body.isEmpty()
-			? Ui::GrabWidget(box, body, st::boxBg->c)
-			: QPixmap();
-		fade->opacity.stop();
-		if (fade->previous.isNull()) {
-			overlay->hide();
-		} else {
-			box->animateHeightFrom(box->height());
-			overlay->raise();
-			overlay->show();
-			fade->opacity.start([=](float64 opacity) {
-				if (opacity > 0.) {
-					overlay->update();
-				} else {
-					overlay->hide();
-					fade->previous = QPixmap();
-				}
-			}, 1., 0., st::slideDuration, anim::easeOutCubic);
+		if (fade) {
+			const auto body = bodyRect();
+			fade->previous = !anim::Disabled() && box->isVisible() && !body.isEmpty()
+				? Ui::GrabWidget(box, body, st::boxBg->c)
+				: QPixmap();
+			fade->opacity.stop();
+			if (fade->previous.isNull()) {
+				overlay->hide();
+			} else {
+				box->animateHeightFrom(box->height());
+				overlay->raise();
+				overlay->show();
+				fade->opacity.start([=](float64 opacity) {
+					if (opacity > 0.) {
+						overlay->update();
+					} else {
+						overlay->hide();
+						fade->previous = QPixmap();
+					}
+				}, 1., 0., st::slideDuration, anim::easeOutCubic);
+			}
 		}
 
 		nameWrap->toggle(nameShown, anim::type::instant);
@@ -2636,7 +2711,7 @@ void EditPeerColorBox(
 	const auto nameInitially = (initialTab == PeerColorTab::Name);
 
 	const auto switchTab = CreateTabsWidget(
-		pinned,
+		pinned ? pinned : content.get(),
 		{
 			tr::lng_settings_color_tab_profile(tr::now),
 			tr::lng_settings_color_tab_name(tr::now),
@@ -2644,7 +2719,11 @@ void EditPeerColorBox(
 		nameInitially ? 1 : 0,
 		showTab);
 
-	Ui::AddSkip(pinned, gap);
+	if (pinned) {
+		Ui::AddSkip(pinned, gap);
+	} else {
+		Ui::AddSkip(content);
+	}
 	nameWrap->toggle(nameInitially, anim::type::instant);
 	profileWrap->toggle(!nameInitially, anim::type::instant);
 	nameButton->setVisible(nameInitially);

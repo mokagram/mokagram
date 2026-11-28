@@ -8,6 +8,7 @@
 #include "mainwidget.h"
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/music/mokagram_music_ui.h"
 #include "mokagram/music/mokagram_player_style.h"
@@ -46,6 +47,9 @@ namespace {
 
 [[nodiscard]] QColor CompactLyricsSurface() {
 	const auto bg = st::windowBg->c;
+	if (!Appearance::UseMaterial3()) {
+		return bg;
+	}
 	return Ui::IsLightBackground(bg)
 		? anim::color(bg, st::windowBgOver->c, .65)
 		: st::windowBgOver->c;

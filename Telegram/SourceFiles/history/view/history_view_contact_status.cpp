@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_contact_status.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 
 #include "lang/lang_keys.h"
 #include "ui/controls/userpic_button.h"
@@ -663,7 +664,7 @@ int ContactStatus::Bar::resizeGetHeight(int newWidth) {
 		&& _unarchive->isHidden()
 		&& _block->isHidden()
 		&& _share->isHidden();
-	if (reportOnly) {
+	if (reportOnly && Mokagram::Appearance::UseMaterial3()) {
 		// Mokagram: the destructive action reads as one contained pill instead
 		// of a hard edge-to-edge strip. The close control stays in the same
 		// visual group and keeps its existing behaviour.

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/tabs/info_profile_tabs_host.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 
 #include "info/profile/tabs/info_profile_tabs_strip.h"
 #include "info/profile/tabs/adapters/info_profile_tab_media.h"
@@ -56,7 +57,11 @@ TabsHost::TabsHost(not_null<QWidget*> parent, Descriptor descriptor)
 : RpWidget(parent)
 , _context(descriptor.context)
 , _tabs(std::move(descriptor.tabs))
-, _strip(Ui::CreateChild<TabsStrip>(this, st::infoProfileTabsStrip))
+, _strip(Ui::CreateChild<TabsStrip>(
+	this,
+	Mokagram::Appearance::UseMaterial3()
+		? st::infoProfileTabsStrip
+		: st::infoProfileTabsStripClassic))
 , _stripWeak(_strip)
 , _body(Ui::CreateChild<Ui::RpWidget>(this)) {
 	_strip->setTextContext(Core::TextContext({
@@ -753,7 +758,9 @@ void TabsHost::paintEvent(QPaintEvent *e) {
 		return;
 	}
 	// Mokagram: keep the profile card surface behind both tab snapshots.
-	p.fillRect(_slideRect, st::windowBgOver);
+	p.fillRect(_slideRect, Mokagram::Appearance::UseMaterial3()
+		? st::windowBgOver
+		: st::windowBg);
 	_slideAnimation->paintFrame(
 		p,
 		_slideRect.x(),

@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
 #include <QtWidgets/QGraphicsOpacityEffect>
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/stories/mokagram_story_post.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/settings/mokagram_settings.h"
@@ -1315,7 +1316,9 @@ MainMenu::MainMenu(
 , _version(AddVersionLabel(_footer)) {
 	// Mokagram: keep the pixels outside the rounded right corners transparent
 	// both on screen and in the cached opening animation.
-	setAttribute(Qt::WA_TranslucentBackground);
+	setAttribute(
+		Qt::WA_TranslucentBackground,
+		Mokagram::Appearance::UseMaterial3());
 	setProperty("moka-main-menu", true);
 
 	// Режим стримера: имя в шапке рисуется без rpl, сбрасываем кэш текста.
@@ -1328,55 +1331,57 @@ MainMenu::MainMenu(
 	setupUserpicButton();
 	setupAccountsToggle();
 	setupSetEmojiStatus();
-	// Mokagram: бургер в правом верхнем углу раскрывает пилюлю влево.
-	const auto dockMargin = style::ConvertScale(10);
-	const auto dockGap = style::ConvertScale(8);
-	const auto dockPill = Ui::CreateChild<DockPill>(this);
-	dockPill->hide();
-	const auto dockLabel = QString::fromUtf8(
-		Mokagram::Lang::Tr("Куда закрепить панель"));
-	const auto dockToggle = Ui::CreateChild<BarButton>(
-		this,
-		&st::dialogsMenuToggle.icon,
-		dockLabel,
-		Fn<bool()>());
-	const auto dockToggleSize = style::ConvertScale(32);
-	dockToggle->resize(dockToggleSize, dockToggleSize);
-	dockToggle->setReveal(1.);
-	dockToggle->setAccessibleName(dockLabel);
-	struct DockState {
-		Ui::Animations::Simple slide;
-		bool open = false;
-	};
-	const auto dockState = dockToggle->lifetime().make_state<DockState>();
-	const auto layoutDockPill = [=](double progress) {
-		dockPill->setInlineGeometry(
-			dockToggle->x() - dockGap,
-			dockMargin,
-			progress);
-		dockPill->raise();
-		dockToggle->raise();
-		// Раскрытая пилюля не должна перекрывать аватарку: она плавно
-		// гаснет, а имя, статус и список поднимаются на её место.
-		setCoverLift(progress);
-	};
-	dockToggle->setClickedCallback([=] {
-		const auto from = dockState->slide.value(dockState->open ? 1. : 0.);
-		dockState->open = !dockState->open;
-		dockState->slide.start(
-			layoutDockPill,
-			from,
-			dockState->open ? 1. : 0.,
-			kDockPillDuration,
-			anim::easeOutCubic);
-	});
-	widthValue() | rpl::on_next([=](int width) {
-		dockToggle->move(
-			width - dockMargin - dockToggleSize,
-			dockMargin + (DockPill::FullHeight() - dockToggleSize) / 2);
-		layoutDockPill(dockState->slide.value(dockState->open ? 1. : 0.));
-	}, dockToggle->lifetime());
-	dockToggle->show();
+	if (Mokagram::Appearance::UseMaterial3()) {
+		// Бургер в правом верхнем углу раскрывает пилюлю влево.
+		const auto dockMargin = style::ConvertScale(10);
+		const auto dockGap = style::ConvertScale(8);
+		const auto dockPill = Ui::CreateChild<DockPill>(this);
+		dockPill->hide();
+		const auto dockLabel = QString::fromUtf8(
+			Mokagram::Lang::Tr("Куда закрепить панель"));
+		const auto dockToggle = Ui::CreateChild<BarButton>(
+			this,
+			&st::dialogsMenuToggle.icon,
+			dockLabel,
+			Fn<bool()>());
+		const auto dockToggleSize = style::ConvertScale(32);
+		dockToggle->resize(dockToggleSize, dockToggleSize);
+		dockToggle->setReveal(1.);
+		dockToggle->setAccessibleName(dockLabel);
+		struct DockState {
+			Ui::Animations::Simple slide;
+			bool open = false;
+		};
+		const auto dockState = dockToggle->lifetime().make_state<DockState>();
+		const auto layoutDockPill = [=](double progress) {
+			dockPill->setInlineGeometry(
+				dockToggle->x() - dockGap,
+				dockMargin,
+				progress);
+			dockPill->raise();
+			dockToggle->raise();
+			// Раскрытая пилюля не должна перекрывать аватарку: она плавно
+			// гаснет, а имя, статус и список поднимаются на её место.
+			setCoverLift(progress);
+		};
+		dockToggle->setClickedCallback([=] {
+			const auto from = dockState->slide.value(dockState->open ? 1. : 0.);
+			dockState->open = !dockState->open;
+			dockState->slide.start(
+				layoutDockPill,
+				from,
+				dockState->open ? 1. : 0.,
+				kDockPillDuration,
+				anim::easeOutCubic);
+		});
+		widthValue() | rpl::on_next([=](int width) {
+			dockToggle->move(
+				width - dockMargin - dockToggleSize,
+				dockMargin + (DockPill::FullHeight() - dockToggleSize) / 2);
+			layoutDockPill(dockState->slide.value(dockState->open ? 1. : 0.));
+		}, dockToggle->lifetime());
+		dockToggle->show();
+	}
 	rpl::merge(
 		_userpicButton->sizeValue() | rpl::to_empty,
 		_setEmojiStatus->sizeValue() | rpl::to_empty
@@ -1564,6 +1569,7 @@ void MainMenu::setupArchive() {
 	const auto inner = wrap->entity();
 	wrap->toggle(checkArchive(), anim::type::instant);
 
+	const auto material = Mokagram::Appearance::UseMaterial3();
 	static const auto archiveStyle = [] {
 		auto result = st::mainMenuButton;
 		result.padding = style::margins(
@@ -1579,10 +1585,12 @@ void MainMenu::setupArchive() {
 		CreateButtonWithIcon(
 			inner,
 			tr::lng_archived_name(),
-			archiveStyle,
+			material ? archiveStyle : st::mainMenuButton,
 			{ &st::menuIconArchiveOpen }),
-		QMargins(10, 1, 10, 1));
-	Mokagram::BoxParts::MakePill(button, [] { return st::mainMenuBg->c; });
+		material ? QMargins(10, 1, 10, 1) : QMargins());
+	if (material) {
+		Mokagram::BoxParts::MakePill(button, [] { return st::mainMenuBg->c; });
+	}
 	button->setAcceptBoth(true);
 	button->clicks(
 	) | rpl::on_next([=](Qt::MouseButton which) {
@@ -1693,6 +1701,9 @@ void MainMenu::setupSetEmojiStatus() {
 
 void MainMenu::parentResized() {
 	resize(st::mainMenuWidth, parentWidget()->height());
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		return;
+	}
 	const auto radius = style::ConvertScale(28);
 	auto path = QPainterPath();
 	path.addRoundedRect(
@@ -1834,6 +1845,7 @@ void MainMenu::setupMenu() {
 	using namespace Settings;
 
 	const auto controller = _controller;
+	const auto material = Mokagram::Appearance::UseMaterial3();
 	// Mokagram: пункты меню отдельными пилюлями с одинаковыми отступами.
 	static const auto rowStyle = [] {
 		auto result = st::mainMenuButton;
@@ -1846,7 +1858,8 @@ void MainMenu::setupMenu() {
 		result.textBg = st::mainMenuBg;
 		return result;
 	}();
-	const auto pillMargins = QMargins(10, 1, 10, 1);
+	const auto &buttonStyle = material ? rowStyle : st::mainMenuButton;
+	const auto rowMargins = material ? QMargins(10, 1, 10, 1) : QMargins();
 	const auto menuBg = [] { return st::mainMenuBg->c; };
 	const auto addAction = [&](
 			rpl::producer<QString> text,
@@ -1881,11 +1894,13 @@ void MainMenu::setupMenu() {
 				CreateButtonWithIcon(
 					_menu,
 					std::move(text),
-					rowStyle,
+					buttonStyle,
 					std::move(descriptor)),
-				pillMargins));
+				rowMargins));
 		const auto button = wrap->entity();
-		Mokagram::BoxParts::MakePill(button, menuBg);
+		if (material) {
+			Mokagram::BoxParts::MakePill(button, menuBg);
+		}
 		entry.button = button;
 		entry.row = wrap;
 		entry.setShown = [=](bool shown, bool instant) {
@@ -1943,32 +1958,37 @@ void MainMenu::setupMenu() {
 		music->setClickedCallback([=] {
 			Mokagram::Music::ShowMusicBox(controller);
 		});
-		// Mokagram: отдельный переход на главную полноэкранного плеера.
-		static const auto homeStyle = [] {
-			auto result = Mokagram::BoxParts::PillLight();
-			result.width = -style::ConvertScale(24);
-			result.height = style::ConvertScale(32);
-			result.textTop = (result.height - result.style.font->height) / 2;
+		// Отдельный переход на главную полноэкранного плеера.
+		const auto &homeStyle = material ? []() -> const style::RoundButton & {
+			static const auto result = [] {
+				auto copy = Mokagram::BoxParts::PillLight();
+				copy.width = -style::ConvertScale(24);
+				copy.height = style::ConvertScale(32);
+				copy.textTop = (copy.height - copy.style.font->height) / 2;
+				return copy;
+			}();
 			return result;
-		}();
+		}() : st::defaultBoxButton;
 		const auto home = Ui::CreateChild<Ui::RoundButton>(
 			music,
 			rpl::single(QString::fromUtf8(Mokagram::Lang::Tr("Главная"))),
 			homeStyle);
 		home->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		home->setPointerCursor(true);
-		home->setFocusPolicy(Qt::TabFocus);
+		if (material) {
+			home->setFocusPolicy(Qt::TabFocus);
+			home->events() | rpl::on_next([=](not_null<QEvent*> event) {
+				if (event->type() == QEvent::FocusIn) {
+					home->setPenOverride(QPen(
+						st::windowActiveTextFg->c,
+						style::ConvertScale(2)));
+				} else if (event->type() == QEvent::FocusOut) {
+					home->setPenOverride(std::nullopt);
+				}
+			}, home->lifetime());
+		}
 		home->setToolTip(QString::fromUtf8(Mokagram::Lang::Tr(
 			"Открыть главную полноэкранного плеера")));
-		home->events() | rpl::on_next([=](not_null<QEvent*> event) {
-			if (event->type() == QEvent::FocusIn) {
-				home->setPenOverride(QPen(
-					st::windowActiveTextFg->c,
-					style::ConvertScale(2)));
-			} else if (event->type() == QEvent::FocusOut) {
-				home->setPenOverride(std::nullopt);
-			}
-		}, home->lifetime());
 		const auto inset = style::ConvertScale(12);
 		auto musicPadding = music->st().padding;
 		musicPadding.setRight(home->width() + 2 * inset);
@@ -2009,14 +2029,16 @@ void MainMenu::setupMenu() {
 				CreateButtonWithIcon(
 					_menu,
 					tr::lng_wallet_menu(),
-					rowStyle,
+					buttonStyle,
 					{ &st::walletMenuIcon }),
-				pillMargins));
-		Mokagram::BoxParts::MakePill(wallet->entity(), menuBg);
+				rowMargins));
+		if (material) {
+			Mokagram::BoxParts::MakePill(wallet->entity(), menuBg);
+		}
 		Ui::NewBadge::AddAfterButtonText(
 			wallet->entity(),
 			tr::lng_wallet_menu(),
-			rowStyle);
+			buttonStyle);
 		wallet->toggleOn(session->appConfig().value(
 		) | rpl::map([=] {
 			return session->appConfig().walletAvailable();
@@ -2327,15 +2349,18 @@ void MainMenu::paintEvent(QPaintEvent *e) {
 	auto p = Painter(this);
 	const auto clip = e->rect();
 	const auto cover = QRect(0, 0, width(), coverHeight());
-
-	// Mokagram: a regular slide-out sheet, rounded only at the inner edge.
-	// The widget mask keeps the transparent corners free from child backgrounds.
-	const auto radius = style::ConvertScale(28);
-	const auto shape = QRectF(-radius, 0, width() + radius, height());
 	auto hq = PainterHighQualityEnabler(p);
-	p.setPen(Qt::NoPen);
-	p.setBrush(st::mainMenuBg);
-	p.drawRoundedRect(shape, radius, radius);
+
+	if (Mokagram::Appearance::UseMaterial3()) {
+		// The mask keeps the rounded corners free from child backgrounds.
+		const auto radius = style::ConvertScale(28);
+		const auto shape = QRectF(-radius, 0, width() + radius, height());
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::mainMenuBg);
+		p.drawRoundedRect(shape, radius, radius);
+	} else {
+		p.fillRect(clip, st::mainMenuBg);
+	}
 	if (cover.intersects(clip)) {
 		drawName(p);
 	}

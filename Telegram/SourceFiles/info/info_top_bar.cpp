@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_top_bar.h"
 #include "ui/painter.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/ui/mokagram_glass.h"
 
 #include "dialogs/ui/dialogs_stories_list.h"
@@ -209,10 +210,12 @@ Ui::FadeWrap<Ui::RpWidget> *TopBar::pushButton(
 	weak->setDuration(st::infoTopBarDuration);
 	// Mokagram: подложки под кнопками рисует TopBar, поэтому он должен
 	// перерисовываться вместе с кнопкой (показ, появление, смена вида).
-	weak->shownValue(
-	) | rpl::on_next([=] {
-		update();
-	}, weak->lifetime());
+	if (Mokagram::Appearance::UseMaterial3()) {
+		weak->shownValue(
+		) | rpl::on_next([=] {
+			update();
+		}, weak->lifetime());
+	}
 	registerToggleControlCallback(weak, [=] {
 		return !selectionMode()
 			&& !_searchModeEnabled;
@@ -403,9 +406,15 @@ void TopBar::updateControlsGeometry(int newWidth) {
 void TopBar::updateDefaultControlsGeometry(int newWidth) {
 	// Mokagram: иконки справа стоят с равным шагом, каждая в своём круге.
 	auto right = 0;
+	const auto material = Mokagram::Appearance::UseMaterial3();
 	auto centerX = newWidth - 32;
 	for (auto &button : _buttons) {
 		if (!button) {
+			continue;
+		}
+		if (!material) {
+			button->moveToRight(right, 0, newWidth);
+			right += button->width();
 			continue;
 		}
 		auto offset = button->width() / 2;
@@ -526,9 +535,15 @@ void TopBar::updateStoriesGeometry(int newWidth) {
 
 void TopBar::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
+	const auto material = Mokagram::Appearance::UseMaterial3();
 
 	if (!_roundRect) {
 		p.fillRect(e->rect(), _st.bg);
+	} else if (!material) {
+		_roundRect->paintSomeRounded(
+			p,
+			rect(),
+			RectPart::TopLeft | RectPart::TopRight);
 	} else {
 		// Mokagram: верхние углы шапки скруглены, как у окна (радиус больше высоты шапки).
 		auto hq = PainterHighQualityEnabler(p);
@@ -538,6 +553,9 @@ void TopBar::paintEvent(QPaintEvent *e) {
 			rect() + style::margins(0, 0, 0, _st.radius * 2),
 			_st.radius,
 			_st.radius);
+	}
+	if (!material) {
+		return;
 	}
 	// Mokagram: каждая кнопка справа на своей круглой стеклянной подложке.
 	for (const auto &button : _buttons) {

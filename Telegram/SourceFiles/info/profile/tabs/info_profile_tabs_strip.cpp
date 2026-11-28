@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/tabs/info_profile_tabs_strip.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 
 #include "ui/effects/animation_value.h"
 #include "ui/effects/animation_value_f.h"
@@ -13,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
+#include "ui/widgets/shadow.h"
 #include "styles/style_basic.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_info.h"
@@ -25,6 +27,31 @@ namespace {
 constexpr auto kScrollDuration = crl::time(150);
 constexpr auto kVerticalScrollGrace = crl::time(250);
 constexpr auto kVerticalScrollRest = crl::time(1000);
+
+void PaintClassicOutline(
+		QPainter &p,
+		const QRectF &island,
+		float64 radius,
+		const style::color &bg) {
+	const auto light = (bg->c.lightness() >= 128);
+	const auto width = light ? (0.6 * st::lineWidth) : double(st::lineWidth);
+	if (light) {
+		p.setPen(QPen(QColor(0, 0, 0, 20), width));
+	} else {
+		auto gradient = QLinearGradient(0, island.top(), 0, island.bottom());
+		gradient.setColorAt(0., QColor(255, 255, 255, 40));
+		gradient.setColorAt(0.5, QColor(255, 255, 255, 0));
+		gradient.setColorAt(1., QColor(255, 255, 255, 20));
+		p.setPen(QPen(QBrush(gradient), width));
+	}
+	p.setBrush(Qt::NoBrush);
+	const auto half = 0.5 * width;
+	const auto stroke = light
+		? island.marginsAdded(QMarginsF(half, half, half, half))
+		: island.adjusted(half, half, -half, -half);
+	const auto strokeRadius = light ? (radius + half) : (radius - half);
+	p.drawRoundedRect(stroke, strokeRadius, strokeRadius);
+}
 
 } // namespace
 
@@ -415,6 +442,11 @@ void TabsStrip::paintEvent(QPaintEvent *e) {
 		return;
 	}
 	const auto radius = island.height() / 2.;
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	if (!material) {
+		static const auto shadow = Ui::BoxShadow(st::infoProfileTabsShadowClassic);
+		shadow.paint(p, island, int(radius));
+	}
 
 	auto hq = PainterHighQualityEnabler(p);
 	p.setBrush(_st.bg);
@@ -427,6 +459,10 @@ void TabsStrip::paintEvent(QPaintEvent *e) {
 	clip.addRoundedRect(QRectF(island), radius, radius);
 	p.setClipPath(clip);
 	p.drawImage(island.topLeft(), _content);
+	if (!material) {
+		p.setClipping(false);
+		PaintClassicOutline(p, island, radius, _st.bg);
+	}
 }
 
 void TabsStrip::validateContent(QRect island) {
@@ -447,17 +483,20 @@ void TabsStrip::validateContent(QRect island) {
 	const auto origin = contentOrigin() - island.topLeft();
 	const auto progress = _activeAnimation.value(1.);
 	const auto animating = _activeAnimation.animating();
+	const auto material = Mokagram::Appearance::UseMaterial3();
 	if (_active >= 0) {
 		const auto highlight = currentHighlightRect().translated(
 			origin.x(),
 			origin.y());
 		const auto highlightRadius = highlight.height() / 2.;
-		p.setBrush(anim::color(_st.bgActive, _st.fgActive, 0.08));
+		p.setBrush(material
+			? anim::color(_st.bgActive, _st.fgActive, 0.08)
+			: _st.bgActive->c);
 		p.setPen(Qt::NoPen);
 		p.drawRoundedRect(highlight, highlightRadius, highlightRadius);
 	}
 	// Mokagram: use the same tonal hover as the surrounding profile rows.
-	if (_selected >= 0) {
+	if (material && _selected >= 0) {
 		const auto hover = highlightRect(_selected).translated(origin);
 		auto color = _st.fgActive->c;
 		color.setAlphaF(0.08);
@@ -479,7 +518,9 @@ void TabsStrip::validateContent(QRect island) {
 	}
 	const auto textTop = (_buttons.front().geometry.height()
 		- _st.style.font->height) / 2;
-	const auto inactiveFg = anim::color(_st.fg, _st.fgActive, 0.35);
+	const auto inactiveFg = material
+		? anim::color(_st.fg, _st.fgActive, 0.35)
+		: _st.fg->c;
 	for (auto i = 0, c = int(_buttons.size()); i != c; ++i) {
 		const auto &button = _buttons[i];
 		if (i == _active) {

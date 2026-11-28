@@ -10,6 +10,7 @@
 #include "ui/boxes/confirm_box.h"
 #include "ui/painter.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/ui/mokagram_box_parts.h"
 #include "base/unixtime.h"
 #include "lang/lang_keys.h"
 
@@ -138,7 +139,8 @@ struct CardParts {
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
-		p.drawRoundedRect(card->rect(), 22, 22);
+		const auto radius = BoxParts::SurfaceRadius(22);
+		p.drawRoundedRect(card->rect(), radius, radius);
 	});
 	slot->show();
 	card->show();

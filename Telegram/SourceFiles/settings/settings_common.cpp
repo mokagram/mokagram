@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_common.h"
 
+#include "mokagram/appearance/mokagram_appearance.h"
+
 #include "base/timer.h"
 #include "lottie/lottie_icon.h"
 #include "menu/menu_send_details.h"
@@ -473,7 +475,7 @@ void AddButtonIcon(
 		button,
 		std::move(descriptor));
 	// Mokagram: значки строк настроек из набора iOSTelegram (кроме бокового меню).
-	const auto packable = [&] {
+	const auto packable = Mokagram::Appearance::UseMaterial3() && [&] {
 		for (auto w = button->parentWidget(); w; w = w->parentWidget()) {
 			if (w->property("moka-main-menu").toBool()) {
 				return false;

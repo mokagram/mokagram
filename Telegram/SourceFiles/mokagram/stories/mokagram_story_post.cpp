@@ -446,28 +446,9 @@ void CheckCanPost(
 	return result;
 }
 
-[[nodiscard]] const style::owned_color &Clear() {
-	static const auto result = style::owned_color(QColor(0, 0, 0, 0));
-	return result;
-}
-
 void SetupRounded(not_null<Ui::GenericBox*> box) {
-	static const auto noButtons = [] {
-		auto result = st::defaultBox;
-		result.buttonPadding = style::margins();
-		result.buttonHeight = 0;
-		result.bg = Clear().color();
-		return result;
-	}();
-	box->setStyle(noButtons);
-	box->paintOn([=](QPainter &p) {
-		auto hq = PainterHighQualityEnabler(p);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::boxBg);
-		p.drawRoundedRect(box->rect(), S(kBoxRadius), S(kBoxRadius));
-	});
+	StyleCustomBox(box, S(kBoxRadius));
 	box->setWidth(S(kBoxWidth));
-	box->setNoContentMargin(true);
 }
 
 void AddHeader(not_null<Ui::GenericBox*> box, const QString &title) {
@@ -684,7 +665,8 @@ void ComposeBox(
 			state->card = PrepareCard(file->preview, card.size());
 		}
 		auto path = QPainterPath();
-		path.addRoundedRect(card, S(kCardRadius), S(kCardRadius));
+		const auto radius = CardRadius();
+		path.addRoundedRect(card, radius, radius);
 		p.setClipPath(path);
 		p.drawImage(card.topLeft(), state->card);
 		if (!state->progress) {

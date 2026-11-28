@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/painter.h"
 #include "ui/widgets/buttons.h"
@@ -19,7 +20,11 @@ public:
 	using Ui::SettingsButton::SettingsButton;
 
 private:
-	void paintEvent(QPaintEvent *) override {
+	void paintEvent(QPaintEvent *e) override {
+		if (!Mokagram::Appearance::UseMaterial3()) {
+			SettingsButton::paintEvent(e);
+			return;
+		}
 		auto p = Painter(this);
 		const auto over = (isOver() || isDown()) && !isDisabled();
 		if (over) {
@@ -39,6 +44,9 @@ private:
 	}
 
 	QImage prepareRippleMask() const override {
+		if (!Mokagram::Appearance::UseMaterial3()) {
+			return SettingsButton::prepareRippleMask();
+		}
 		return Ui::RippleAnimation::RoundRectMask(
 			size(),
 			std::min(width(), height()) / 2);

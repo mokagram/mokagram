@@ -70,6 +70,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "mtproto/sender.h"
 #include "main/main_app_config.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "settings/settings_common.h"
 #include "ui/boxes/boost_box.h"
 #include "ui/controls/emoji_button.h"
@@ -853,9 +854,11 @@ object_ptr<Ui::RpWidget> Controller::createDescriptionEdit() {
 	}
 
 	auto result = object_ptr<Ui::VerticalLayout>(_wrap);
-	Settings::Builder::MokaCardTitle(
-		result.data(),
-		tr::lng_create_group_description());
+	if (Mokagram::Appearance::UseMaterial3()) {
+		Settings::Builder::MokaCardTitle(
+			result.data(),
+			tr::lng_create_group_description());
+	}
 	const auto field = result->add(
 		object_ptr<Ui::InputField>(
 			result.data(),
@@ -901,9 +904,9 @@ void Controller::startButtonsBlock() {
 		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 			_wrap.get(),
 			object_ptr<Ui::VerticalLayout>(_wrap.get())));
-	_controls.buttonsLayout = Settings::Builder::MokaCard(
-		card->entity(),
-		st::boxBg);
+	_controls.buttonsLayout = Mokagram::Appearance::UseMaterial3()
+		? Settings::Builder::MokaCard(card->entity(), st::boxBg)
+		: not_null<Ui::VerticalLayout*>(card->entity());
 	card->toggleOn(
 		_controls.buttonsLayout->heightValue() | rpl::map([](int height) {
 			return height > 0;
@@ -2265,7 +2268,9 @@ void Controller::fillBotVerifyAccounts() {
 		return info && info->verifierSettings;
 	}));
 
-	const auto inner = Settings::Builder::MokaCard(wrap->entity(), st::boxBg);
+	const auto inner = Mokagram::Appearance::UseMaterial3()
+		? Settings::Builder::MokaCard(wrap->entity(), st::boxBg)
+		: not_null<Ui::VerticalLayout*>(wrap->entity());
 	AddButtonWithCount(
 		inner,
 		tr::lng_manage_peer_bot_verify(),

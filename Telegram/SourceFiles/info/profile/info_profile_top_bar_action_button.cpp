@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_top_bar_action_button.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 
 #include "ui/effects/animation_value.h"
 #include "ui/effects/ripple_animation.h"
@@ -18,11 +19,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Info::Profile {
 namespace {
 
-constexpr auto kActionRadius = 20;
-
-} // namespace
-
-namespace {
+int ActionRadius() {
+	return Mokagram::Appearance::UseMaterial3() ? 20 : st::boxRadius;
+}
 
 constexpr auto kIconFadeStart = 0.4;
 constexpr auto kIconFadeRange = 1.0 - kIconFadeStart;
@@ -154,11 +153,12 @@ void TopBarActionButton::paintEvent(QPaintEvent *e) {
 		/ st::infoProfileTopBarActionButtonSize;
 	p.setOpacity(progress);
 
+	const auto radius = ActionRadius();
 	p.setPen(Qt::NoPen);
 	p.setBrush(_bgColor);
 	{
 		auto hq = PainterHighQualityEnabler(p);
-		p.drawRoundedRect(rect(), kActionRadius, kActionRadius);
+		p.drawRoundedRect(rect(), radius, radius);
 
 		const auto hovered = _rippleColor
 			? _overAnimation.value((isOver() || _dragHover) ? 1. : 0.)
@@ -166,7 +166,7 @@ void TopBarActionButton::paintEvent(QPaintEvent *e) {
 		if (hovered > 0.) {
 			p.setOpacity(progress * hovered);
 			p.setBrush(*_rippleColor);
-			p.drawRoundedRect(rect(), kActionRadius, kActionRadius);
+			p.drawRoundedRect(rect(), radius, radius);
 			p.setOpacity(progress);
 		}
 		if (_dragHover) {
@@ -260,7 +260,7 @@ void TopBarActionButton::onStateChanged(
 }
 
 QImage TopBarActionButton::prepareRippleMask() const {
-	return Ui::RippleAnimation::RoundRectMask(size(), kActionRadius);
+	return Ui::RippleAnimation::RoundRectMask(size(), ActionRadius());
 }
 
 QPoint TopBarActionButton::prepareRippleStartPosition() const {

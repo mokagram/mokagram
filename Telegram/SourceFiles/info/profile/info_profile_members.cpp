@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_members.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 
 #include <rpl/combine.h>
 #include "info/profile/info_profile_widget.h"
@@ -264,13 +265,15 @@ void Members::setupList() {
 		result.item.button.textBgOver = st::windowBg;
 		return result;
 	}();
-	_listController->setStyleOverrides(&listSt);
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	_listController->setStyleOverrides(
+		material ? &listSt : &st::infoMembersList);
 	_listController->setStoriesShown(true);
 	_list = object_ptr<ListWidget>(
 		this,
 		_listController.get());
 	// Mokagram: выделяем строку отдельной скруглённой плашкой.
-	_list->setRoundedRows(true);
+	_list->setRoundedRows(material);
 	_list->scrollToRequests(
 	) | rpl::on_next([this](Ui::ScrollToRequest request) {
 		auto addmin = (request.ymin < 0 || !_header)

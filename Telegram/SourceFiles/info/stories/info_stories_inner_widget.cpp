@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/stories/info_stories_widget.h"
 #include "info/info_controller.h"
 #include "info/info_memento.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "media/stories/media_stories_post.h"
@@ -339,13 +340,19 @@ void InnerWidget::createProfileTop() {
 		nullptr,
 		{ v::null });
 
-	// Mokagram: use the same rounded card as the profile details.
-	auto actions = object_ptr<Ui::VerticalLayout>(_top);
 	// Layout insertion shows even wrappers whose initial toggle is off.
-	actions->add(makeGiftsButton())->finishAnimating();
-	actions->add(makeArchiveButton())->finishAnimating();
-	actions->add(makeRecentButton())->finishAnimating();
-	Profile::AddProfileCard(blocks, { .widget = std::move(actions) });
+	if (Mokagram::Appearance::UseMaterial3()) {
+		auto actions = object_ptr<Ui::VerticalLayout>(_top);
+		actions->add(makeGiftsButton())->finishAnimating();
+		actions->add(makeArchiveButton())->finishAnimating();
+		actions->add(makeRecentButton())->finishAnimating();
+		Profile::AddProfileCard(blocks, { .widget = std::move(actions) });
+	} else {
+		blocks.addSeparator();
+		blocks.add(makeGiftsButton())->finishAnimating();
+		blocks.add(makeArchiveButton())->finishAnimating();
+		blocks.add(makeRecentButton())->finishAnimating();
+	}
 	Ui::AddSkip(_top, skip);
 
 	finalizeTop(false);

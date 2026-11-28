@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/filters/edit_filter_box.h"
 
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/lang/mokagram_lang.h"
 
 #include "apiwrap.h"
@@ -531,10 +532,24 @@ void CreateIconSelector(
 	return QString();
 }
 
-// Mokagram: пояснение под карточкой простым серым текстом, без полосы.
+[[nodiscard]] not_null<Ui::VerticalLayout*> AddFilterSection(
+		not_null<Ui::VerticalLayout*> container,
+		rpl::producer<QString> title) {
+	if (Mokagram::Appearance::UseMaterial3()) {
+		Settings::Builder::MokaCardTitle(container, std::move(title));
+		return Settings::Builder::MokaCard(container, st::boxBg);
+	}
+	Ui::AddSubsectionTitle(container, std::move(title));
+	return container;
+}
+
 void AddHint(
 		not_null<Ui::VerticalLayout*> container,
 		rpl::producer<QString> text) {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		Ui::AddDividerText(container, std::move(text));
+		return;
+	}
 	static const auto st = [] {
 		auto value = st::boxDividerLabel;
 		value.minWidth = 1;
@@ -811,10 +826,13 @@ void EditFilterBox(
 		name->setFocusFast();
 	});
 
-	Settings::Builder::MokaCardTitle(content, tr::lng_filters_include());
-	const auto includeCard = Settings::Builder::MokaCard(
-		content,
-		st::boxBg);
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	if (!material) {
+		Ui::AddSkip(content);
+		Ui::AddDivider(content);
+		Ui::AddSkip(content);
+	}
+	const auto includeCard = AddFilterSection(content, tr::lng_filters_include());
 
 	const auto includeAdd = AddButtonWithIcon(
 		includeCard,
@@ -846,9 +864,15 @@ void EditFilterBox(
 			flags, rules.always(), rules.pinned(), rules.never());
 		include->updateData(flags & kTypes, rules.always());
 	}, onlyManaged->lifetime());
+	if (!material) {
+		Ui::AddSkip(content);
+	}
 	AddHint(content, rpl::single(QString::fromUtf8(Mokagram::Lang::Tr(
 		"Ограничение по правам действует только на этом устройстве."))));
 	AddHint(content, tr::lng_filters_include_about());
+	if (!material) {
+		Ui::AddSkip(content);
+	}
 
 	auto excludeWrap = content->add(
 		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
@@ -858,10 +882,9 @@ void EditFilterBox(
 	excludeWrap->toggleOn(state->chatlist.value() | rpl::map(!_1));
 	const auto excludeInner = excludeWrap->entity();
 
-	Settings::Builder::MokaCardTitle(excludeInner, tr::lng_filters_exclude());
-	const auto excludeCard = Settings::Builder::MokaCard(
+	const auto excludeCard = AddFilterSection(
 		excludeInner,
-		st::boxBg);
+		tr::lng_filters_exclude());
 
 	const auto excludeAdd = AddButtonWithIcon(
 		excludeCard,
@@ -876,7 +899,13 @@ void EditFilterBox(
 		kExcludeTypes,
 		&Data::ChatFilter::never);
 
+	if (!material) {
+		Ui::AddSkip(excludeInner);
+	}
 	AddHint(excludeInner, tr::lng_filters_exclude_about());
+	if (!material) {
+		Ui::AddSkip(excludeInner);
+	}
 
 	{
 		const auto wrap = content->add(
@@ -1096,13 +1125,12 @@ void EditFilterBox(
 		).withColorIndex(colorIndex);
 	};
 
-	Settings::Builder::MokaCardTitle(
+	const auto shareCard = AddFilterSection(
 		content,
 		rpl::conditional(
 			state->hasLinks.value(),
 			tr::lng_filters_link_has(),
 			tr::lng_filters_link()));
-	const auto shareCard = Settings::Builder::MokaCard(content, st::boxBg);
 
 	state->hasLinks.changes() | rpl::on_next([=] {
 		content->resizeToWidth(content->widthNoMargins());
@@ -1177,6 +1205,9 @@ void EditFilterBox(
 			}));
 		}));
 	}, createLink->lifetime());
+	if (!material) {
+		Ui::AddSkip(content);
+	}
 	AddHint(
 		content,
 		rpl::conditional(

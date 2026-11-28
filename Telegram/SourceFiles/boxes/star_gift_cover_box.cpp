@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lottie/lottie_common.h"
 #include "lottie/lottie_single_player.h"
 #include "main/main_session.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "ui/effects/premium_stars_colored.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/effects/unique_gift_message_bubble.h"
@@ -1302,6 +1303,9 @@ QImage UniqueGiftCoverWidget::prepareBackdrop(
 		backdrop.gradient = CreateTopBgGradient(
 			gradientSize,
 			backdrop.colors);
+		if (!Mokagram::Appearance::UseMaterial3()) {
+			return backdrop.gradient;
+		}
 		// Mokagram: низ фона плавно переходит в цвет окна.
 		auto p = QPainter(&backdrop.gradient);
 		p.setCompositionMode(QPainter::CompositionMode_DestinationIn);

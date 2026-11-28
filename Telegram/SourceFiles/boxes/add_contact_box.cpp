@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_reply_markup.h"
 #include "window/window_session_controller.h"
 #include "menu/menu_ttl.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/toast/toast.h"
@@ -668,36 +669,40 @@ void GroupInfoBox::setInnerFocus() {
 
 void GroupInfoBox::resizeEvent(QResizeEvent *e) {
 	BoxContent::resizeEvent(e);
+	auto padding = st::newGroupInfoPadding;
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		padding.setTop(style::ConvertScale(-4));
+	}
 
 	_photo->moveToLeft(
-		st::boxPadding.left() + st::newGroupInfoPadding.left(),
-		st::boxPadding.top() + st::newGroupInfoPadding.top());
+		st::boxPadding.left() + padding.left(),
+		st::boxPadding.top() + padding.top());
 
 	const auto nameLeft = st::defaultUserpicButton.size.width()
 		+ st::newGroupNamePosition.x();
 	_title->resize(
 		width()
 			- st::boxPadding.left()
-			- st::newGroupInfoPadding.left()
+			- padding.left()
 			- st::boxPadding.right()
 			- nameLeft,
 		_title->height());
 	_title->moveToLeft(
-		st::boxPadding.left() + st::newGroupInfoPadding.left() + nameLeft,
+		st::boxPadding.left() + padding.left() + nameLeft,
 		st::boxPadding.top()
-			+ st::newGroupInfoPadding.top()
+			+ padding.top()
 			+ st::newGroupNamePosition.y());
 	if (_description) {
 		_description->resize(
 			width()
 				- st::boxPadding.left()
-				- st::newGroupInfoPadding.left()
+				- padding.left()
 				- st::boxPadding.right(),
 			_description->height());
 		const auto descriptionLeft = st::boxPadding.left()
-			+ st::newGroupInfoPadding.left();
+			+ padding.left();
 		const auto descriptionTop = st::boxPadding.top()
-			+ st::newGroupInfoPadding.top()
+			+ padding.top()
 			+ st::defaultUserpicButton.size.height()
 			+ st::newGroupDescriptionPadding.top();
 		_description->moveToLeft(descriptionLeft, descriptionTop);
@@ -974,8 +979,11 @@ void GroupInfoBox::descriptionResized() {
 }
 
 void GroupInfoBox::updateMaxHeight() {
+	const auto topPadding = Mokagram::Appearance::UseMaterial3()
+		? st::newGroupInfoPadding.top()
+		: style::ConvertScale(-4);
 	auto newHeight = st::boxPadding.top()
-		+ st::newGroupInfoPadding.top()
+		+ topPadding
 		+ st::defaultUserpicButton.size.height()
 		+ st::boxPadding.bottom()
 		+ st::newGroupInfoPadding.bottom();

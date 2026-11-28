@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/chat/pinned_bar.h"
 
+#include "mokagram/appearance/mokagram_appearance.h"
+
 #include "ui/chat/message_bar.h"
 #include "ui/effects/spoiler_mess.h"
 #include "ui/widgets/shadow.h"
@@ -31,17 +33,24 @@ PinnedBar::PinnedBar(
 	_wrap.hide(anim::type::instant);
 	_shadow->hide();
 	// Mokagram: publish the strip surface on the wrapper in the chat layout.
-	const auto updateStripPalette = [=] {
-		_wrap.setProperty("moka-strip-background", st::topBarBg->c.darker(135));
-		_wrap.entity()->update();
-	};
-	updateStripPalette();
-	style::PaletteChanged() | rpl::on_next(updateStripPalette, lifetime());
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	if (material) {
+		const auto updateStripPalette = [=] {
+			_wrap.setProperty("moka-strip-background", st::topBarBg->c.darker(135));
+			_wrap.entity()->update();
+		};
+		updateStripPalette();
+		style::PaletteChanged() | rpl::on_next(updateStripPalette, lifetime());
+	}
 
 	_wrap.entity()->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
 		// Mokagram: закреп как полоса музыки в профиле: плашка со скруглёнными нижними углами.
 		auto p = QPainter(_wrap.entity());
+		if (!material) {
+			p.fillRect(clip, st::topBarBg);
+			return;
+		}
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(_wrap.property("moka-strip-background").value<QColor>());

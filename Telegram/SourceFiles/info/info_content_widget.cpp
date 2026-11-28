@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_content_widget.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "ui/painter.h"
 
 #include "api/api_who_reacted.h"
@@ -91,12 +92,13 @@ ContentWidget::ContentWidget(
 		if (value != Wrap::Layer) {
 			applyAdditionalScroll(0);
 		}
+		const auto material = Mokagram::Appearance::UseMaterial3();
 		_bg = (value == Wrap::Layer
-			&& _controller->section().type() != Section::Type::Profile)
+			&& (!material || _controller->section().type() != Section::Type::Profile))
 			? st::boxBg
-			: st::dialogsBg;
+			: (material ? st::dialogsBg : st::profileBg);
 		// Mokagram: в окне углы скруглены, так что подложка не может быть квадратной.
-		setAttribute(Qt::WA_OpaquePaintEvent, value != Wrap::Layer);
+		setAttribute(Qt::WA_OpaquePaintEvent, !material || value != Wrap::Layer);
 		update();
 	}, lifetime());
 	if (_controller->section().type() != Section::Type::Profile) {
@@ -164,7 +166,8 @@ bool ContentWidget::isStackBottom() const {
 
 void ContentWidget::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
-	if (_controller->wrap() == Wrap::Layer) {
+	const auto material = Mokagram::Appearance::UseMaterial3();
+	if (material && _controller->wrap() == Wrap::Layer) {
 		// Скруглённая подложка сверху (32), снизу квадратная: низ скругляет слой.
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
@@ -179,7 +182,7 @@ void ContentWidget::paintEvent(QPaintEvent *e) {
 	}
 	// Mokagram: скруглённая шапка профиля не закрашивает углы подложки.
 	if (_paintPadding.isNull()
-		|| _controller->section().type() == Section::Type::Profile) {
+		|| (material && _controller->section().type() == Section::Type::Profile)) {
 		p.fillRect(e->rect(), _bg);
 	} else {
 		const auto &r = e->rect();

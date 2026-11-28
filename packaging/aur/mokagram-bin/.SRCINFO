@@ -1,0 +1,22 @@
+pkgbase = mokagram-bin
+	pkgdesc = Telegram Desktop client with mokaGram plugins
+	pkgver = 0.1.15
+	pkgrel = 1
+	url = https://github.com/mokagram/mokagram
+	arch = x86_64
+	license = GPL-3.0-or-later
+	depends = glibc
+	depends = libx11
+	depends = fontconfig
+	depends = hicolor-icon-theme
+	optdepends = python: run Python plugins
+	provides = mokagram=0.1.15
+	conflicts = mokagram
+	options = !strip
+	options = !debug
+	source = mokagram-0.1.15.tar.xz::https://github.com/mokagram/mokagram/releases/download/v0.1.15/mokagram-linux-x64.tar.xz
+	source = mokagram-icon-0.1.15.png::https://raw.githubusercontent.com/mokagram/mokagram/v0.1.15/Telegram/Resources/art/icon512.png
+	sha256sums = 695d754b0ca9eec4e881cbc0a7bc0fee3800c830001d343274020b40a5388fe8
+	sha256sums = 0a3aba450ecb85d4adc892a135fa8bcf98930c48d9295c2e5515a24b43ab5ddc
+
+pkgname = mokagram-bin

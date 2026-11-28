@@ -4,6 +4,7 @@
 // mokagram-id: 88dee111
 // Mokagram: окно установки плагина при клике на файл .plugin в чате.
 #include "mokagram/plugins/mokagram_plugin_install.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/ui/mokagram_box_parts.h"
 #include "mokagram/misc/mokagram_misc.h"
 #include "mokagram/settings/mokagram_settings_box.h"
@@ -291,15 +292,17 @@ void AddButtons(
 	const auto row = content->add(
 		object_ptr<Ui::RpWidget>(content),
 		QMargins(24, 22, 24, 22));
-	row->resize(row->width(), 48);
+	const auto &light = Appearance::UseMaterial3() ? stLight : st::defaultBoxButton;
+	const auto &active = Appearance::UseMaterial3() ? stActive : st::defaultActiveButton;
+	row->resize(row->width(), active.height);
 	const auto no = Ui::CreateChild<Ui::RoundButton>(
 		row,
 		rpl::single(cancelText),
-		stLight);
+		light);
 	const auto yes = Ui::CreateChild<Ui::RoundButton>(
 		row,
 		rpl::single(confirmText),
-		stActive);
+		active);
 	no->setClickedCallback(std::move(cancel));
 	yes->setClickedCallback(std::move(confirm));
 	row->widthValue() | rpl::on_next([=](int width) {
@@ -318,24 +321,8 @@ void FillInstallBox(
 		const QString &installed,
 		bool unverifiedSource,
 		Fn<void()> install) {
-	// Своих кнопок у окна нет: убираем зарезервированное под них место.
-	static const auto clear = style::owned_color(QColor(0, 0, 0, 0));
-	static const auto noButtons = [] {
-		auto result = st::defaultBox;
-		result.buttonPadding = style::margins();
-		result.buttonHeight = 0;
-		result.bg = clear.color();
-		return result;
-	}();
-	box->setStyle(noButtons);
-	box->paintOn([=](QPainter &p) {
-		auto hq = PainterHighQualityEnabler(p);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::boxBg);
-		p.drawRoundedRect(box->rect(), 28, 28);
-	});
+	BoxParts::StyleCustomBox(box);
 	box->setWidth(st::boxWidth);
-	box->setNoContentMargin(true);
 	const auto content = box->verticalLayout();
 	const auto name = info.name.isEmpty() ? info.id : info.name;
 
@@ -422,10 +409,11 @@ void FillInstallBox(
 			info.description,
 			st::boxLabel);
 		panel->paintOn([=](QPainter &p) {
+			const auto radius = BoxParts::SurfaceRadius(22);
 			auto hq = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
 			p.setBrush(st::windowBg);
-			p.drawRoundedRect(panel->rect(), 22, 22);
+			p.drawRoundedRect(panel->rect(), radius, radius);
 		});
 		panel->widthValue() | rpl::on_next([=](int width) {
 			label->resizeToWidth(width - 36);
@@ -691,23 +679,8 @@ constexpr auto kCardPad = 16;
 constexpr auto kAvatar = 48;
 
 void RoundedNoButtons(not_null<Ui::GenericBox*> box) {
-	static const auto clear = style::owned_color(QColor(0, 0, 0, 0));
-	static const auto noButtons = [] {
-		auto result = st::defaultBox;
-		result.buttonPadding = style::margins();
-		result.buttonHeight = 0;
-		result.bg = clear.color();
-		return result;
-	}();
-	box->setStyle(noButtons);
-	box->paintOn([=](QPainter &p) {
-		auto hq = PainterHighQualityEnabler(p);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::boxBg);
-		p.drawRoundedRect(box->rect(), 28, 28);
-	});
+	BoxParts::StyleCustomBox(box);
 	box->setWidth(st::boxWideWidth);
-	box->setNoContentMargin(true);
 }
 
 // Автор: «@name», «name» или «Имя (@name)». Возвращает остаток без юзернейма.
@@ -843,6 +816,16 @@ struct IconState {
 		not_null<QWidget*> parent,
 		int kind,
 		Fn<void()> callback) {
+	if (!Appearance::UseMaterial3()) {
+		return BoxParts::MakeRoundButton(
+			parent,
+			(kind == 1)
+				? BoxParts::RoundIcon::Close
+				: (kind == 2)
+				? BoxParts::RoundIcon::Menu
+				: BoxParts::RoundIcon::Search,
+			std::move(callback));
+	}
 	const auto button = Ui::CreateChild<Ui::AbstractButton>(parent.get());
 	button->resize(36, 36);
 	button->setPointerCursor(true);
@@ -1070,7 +1053,8 @@ Card AddPluginCard(
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
-		p.drawRoundedRect(panel->rect(), 22, 22);
+		const auto radius = BoxParts::SurfaceRadius(22);
+		p.drawRoundedRect(panel->rect(), radius, radius);
 		auto line = st::windowSubTextFg->c;
 		line.setAlpha(36);
 		p.fillRect(
@@ -1130,15 +1114,7 @@ void RoundedKeepButtons(
 		not_null<Ui::GenericBox*> box,
 		const style::Box &base) {
 	box->setStyle(base);
-	// Скругление рисует сама подложка окна, вместе с кнопками внизу.
-	const auto apply = [=] {
-		if (const auto layer = box->parentWidget()) {
-			layer->setProperty("moka-radius", 28);
-			layer->update();
-		}
-	};
-	apply();
-	base::call_delayed(0, box, apply);
+	BoxParts::RoundLayer(box);
 }
 
 void RoundedWindow(not_null<Ui::GenericBox*> box) {
@@ -1240,7 +1216,8 @@ void WelcomeBox(
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
-		p.drawRoundedRect(card->rect(), 22, 22);
+		const auto radius = BoxParts::SurfaceRadius(22);
+		p.drawRoundedRect(card->rect(), radius, radius);
 		auto line = st::windowSubTextFg->c;
 		line.setAlpha(36);
 		for (const auto y : *lines) {
@@ -1316,19 +1293,21 @@ void WelcomeBox(
 	const auto buttons = content->add(
 		object_ptr<Ui::RpWidget>(content),
 		QMargins(14, 0, 14, 16));
-	buttons->resize(buttons->width(), 40);
+	const auto &active = Appearance::UseMaterial3() ? stBig : st::defaultActiveButton;
+	const auto &secondary = Appearance::UseMaterial3() ? stSoft : st::defaultBoxButton;
+	buttons->resize(buttons->width(), active.height);
 	const auto plugins = Ui::CreateChild<Ui::RoundButton>(
 		buttons,
 		rpl::single(U(Mokagram::Lang::Tr("Плагины"))),
-		stSoft);
+		secondary);
 	const auto more = Ui::CreateChild<Ui::RoundButton>(
 		buttons,
 		rpl::single(U(Mokagram::Lang::Tr("Настройки"))),
-		stSoft);
+		secondary);
 	const auto done = Ui::CreateChild<Ui::RoundButton>(
 		buttons,
 		rpl::single(U(Mokagram::Lang::Tr("Готово"))),
-		stBig);
+		active);
 	plugins->setClickedCallback([=] {
 		box->closeBox();
 		if (const auto strong = weak.get()) {
@@ -1404,7 +1383,8 @@ void PluginsBox(
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
-		p.drawRoundedRect(pill->rect(), 18, 18);
+		const auto radius = BoxParts::SurfaceRadius(18);
+		p.drawRoundedRect(pill->rect(), radius, radius);
 	});
 	const auto field = Ui::CreateChild<Ui::InputField>(
 		header,
@@ -1453,7 +1433,8 @@ void PluginsBox(
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::windowBg);
-		p.drawRoundedRect(engine->rect(), 28, 28);
+		const auto radius = BoxParts::SurfaceRadius(28);
+		p.drawRoundedRect(engine->rect(), radius, radius);
 	});
 	engine->widthValue() | rpl::on_next([=](int width) {
 		engineLabel->move(22, (engine->height() - engineLabel->height()) / 2);

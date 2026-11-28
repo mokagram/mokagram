@@ -1,0 +1,38 @@
+pkgname=mokagram-bin
+pkgver=0.1.15
+pkgrel=1
+pkgdesc='Telegram Desktop client with mokaGram plugins'
+arch=('x86_64')
+url='https://github.com/mokagram/mokagram'
+license=('GPL-3.0-or-later')
+depends=('glibc' 'libx11' 'fontconfig' 'hicolor-icon-theme')
+optdepends=('python: run Python plugins')
+provides=("mokagram=$pkgver")
+conflicts=('mokagram')
+options=('!strip' '!debug')
+_raw="https://raw.githubusercontent.com/mokagram/mokagram/v$pkgver"
+source=("mokagram-$pkgver.tar.xz::$url/releases/download/v$pkgver/mokagram-linux-x64.tar.xz"
+        "mokagram-icon-$pkgver.png::$_raw/Telegram/Resources/art/icon512.png")
+sha256sums=('695d754b0ca9eec4e881cbc0a7bc0fee3800c830001d343274020b40a5388fe8'
+            '0a3aba450ecb85d4adc892a135fa8bcf98930c48d9295c2e5515a24b43ab5ddc')
+
+package() {
+    install -d "$pkgdir/opt"
+    cp -a mokaGram "$pkgdir/opt/mokagram"
+    install -d "$pkgdir/usr/bin" "$pkgdir/usr/share/applications"
+    ln -s /opt/mokagram/Telegram "$pkgdir/usr/bin/mokagram"
+    install -Dm644 "mokagram-icon-$pkgver.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/mokagram.png"
+    install -d "$pkgdir/usr/share/licenses/$pkgname"
+    ln -s /opt/mokagram/MOKAGRAM_NOTICE.md "$pkgdir/usr/share/licenses/$pkgname/"
+    cat > "$pkgdir/usr/share/applications/mokagram.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=mokaGram
+Exec=mokagram -- %U
+Icon=mokagram
+Terminal=false
+StartupWMClass=TelegramDesktop
+Categories=Network;InstantMessaging;Qt;
+MimeType=x-scheme-handler/tg;x-scheme-handler/tonsite;x-scheme-handler/ton;
+EOF
+}

@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "menu/menu_send.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "ui/controls/emoji_button.h"
 #include "ui/controls/emoji_button_factory.h"
 #include "ui/rect.h"
@@ -54,6 +55,33 @@ namespace {
 constexpr auto kWarnTitleLimit = 12;
 constexpr auto kWarnTaskLimit = 24;
 constexpr auto kErrorLimit = 99;
+
+[[nodiscard]] style::InputField ClassicTodoField(style::InputField result) {
+	result.textBg = result.textBgActive = st::windowBgOver;
+	result.placeholderFg = st::placeholderFg;
+	result.placeholderFgActive = st::placeholderFgActive;
+	result.border = 0;
+	result.borderRadius = style::ConvertScale(18);
+	return result;
+}
+
+[[nodiscard]] const style::InputField &TodoTitleField(bool premium) {
+	if (Mokagram::Appearance::UseMaterial3()) {
+		return premium ? st::createTodoTitleFieldPremium : st::createTodoTitleField;
+	}
+	static const auto plain = ClassicTodoField(st::createTodoTitleField);
+	static const auto rich = ClassicTodoField(st::createTodoTitleFieldPremium);
+	return premium ? rich : plain;
+}
+
+[[nodiscard]] const style::InputField &TodoOptionField(bool premium) {
+	if (Mokagram::Appearance::UseMaterial3()) {
+		return premium ? st::createTodoOptionField : st::createTodoOptionFieldPlain;
+	}
+	static const auto plain = ClassicTodoField(st::createTodoOptionFieldPlain);
+	static const auto rich = ClassicTodoField(st::createTodoOptionField);
+	return premium ? rich : plain;
+}
 
 class Tasks {
 public:
@@ -283,9 +311,7 @@ Tasks::Task::Task(
 , _field(
 	Ui::CreateChild<Ui::InputField>(
 		_content.get(),
-		session->user()->isPremium()
-			? st::createTodoOptionField
-			: st::createTodoOptionFieldPlain,
+		TodoOptionField(session->user()->isPremium()),
 		Ui::InputField::Mode::MultiLine,
 		tr::lng_todo_create_list_add()))
 , _limit(session->appConfig().todoListItemTextLimit()) {
@@ -882,9 +908,7 @@ not_null<Ui::InputField*> EditTodoListBox::setupTitle(
 	const auto title = container->add(
 		object_ptr<Ui::InputField>(
 			container,
-			isPremium
-				? st::createTodoTitleFieldPremium
-				: st::createTodoTitleField,
+			TodoTitleField(isPremium),
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_todo_create_title_placeholder()),
 		st::createPollFieldPadding);
@@ -901,7 +925,9 @@ not_null<Ui::InputField*> EditTodoListBox::setupTitle(
 			this,
 			_controller,
 			_emojiPanel.get(),
-			st::createTodoTitleEmojiPosition);
+			Mokagram::Appearance::UseMaterial3()
+				? st::createTodoTitleEmojiPosition
+				: QPoint(style::ConvertScale(-48), style::ConvertScale(-1)));
 		_emojiPanel->selector()->emojiChosen(
 		) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
 			if (title->hasFocus()) {
@@ -963,8 +989,19 @@ object_ptr<Ui::RpWidget> EditTodoListBox::setupContent() {
 	const auto container = result.data();
 
 	const auto title = setupTitle(container);
-	Ui::AddSkip(container, 12);
-	Ui::AddSubsectionTitle(container, tr::lng_todo_create_list());
+	if (Mokagram::Appearance::UseMaterial3()) {
+		Ui::AddSkip(container, 12);
+		Ui::AddSubsectionTitle(container, tr::lng_todo_create_list());
+	} else {
+		Ui::AddDivider(container);
+		Ui::AddSkip(container);
+		container->add(
+			object_ptr<Ui::FlatLabel>(
+				container,
+				tr::lng_todo_create_list(),
+				st::defaultSubsectionTitle),
+			st::createPollFieldTitlePadding);
+	}
 	const auto media = _editingItem ? _editingItem->media() : nullptr;
 	const auto todolist = media ? media->todolist() : nullptr;
 	const auto tasks = lifetime().make_state<Tasks>(
@@ -1007,18 +1044,35 @@ object_ptr<Ui::RpWidget> EditTodoListBox::setupContent() {
 	Ui::AddSkip(container);
 	Ui::AddSubsectionTitle(container, tr::lng_todo_create_settings());
 
-	const auto allowAdd = container->add(
-		object_ptr<Ui::SettingsButton>(
+	struct Permission {
+		Ui::SettingsButton *toggle = nullptr;
+		Ui::Checkbox *checkbox = nullptr;
+
+		[[nodiscard]] bool checked() const {
+			return toggle ? toggle->toggled() : checkbox->checked();
+		}
+	};
+	const auto addPermission = [=](rpl::producer<QString> text, bool checked) -> Permission {
+		if (Mokagram::Appearance::UseMaterial3()) {
+			const auto button = container->add(object_ptr<Ui::SettingsButton>(
+				container,
+				std::move(text),
+				st::settingsButtonNoIcon))->toggleOn(rpl::single(checked));
+			return { .toggle = button };
+		}
+		const auto checkbox = container->add(object_ptr<Ui::Checkbox>(
 			container,
-			tr::lng_todo_create_allow_add(),
-			st::settingsButtonNoIcon)
-	)->toggleOn(rpl::single(!todolist || todolist->othersCanAppend()));
-	const auto allowMark = container->add(
-		object_ptr<Ui::SettingsButton>(
-			container,
-			tr::lng_todo_create_allow_mark(),
-			st::settingsButtonNoIcon)
-	)->toggleOn(rpl::single(!todolist || todolist->othersCanComplete()));
+			std::move(text),
+			checked,
+			st::defaultCheckbox), st::createPollCheckboxMargin);
+		return { .checkbox = checkbox };
+	};
+	const auto allowAdd = addPermission(
+		tr::lng_todo_create_allow_add(),
+		!todolist || todolist->othersCanAppend());
+	const auto allowMark = addPermission(
+		tr::lng_todo_create_allow_mark(),
+		!todolist || todolist->othersCanComplete());
 
 	tasks->tabbed(
 	) | rpl::on_next([=] {
@@ -1049,8 +1103,8 @@ object_ptr<Ui::RpWidget> EditTodoListBox::setupContent() {
 			textWithTags.tags);
 		TextUtilities::Trim(result.title);
 		result.items = tasks->toTodoListItems();
-		const auto allowAddTasks = allowAdd->toggled();
-		const auto allowMarkTasks = allowMark->toggled();
+		const auto allowAddTasks = allowAdd.checked();
+		const auto allowMarkTasks = allowMark.checked();
 		result.setFlags(Flag(0)
 			| (allowAddTasks ? Flag::OthersCanAppend : Flag(0))
 			| (allowMarkTasks ? Flag::OthersCanComplete : Flag(0)));
@@ -1144,7 +1198,9 @@ void EditTodoListBox::prepare() {
 
 	const auto inner = setInnerWidget(setupContent());
 
-	setDimensionsToContent(st::createPollWidth, inner);
+	setDimensionsToContent(Mokagram::Appearance::UseMaterial3()
+		? st::createPollWidth
+		: st::boxWideWidth, inner);
 }
 
 AddTodoListTasksBox::AddTodoListTasksBox(
@@ -1167,7 +1223,9 @@ void AddTodoListTasksBox::prepare() {
 
 	const auto inner = setInnerWidget(setupContent());
 
-	setDimensionsToContent(st::createPollWidth, inner);
+	setDimensionsToContent(Mokagram::Appearance::UseMaterial3()
+		? st::createPollWidth
+		: st::boxWideWidth, inner);
 
 	scrollToY(ScrollMax);
 }

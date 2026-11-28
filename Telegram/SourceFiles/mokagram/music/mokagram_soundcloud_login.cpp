@@ -4,6 +4,7 @@
 // mokagram-id: 8b14f3d2
 #include "mokagram/music/mokagram_soundcloud_login.h"
 
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/lang/mokagram_lang.h"
 #include "mokagram/music/mokagram_soundcloud.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
@@ -747,20 +748,24 @@ void ShowSoundCloudLogin(Fn<void()> onLoggedIn, Fn<void()> onClosed) {
 		};
 		field->submits() | rpl::on_next(submit, field->lifetime());
 
-		// Две пилюли на всю ширину, как кнопка «Копировать» в эталоне.
+		// Keep both actions full-width in either interface style.
 		static const auto stMain = [] {
 			auto result = st::defaultActiveButton;
 			result.height = style::ConvertScale(44);
 			result.textTop = style::ConvertScale(12);
-			result.radius = style::ConvertScale(22);
-			result.fullRadius = true;
+			if (Appearance::UseMaterial3()) {
+				result.radius = style::ConvertScale(22);
+				result.fullRadius = true;
+			}
 			return result;
 		}();
 		static const auto stSecond = [] {
-			auto result = BoxParts::PillLight();
+			auto result = Appearance::UseMaterial3() ? BoxParts::PillLight() : st::defaultLightButton;
 			result.height = style::ConvertScale(44);
 			result.textTop = style::ConvertScale(12);
-			result.radius = style::ConvertScale(22);
+			if (Appearance::UseMaterial3()) {
+				result.radius = style::ConvertScale(22);
+			}
 			return result;
 		}();
 		const auto addPill = [=](

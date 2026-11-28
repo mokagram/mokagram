@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_common.h"
 #include "settings/sections/settings_privacy_security.h"
 #include "ui/vertical_list.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "mokagram/ui/mokagram_box_parts.h"
 #include "ui/widgets/buttons.h"
@@ -95,6 +96,9 @@ struct CornerKey {
 [[nodiscard]] not_null<Ui::VerticalLayout*> BeginGroup(
 		not_null<Ui::VerticalLayout*> outer,
 		style::color outerBg = st::dialogsBg) {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		return outer->add(object_ptr<Ui::VerticalLayout>(outer));
+	}
 	const auto pad = outer->add(
 		object_ptr<Ui::PaddingWrap<Ui::VerticalLayout>>(
 			outer,
@@ -358,6 +362,9 @@ void HideEmptyGroup(not_null<Ui::VerticalLayout*> container) {
 not_null<Ui::FlatLabel*> MakeOuterTitle(
 		not_null<Ui::VerticalLayout*> outer,
 		rpl::producer<QString> text) {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		return Ui::AddSubsectionTitle(outer, std::move(text));
+	}
 	static const auto st = [] {
 		auto value = st::boxDividerLabel;
 		value.minWidth = 1;
@@ -386,6 +393,9 @@ not_null<Ui::FlatLabel*> MakeOuterTitle(
 }
 
 void EnsureGroup(BuildContext &context) {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		return;
+	}
 	if (const auto wctx = std::get_if<WidgetContext>(&context)) {
 		if (!InsideGroup(wctx->container)) {
 			wctx->container = BeginGroup(wctx->container);
@@ -518,7 +528,7 @@ Ui::SettingsButton *SectionBuilder::addButton(ButtonArgs &&args) {
 		Mokagram::BoxParts::MakePill(
 			button.data(),
 			[] { return st::windowBg->c; });
-		if (navigates) {
+		if (navigates && Mokagram::Appearance::UseMaterial3()) {
 			// Mokagram: стрелка справа, как в настройках macOS.
 			const auto chevron = Ui::CreateChild<Ui::RpWidget>(button.data());
 			chevron->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -573,6 +583,10 @@ Ui::SettingsButton *SectionBuilder::addSectionButton(SectionArgs &&args) {
 
 void SectionBuilder::addDivider() {
 	v::match(_context, [&](WidgetContext &ctx) {
+		if (!Mokagram::Appearance::UseMaterial3()) {
+			Ui::AddDivider(ctx.container);
+			return;
+		}
 		// Mokagram: вместо полосы-разделителя заканчивается карточка, следующая
 		// строка сама откроет новую (иначе остаются пустые полоски).
 		if (const auto parent = GroupOuter(ctx.container)) {
@@ -592,6 +606,10 @@ void SectionBuilder::addDivider() {
 
 void SectionBuilder::addSkip() {
 	v::match(_context, [&](const WidgetContext &ctx) {
+		if (!Mokagram::Appearance::UseMaterial3()) {
+			Ui::AddSkip(ctx.container);
+			return;
+		}
 		if (InsideGroup(ctx.container)) {
 			const auto skip = ctx.container->add(
 				object_ptr<Ui::FixedHeightWidget>(
@@ -605,6 +623,10 @@ void SectionBuilder::addSkip() {
 
 void SectionBuilder::addSkip(int height) {
 	v::match(_context, [&](const WidgetContext &ctx) {
+		if (!Mokagram::Appearance::UseMaterial3()) {
+			Ui::AddSkip(ctx.container, height);
+			return;
+		}
 		if (InsideGroup(ctx.container)) {
 			const auto skip = ctx.container->add(
 				object_ptr<Ui::FixedHeightWidget>(ctx.container, height));

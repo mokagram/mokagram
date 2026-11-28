@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 #include "mokagram/inline/mokagram_inline_ui.h"
 #include "mokagram/effects/mokagram_effects.h"
 #include "mokagram/effects/mokagram_black_hole.h"
@@ -276,7 +277,7 @@ constexpr auto kMokaComposerButton = "moka-composer-button";
 
 // Mokagram: панель ввода парит баббло́м, отступ от краёв окна.
 [[nodiscard]] int MokaBubbleSkip() {
-	return style::ConvertScale(10);
+	return Mokagram::Appearance::UseMaterial3() ? style::ConvertScale(10) : 0;
 }
 
 constexpr auto kMokaComposeOverlay = "moka-compose-overlay";
@@ -355,6 +356,9 @@ private:
 		QWidget *parent,
 		const QString &text,
 		const style::FlatButton &st) {
+	if (!Mokagram::Appearance::UseMaterial3()) {
+		return object_ptr<Ui::FlatButton>(parent, text, st);
+	}
 	return object_ptr<Ui::FlatButton>::fromRaw(
 		new MokaBubbleButton(parent, text, st));
 }
@@ -534,7 +538,9 @@ HistoryWidget::HistoryWidget(
 	setAcceptDrops(true);
 	setVisualTabOrder(true);
 	// Mokagram: expose the adjoining strip surface to the chat header.
-	_topBars->setProperty("moka-strip-stack", true);
+	if (Mokagram::Appearance::UseMaterial3()) {
+		_topBars->setProperty("moka-strip-stack", true);
+	}
 
 	// Mokagram: панель ввода рисуется слоем поверх ленты, чтобы
 	// переписка была видна под скруглёнными углами и по бокам баббла.
@@ -897,11 +903,13 @@ HistoryWidget::HistoryWidget(
 	});
 	InitMessageFieldFade(_field, st::historyComposeField.textBg);
 	// Mokagram: плейсхолдер и текст по центру пилюли (шрифт садил их ниже на 3px).
-	_field->setAdditionalMargins(QMargins(
-		0,
-		-style::ConvertScale(3),
-		0,
-		style::ConvertScale(3)));
+	if (Mokagram::Appearance::UseMaterial3()) {
+		_field->setAdditionalMargins(QMargins(
+			0,
+			-style::ConvertScale(3),
+			0,
+			style::ConvertScale(3)));
+	}
 
 	setupFastButtonMode();
 	initAiButton();
@@ -1019,7 +1027,7 @@ HistoryWidget::HistoryWidget(
 	_botCommandStart->addClickHandler([=] { startBotCommand(); });
 
 	_topShadow->hide();
-	{
+	if (Mokagram::Appearance::UseMaterial3()) {
 		// Mokagram: линия под шапкой не нужна, шапка скруглена.
 		const auto effect = new QGraphicsOpacityEffect(_topShadow);
 		effect->setOpacity(0.);
@@ -9174,7 +9182,8 @@ void HistoryWidget::updateHistoryGeometry(
 			|| isMuteUnmute()
 			|| isReportMessages());
 	const auto mokaField = (editingMessage() || _canSendMessages);
-	const auto mokaFloat = !isChoosingTheme()
+	const auto mokaFloat = Mokagram::Appearance::UseMaterial3()
+		&& !isChoosingTheme()
 		&& !isSearching()
 		&& !_kbShown
 		&& (mokaButtons || mokaField);
@@ -10287,7 +10296,9 @@ void HistoryWidget::setupTranslateBar() {
 		_translateBarHeight = height;
 		updateHistoryGeometry();
 		updateControlsGeometry();
-		_topBar->update(); // Mokagram: redraw the seam when the strip opens or closes.
+		if (Mokagram::Appearance::UseMaterial3()) {
+			_topBar->update(); // Redraw the seam when the strip opens or closes.
+		}
 		_topDelta = 0;
 	}, _translateBar->lifetime());
 
@@ -12102,7 +12113,7 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 	p.setInactive(
 		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
 	// Mokagram: верхние углы панели ввода скруглены.
-	{
+	if (Mokagram::Appearance::UseMaterial3()) {
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
 		p.setBrush(st::historyReplyBg);
@@ -12114,6 +12125,8 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 			myrtlrect(skip, backy, width() - 2 * skip, backh),
 			radius,
 			radius);
+	} else {
+		p.fillRect(myrtlrect(0, backy, width(), backh), st::historyReplyBg);
 	}
 	// всё содержимое панели (ответ, правка, превью) сдвинуто внутрь баббла
 	p.save();

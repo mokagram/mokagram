@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/media/info_media_buttons.h"
+#include "mokagram/appearance/mokagram_appearance.h"
 
 #include "base/call_delayed.h"
 #include "base/platform/base_platform_info.h"
@@ -249,7 +250,8 @@ not_null<Ui::SettingsButton*> AddButton(
 		sublist,
 		type);
 	// Mokagram: keep hover on the profile card clear of overlapping tooltips.
-	if (openInWindow && location != ButtonLocation::Profile) {
+	if (openInWindow && (location != ButtonLocation::Profile
+		|| !Mokagram::Appearance::UseMaterial3())) {
 		Ui::InstallTooltip(result, [=] {
 			return Platform::IsMac()
 				? tr::lng_new_window_tooltip_cmd(tr::now)
