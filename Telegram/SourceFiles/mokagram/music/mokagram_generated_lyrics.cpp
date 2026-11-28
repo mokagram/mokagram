@@ -20,6 +20,8 @@
 
 #include <crl/crl.h>
 
+#include <QtCore/QBuffer>
+#include <QtCore/QCoreApplication>
 #include <QtCore/QCryptographicHash>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
@@ -28,6 +30,9 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QSaveFile>
 #include <QtCore/QStandardPaths>
+#include <QtCore/QJsonObject>
+#include <QtNetwork/QNetworkAccessManager>
+#include <QtNetwork/QNetworkReply>
 
 #include <cstring>
 #include <map>
@@ -42,6 +47,22 @@ constexpr auto kConcurrentAudioParts = 8;
 constexpr auto kPartTimeout = crl::time(30000);
 constexpr auto kMaxTranscriptBytes = 1024 * 1024;
 constexpr auto kMaxDiskTranscripts = 96;
+constexpr auto kMaxServerTranscriptBytes = 2 * 1024 * 1024;
+
+[[nodiscard]] std::vector<Asr::TimedWord> ServerWords(const QByteArray &payload) {
+	auto result = std::vector<Asr::TimedWord>();
+	for (const auto &value : QJsonDocument::fromJson(payload).object().value(u"words"_q).toArray()) {
+		const auto word = value.toObject();
+		const auto start = word.value(u"startMs"_q).toInteger(-1);
+		const auto end = word.value(u"endMs"_q).toInteger(-1);
+		auto text = word.value(u"text"_q).toString().trimmed();
+		if (!text.isEmpty() && start >= (result.empty() ? 0 : result.back().endMs)
+			&& end > start && end <= Asr::kMaxRecordingDurationMs) {
+			result.push_back({ start, end, std::move(text), word.value(u"join"_q).toBool() });
+		}
+	}
+	return result;
+}
 
 [[nodiscard]] const char *SongLanguages(const QString &title, const QString &artist) {
 	const auto clean = CleanTitle(title, artist);
@@ -267,14 +288,24 @@ public:
 		QString key,
 		const AudioMsgId &audio,
 		const char *languages,
+		bool publicTrack,
 		Fn<void(TranscriptPtr)> done,
 		Fn<void(LyricsSyncProgress)> progress)
 	: _key(std::move(key))
 	, _path(TranscriptPath(_key))
 	, _audio(audio)
 	, _languages(languages)
+	, _publicTrack(publicTrack)
 	, _timeout([this] { finish({}); }) {
 		_waiting.push_back({ std::move(done), std::move(progress) });
+	}
+
+	~Recognition() {
+		if (_reply) {
+			QObject::disconnect(_replyFinished);
+			_reply->abort();
+			_reply->deleteLater();
+		}
 	}
 
 	[[nodiscard]] bool matches(const AudioMsgId &audio) const {
@@ -424,26 +455,119 @@ private:
 			finish({});
 			return;
 		}
-		Asr::Engine::Instance().transcribeSong(
-			std::move(bytes), std::move(location), _languages, _guard.make_guard(),
-			[this](float fraction) {
-				setProgress({ LyricsSyncStage::Recognizing, fraction });
-			},
-			[this](std::vector<Asr::TimedWord> words) {
-				if (words.empty()) {
-					finish({});
-					return;
-				}
-				auto transcript = std::make_shared<Transcript>(std::move(words));
-				SaveTranscript(_path, transcript);
-				finish(std::move(transcript));
+		if (!_publicTrack) {
+			Asr::Engine::Instance().transcribeSong(
+				std::move(bytes), std::move(location), _languages, _guard.make_guard(),
+				[this](float fraction) {
+					setProgress({ LyricsSyncStage::Recognizing, fraction });
+				},
+				[this](std::vector<Asr::TimedWord> words) {
+					if (words.empty()) {
+						finish({});
+						return;
+					}
+					auto transcript = std::make_shared<Transcript>(std::move(words));
+					SaveTranscript(_path, transcript);
+					finish(std::move(transcript));
 			});
+			return;
+		}
+		if (!bytes.isEmpty()) {
+			auto buffer = std::make_shared<QBuffer>();
+			buffer->setData(std::move(bytes));
+			buffer->open(QIODevice::ReadOnly);
+			_upload = std::move(buffer);
+		} else {
+			if (!location.accessEnable()) {
+				finish({});
+				return;
+			}
+			const auto name = location.name();
+			_upload = std::shared_ptr<QFile>(new QFile(name), [location = std::move(location)](QFile *file) {
+				delete file;
+				location.accessDisable();
+			});
+			if (!_upload->open(QIODevice::ReadOnly)
+				|| _upload->size() <= 0 || _upload->size() > kMaxAudioBytes) {
+				finish({});
+				return;
+			}
+		}
+		auto hash = QCryptographicHash(QCryptographicHash::Sha256);
+		if (!hash.addData(_upload.get()) || !_upload->seek(0)) {
+			finish({});
+			return;
+		}
+		const auto weak = base::make_weak(this);
+		setProgress({ LyricsSyncStage::Recognizing });
+		if (!weak.get()) {
+			return;
+		}
+		auto request = serverRequest(u"https://api.moka.wtf/v1/lyrics/cache"_q);
+		request.setRawHeader("X-Lyrics-SHA256", hash.result().toHex());
+		request.setTransferTimeout(5000);
+		watchReply(network()->get(request), true);
+	}
+
+	static QNetworkAccessManager *network() {
+		static const auto manager = new QNetworkAccessManager(QCoreApplication::instance());
+		return manager;
+	}
+
+	QNetworkRequest serverRequest(const QString &url) const {
+		auto request = QNetworkRequest(QUrl(url));
+		request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+			QNetworkRequest::ManualRedirectPolicy);
+		if (_languages) {
+			request.setRawHeader("X-Lyrics-Languages", _languages);
+		}
+		return request;
+	}
+
+	void submitAudio() {
+		auto request = serverRequest(u"https://api.moka.wtf/v1/lyrics/transcribe"_q);
+		request.setHeader(QNetworkRequest::ContentTypeHeader, u"application/octet-stream"_q);
+		request.setHeader(QNetworkRequest::ContentLengthHeader, _upload->size());
+		request.setTransferTimeout(180000);
+		const auto reply = network()->post(request, _upload.get());
+		QObject::connect(reply, &QObject::destroyed, [upload = std::move(_upload)] {});
+		watchReply(reply, false);
+	}
+
+	void watchReply(QNetworkReply *reply, bool cacheLookup) {
+		_reply = reply;
+		reply->setReadBufferSize(kMaxServerTranscriptBytes + 1);
+		QObject::connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 bytes, qint64 total) {
+			if (bytes > kMaxServerTranscriptBytes || total > kMaxServerTranscriptBytes) {
+				reply->abort();
+			}
+		});
+		_replyFinished = QObject::connect(reply, &QNetworkReply::finished, reply, [this, reply, cacheLookup] {
+			_reply = nullptr;
+			reply->deleteLater();
+			const auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			if (cacheLookup && status == 404) {
+				submitAudio();
+				return;
+			}
+			auto words = (reply->error() == QNetworkReply::NoError && status == 200)
+				? ServerWords(reply->read(kMaxServerTranscriptBytes))
+				: std::vector<Asr::TimedWord>();
+			if (words.empty()) {
+				finish({});
+				return;
+			}
+			auto transcript = std::make_shared<Transcript>(std::move(words));
+			SaveTranscript(_path, transcript);
+			finish(std::move(transcript));
+		});
 	}
 
 	const QString _key;
 	const QString _path;
 	const AudioMsgId _audio;
 	const char *const _languages;
+	const bool _publicTrack;
 	struct Listener {
 		Fn<void(TranscriptPtr)> done;
 		Fn<void(LyricsSyncProgress)> progress;
@@ -456,6 +580,9 @@ private:
 	std::unique_ptr<Media::Streaming::Loader> _loader;
 	base::Timer _timeout;
 	base::binary_guard _guard;
+	std::shared_ptr<QIODevice> _upload;
+	QNetworkReply *_reply = nullptr;
+	QMetaObject::Connection _replyFinished;
 	rpl::lifetime _lifetime;
 };
 
@@ -484,6 +611,7 @@ void FetchPlaybackLyrics(
 	};
 	FetchLyrics(track.id, track.title, track.artist, track.durationMs,
 		[id = track.id, duration = track.durationMs, audio, current, syncPlain,
+		 publicTrack = !track.videoId.isEmpty() || track.id.toULongLong() != 0,
 		 languages = SongLanguages(track.title, track.artist),
 		 done = std::move(done), progress = std::move(progress)](Lyrics source) {
 			if (!current()) {
@@ -570,7 +698,7 @@ void FetchPlaybackLyrics(
 				active->finish({});
 			}
 			active = std::make_unique<Recognition>(
-				key, audio, languages, std::move(useTranscript), report);
+				key, audio, languages, publicTrack, std::move(useTranscript), report);
 			active->start();
 		});
 }
