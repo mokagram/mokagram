@@ -8080,19 +8080,44 @@ void PaintHomeSideGlow(
 		(side - minimum) / double(style::ConvertScale(64)), 1.);
 	const auto opacity = light ? (.16 + .08 * pulse) : (.30 + .14 * pulse);
 	tint.setAlphaF(tint.alphaF() * strength * opacity);
-	auto glow = QRadialGradient(QPointF(.5, .5), .5);
-	glow.setCoordinateMode(QGradient::ObjectMode);
-	glow.setColorAt(0., tint);
-	tint.setAlpha(0);
-	glow.setColorAt(1., tint);
 	const auto left = band.x();
 	const auto right = band.x() + band.width();
 	const auto top = band.y();
 	const auto height = band.height();
-	p.fillRect(QRectF(left - side, top, 2. * side, .8 * height), glow);
-	p.fillRect(QRectF(right - side, top, 2. * side, .8 * height), glow);
-	p.fillRect(QRectF(left, top + .6 * height, side, .4 * height), glow);
-	p.fillRect(QRectF(right - side, top + .76 * height, side, .4 * height), glow);
+	const auto fade = [&](QRectF rect, QPointF center, double radius) {
+		auto gradient = QRadialGradient(center, radius);
+		gradient.setColorAt(0., tint);
+		gradient.setColorAt(.42, tint);
+		auto transparent = tint;
+		transparent.setAlpha(0);
+		gradient.setColorAt(1., transparent);
+		p.fillRect(rect, gradient);
+	};
+	fade(
+		QRectF(left - side, top, side, height),
+		QPointF(left - side * .08, top + height * .34),
+		side * 1.08);
+	fade(
+		QRectF(right, top, side, height),
+		QPointF(right + side * .08, top + height * .34),
+		side * 1.08);
+
+	const auto lowerFade = [&](QRectF rect, QPointF center) {
+		auto lower = tint;
+		lower.setAlphaF(lower.alphaF() * .72);
+		auto gradient = QRadialGradient(center, side * .9);
+		gradient.setColorAt(0., lower);
+		gradient.setColorAt(.5, lower);
+		lower.setAlpha(0);
+		gradient.setColorAt(1., lower);
+		p.fillRect(rect, gradient);
+	};
+	lowerFade(
+		QRectF(left - side * .12, top + height * .58, side * 1.12, height * .42),
+		QPointF(left - side * .02, top + height * .92));
+	lowerFade(
+		QRectF(right - side, top + height * .58, side * 1.12, height * .42),
+		QPointF(right + side * .02, top + height * .92));
 }
 
 struct PlayerSpringSpec {
