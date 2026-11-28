@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "ui/chat/chat_style.h"
 #include "ui/chat/torn_edge.h"
+#include "ui/image/image_prepare.h"
+#include "ui/cached_round_corners.h"
 #include "ui/painter.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_style.h"
