@@ -12231,7 +12231,11 @@ protected:
 		const auto layout = computeLayout();
 		if (_tab == Tab::Home && _homeAlbumOpen
 			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
-			PaintHomeSideGlow(p, QRect(0, layout.scrollTop, width(),
+			const auto scrollWidth = std::min(
+				layout.center.width(), s(kMusicListMaxWidth));
+			const auto scrollLeft = layout.center.x()
+				+ (layout.center.width() - scrollWidth) / 2;
+			PaintHomeSideGlow(p, QRect(scrollLeft, layout.scrollTop, scrollWidth,
 				layout.contentBottom - layout.scrollTop), homeSideGlowColor(),
 				IsLightMusicTheme(), _homeSideGlowPulsing ? _backgroundPulse : 0.);
 		}
