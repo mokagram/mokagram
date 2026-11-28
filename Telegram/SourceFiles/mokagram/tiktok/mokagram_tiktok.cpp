@@ -21,6 +21,31 @@ namespace {
 
 constexpr auto kTitle = "TikTok";
 constexpr auto kUrl = "https://www.tiktok.com/";
+constexpr auto kWidthProperty = "mokaTikTokWidth";
+
+// The desktop feed has a minimum width for navigation, video and actions.
+constexpr auto kFitPage = R"JS(
+(() => {
+	if (window.top !== window) return;
+	let frame = 0;
+	let applied = 0;
+	const fit = () => {
+		frame = 0;
+		const zoom = Math.min(1, window.innerWidth / 640);
+		if (!zoom || zoom === applied) return;
+		applied = zoom;
+		const root = document.documentElement;
+		root.style.setProperty('zoom', String(zoom), 'important');
+		root.style.setProperty('overflow-x', 'hidden', 'important');
+	};
+	const schedule = () => {
+		if (!frame) frame = requestAnimationFrame(fit);
+	};
+	window.addEventListener('resize', schedule, { passive: true });
+	document.addEventListener('DOMContentLoaded', schedule, { once: true });
+	schedule();
+})();
+)JS";
 
 // TikTok brand mark from Simple Icons (CC0).
 constexpr auto kLogoPath =
@@ -89,6 +114,8 @@ public:
 protected:
 	void resizeEvent(QResizeEvent *) override;
 	void showFinishedHook() override;
+	void showEvent(QShowEvent *event) override;
+	void hideEvent(QHideEvent *event) override;
 	void paintEvent(QPaintEvent *event) override {
 		QPainter(this).fillRect(event->rect(), st::windowBg);
 	}
@@ -98,6 +125,7 @@ private:
 	Ui::IconButton *_close = nullptr;
 	Ui::FlatLabel *_error = nullptr;
 	bool _failed = true;
+	bool _loaded = false;
 	QTemporaryDir _storage;
 	std::string _storageToken = Webview::GenerateStorageToken();
 	std::unique_ptr<Webview::Window> _webview;
@@ -121,7 +149,7 @@ Section::Section(
 		.storageId = { _storage.path(), QByteArray::fromStdString(_storageToken) },
 		.safe = true,
 	});
-	if (const auto view = _webview->widget()) {
+	if (_webview->widget()) {
 		_failed = false;
 		_error->hide();
 		_webview->setNavigationPolicyHandler([](QString address, bool popup) {
@@ -132,10 +160,13 @@ Section::Section(
 				&& (host == u"tiktok.com"_q || host.endsWith(u".tiktok.com"_q));
 		});
 		_webview->setNavigationDoneHandler([=](bool success) {
-			_failed = !success;
-			showFinishedHook();
+			if (!_loaded) {
+				_loaded = success;
+				_failed = !success;
+				showFinishedHook();
+			}
 		});
-		view->show();
+		_webview->init(QByteArray(kFitPage));
 		_webview->navigate(QString::fromLatin1(kUrl));
 	}
 }
@@ -152,8 +183,22 @@ Section::~Section() {
 void Section::showFinishedHook() {
 	_error->setVisible(_failed);
 	if (const auto view = _webview ? _webview->widget() : nullptr) {
-		view->setVisible(!_failed);
+		const auto visible = isVisible() && !_failed;
+		view->setVisible(visible);
+		_webview->setVisible(visible);
 	}
+}
+
+void Section::showEvent(QShowEvent *event) {
+	SectionWidget::showEvent(event);
+	showFinishedHook();
+}
+
+void Section::hideEvent(QHideEvent *event) {
+	if (_webview && _webview->valid()) {
+		_webview->setVisible(false);
+	}
+	SectionWidget::hideEvent(event);
 }
 
 void Section::resizeEvent(QResizeEvent *) {
@@ -165,7 +210,12 @@ void Section::resizeEvent(QResizeEvent *) {
 	_error->moveToLeft(
 		style::ConvertScale(16), header + style::ConvertScale(12));
 	if (const auto view = _webview ? _webview->widget() : nullptr) {
-		view->setGeometry(0, header, width(), std::max(0, height() - header));
+		const auto gutter = style::ConvertScale(10);
+		view->setGeometry(
+			style::RightToLeft() ? 0 : gutter,
+			header,
+			std::max(0, width() - gutter),
+			std::max(0, height() - header));
 	}
 }
 
@@ -190,6 +240,16 @@ public:
 };
 
 } // namespace
+
+int ColumnWidth(const QWidget &window) {
+	const auto stored = window.property(kWidthProperty);
+	return stored.isValid() ? stored.toInt() : style::ConvertScale(480);
+}
+
+void SetColumnWidth(QWidget &window, int width) {
+	window.setProperty(kWidthProperty, std::clamp(
+		width, style::ConvertScale(320), style::ConvertScale(760)));
+}
 
 Ui::IconButton *MakeButton(QWidget *parent) {
 	return Ui::CreateChild<Button>(parent);

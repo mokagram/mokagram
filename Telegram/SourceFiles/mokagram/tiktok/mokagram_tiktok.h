@@ -11,6 +11,9 @@ class SectionMemento;
 
 namespace Mokagram::TikTok {
 
+[[nodiscard]] int ColumnWidth(const QWidget &window);
+void SetColumnWidth(QWidget &window, int width);
+
 [[nodiscard]] Ui::IconButton *MakeButton(QWidget *parent);
 [[nodiscard]] std::shared_ptr<Window::SectionMemento> MakeSection();
 [[nodiscard]] bool IsSection(not_null<Window::SectionMemento*> memento);

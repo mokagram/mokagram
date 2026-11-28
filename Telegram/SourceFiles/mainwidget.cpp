@@ -3068,11 +3068,16 @@ void MainWidget::ensureThirdColumnResizeAreaCreated() {
 		return;
 	}
 	auto moveLeftCallback = [=](int globalLeft) {
-		auto newWidth = mapToGlobal(QPoint(width(), 0)).x() - globalLeft;
-		_controller->columns().setThirdColumnWidth(newWidth);
+		const auto newWidth = mapToGlobal(QPoint(width(), 0)).x() - globalLeft;
+		if (tiktokColumnShown()) {
+			Mokagram::TikTok::SetColumnWidth(*this, newWidth);
+			updateControlsGeometry();
+		} else {
+			_controller->columns().setThirdColumnWidth(newWidth);
+		}
 	};
 	auto moveFinishedCallback = [=] {
-		if (!isThreeColumn() || !_thirdSection) {
+		if (!isThreeColumn() || !_thirdSection || tiktokColumnShown()) {
 			return;
 		}
 		_controller->columns().setThirdColumnWidth(std::clamp(
