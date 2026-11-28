@@ -136,7 +136,11 @@ std::vector<float> DecodePcm(
 	if (streamIndex < 0) {
 		return result;
 	}
-	auto codec = FFmpeg::MakeCodecPointer({ .stream = format->streams[streamIndex] });
+	const auto stream = format->streams[streamIndex];
+	auto codec = FFmpeg::MakeCodecPointer({
+		.parameters = stream->codecpar,
+		.timeBase = stream->time_base,
+	});
 	if (!codec) {
 		return result;
 	}
