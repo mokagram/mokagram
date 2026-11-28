@@ -61,12 +61,14 @@ public:
 
 	// Песня в памяти или в локальном файле. languages ограничивает выбор
 	// языка (коды через запятую; nullptr разрешает все языки модели).
-	// done вызывается в главном потоке, если задача не отменена.
+	// progress сообщает обработанную долю аудио после подготовки. Оба колбэка
+	// вызываются в главном потоке, пока задача не отменена.
 	void transcribeSong(
 		QByteArray bytes,
 		Core::FileLocation location,
 		const char *languages,
 		base::binary_guard guard,
+		Fn<void(float)> progress,
 		Fn<void(std::vector<TimedWord>)> done);
 
 	[[nodiscard]] std::optional<Result> result(FullMsgId id) const;

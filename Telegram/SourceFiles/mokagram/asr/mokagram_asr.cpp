@@ -31,6 +31,9 @@ extern "C" {
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QSemaphore>
+#include <QtCore/QThread>
+#include <QtCore/QThreadPool>
 
 #include <zlib.h>
 
@@ -57,6 +60,7 @@ constexpr auto kAsrModelFile = "en-ru-uk.tzf";
 constexpr auto kVadModelFile = "silero_vad.onnx";
 constexpr auto kSampleRate = 16000;
 constexpr auto kMaxRecordingSeconds = kMaxRecordingDurationMs / 1000;
+constexpr auto kMaxSongThreads = 4;
 
 [[nodiscard]] QString U(const char *text) {
 	return QString::fromUtf8(Lang::Tr(text));
@@ -266,6 +270,23 @@ void AppendTimedWords(const char *json, std::vector<TimedWord> &words) {
 	}
 }
 
+struct SongWindowWorkers {
+	QSemaphore finished;
+	QThreadPool pool;
+};
+
+void RunSongWindows(void *user, size_t count, tinyasr_task task, void *context) {
+	auto &workers = *static_cast<SongWindowWorkers*>(user);
+	for (auto i = size_t(1); i < count; ++i) {
+		workers.pool.start([=, &workers] {
+			task(context, i);
+			workers.finished.release();
+		});
+	}
+	task(context, 0);
+	workers.finished.acquire(int(count - 1));
+}
+
 void Recognize(
 		tinyasr_models *models,
 		std::vector<float> pcm,
@@ -281,21 +302,42 @@ void Recognize(
 		create(models, pcm.data(), pcm.size(), languages, 4),
 		&tinyasr_file_free);
 	std::vector<float>().swap(pcm);
-	while (file && !cancelled()) {
-		const auto piece = tinyasr_file_next(file.get());
-		if (!piece) {
+	if (!file || cancelled()) {
+		return;
+	}
+	const auto workers = music
+		? std::clamp(QThread::idealThreadCount(), 1, kMaxSongThreads)
+		: 1;
+	auto parallel = std::optional<SongWindowWorkers>();
+	if (workers > 1) {
+		parallel.emplace();
+		parallel->pool.setMaxThreadCount(workers - 1);
+	}
+	if (music) {
+		consume(nullptr, 0.f);
+	}
+	while (!cancelled()) {
+		const auto piece = parallel
+			? tinyasr_music_next_parallel(file.get(), workers, &RunSongWindows, &*parallel)
+			: tinyasr_file_next(file.get());
+		if (!piece || cancelled()) {
 			break;
 		}
-		consume(piece);
+		consume(piece, music ? tinyasr_file_progress(file.get()) : 0.f);
 	}
 }
+
+struct RecordingCallbacks {
+	base::binary_guard guard;
+	Fn<void(float)> progress;
+	Fn<void(std::vector<TimedWord>)> done;
+};
 
 struct RecordingTask {
 	QByteArray bytes;
 	Core::FileLocation location;
 	QByteArray languages;
-	base::binary_guard guard;
-	Fn<void(std::vector<TimedWord>)> done;
+	std::shared_ptr<RecordingCallbacks> callbacks;
 };
 
 [[nodiscard]] std::vector<float> DecodeRecording(
@@ -478,22 +520,31 @@ private:
 	}
 
 	void transcribeSong(RecordingTask task) {
-		const auto cancelled = [&] { return _stop || !task.guard.alive(); };
+		const auto &callbacks = task.callbacks;
+		const auto cancelled = [&] { return _stop || !callbacks->guard.alive(); };
 		auto words = std::vector<TimedWord>();
 		if (!cancelled() && init()) {
 			auto pcm = DecodeRecording(task, cancelled);
 			task.bytes = {};
 			Recognize(_models.load(), std::move(pcm), task.languages.constData(),
-				true, cancelled, [&](const char *piece) {
-					AppendTimedWords(piece, words);
+				true, cancelled, [&](const char *piece, float fraction) {
+					if (piece) {
+						AppendTimedWords(piece, words);
+					}
+					if (callbacks->progress) {
+						crl::on_main([callbacks, fraction] {
+							if (callbacks->guard.alive()) {
+								callbacks->progress(fraction);
+							}
+						});
+					}
 				});
 		}
 		if (!cancelled()) {
-			crl::on_main(std::move(task.guard), [
-				done = std::move(task.done),
-				words = std::move(words)
-			]() mutable {
-				done(std::move(words));
+			crl::on_main([callbacks, words = std::move(words)]() mutable {
+				if (callbacks->guard.alive()) {
+					callbacks->done(std::move(words));
+				}
 			});
 		}
 	}
@@ -526,7 +577,7 @@ private:
 			const auto cancelled = [&] { return _stop.load(); };
 			auto wrap = BytesWrap(task->bytes);
 			Recognize(_models.load(), DecodePcm(BytesFormat(wrap), cancelled),
-				"ru,en", false, cancelled, [&](const char *piece) {
+				"ru,en", false, cancelled, [&](const char *piece, float) {
 					const auto text = ParseTranscript(piece);
 					if (!text.isEmpty()) {
 						if (!transcript.isEmpty()) {
@@ -596,13 +647,14 @@ void Engine::transcribeSong(
 		Core::FileLocation location,
 		const char *languages,
 		base::binary_guard guard,
+		Fn<void(float)> progress,
 		Fn<void(std::vector<TimedWord>)> done) {
 	_impl->enqueue(RecordingTask{
 		std::move(bytes),
 		std::move(location),
 		languages ? QByteArray(languages) : QByteArray(),
-		std::move(guard),
-		std::move(done),
+		std::make_shared<RecordingCallbacks>(
+			std::move(guard), std::move(progress), std::move(done)),
 	});
 }
 

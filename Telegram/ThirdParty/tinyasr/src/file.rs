@@ -22,6 +22,7 @@ use crate::{Models, Word, allowed};
 const LONG: usize = 75;
 const MUSIC_WINDOW: usize = (10 * SR / FR) as usize;
 const MUSIC_CONTEXT: usize = (SR / FR) as usize;
+const MUSIC_BATCH: usize = 4;
 const LANGUAGE_PROBE: usize = (5 * SR / FR) as usize;
 
 /// Recognition of a whole recording; an iterator over its pieces' final words, in order.
@@ -87,13 +88,19 @@ impl<'m> Transcription<'m> {
 
     /// The words out, timed by [`spans`] from the last word given out.
     fn out(&mut self, ws: Vec<W>) -> Vec<Word> {
+        let mut out = Vec::new();
+        self.append_words(ws, &mut out);
+        out
+    }
+
+    fn append_words(&mut self, ws: Vec<W>, out: &mut Vec<Word>) {
         let vf = &self.vf;
         let ws = if self.m.asr.langs[self.lang].syllables { units(ws) } else { ws }; // Khmer: timed syllables
         let sp = spans(&ws, self.last_end, |f| usize::try_from(f).ok().and_then(|i| vf.get(i).copied()));
         if let Some(&(_, e)) = sp.last() {
             self.last_end = e as f64;
         }
-        ws.into_iter().zip(sp).map(|(w, (start, end))| Word { text: show_quotes(w.w, &self.m.asr.langs[self.lang]), start, end, join: w.join }).collect()
+        out.extend(ws.into_iter().zip(sp).map(|(w, (start, end))| Word { text: show_quotes(w.w, &self.m.asr.langs[self.lang]), start, end, join: w.join }));
     }
 }
 
@@ -114,6 +121,56 @@ impl Transcription<'_> {
         }
         let end = (begin + MUSIC_WINDOW).min(self.frames);
         self.open0 = end;
+        let ws = self.decode_music(begin, end);
+        Some(self.out(ws))
+    }
+
+    /// Decode a bounded batch and finalize its timestamps in the same order as the iterator.
+    pub(crate) fn next_music_parallel(
+        &mut self,
+        windows: usize,
+        parallel_for: Option<impl FnOnce(&(dyn Fn(usize) -> Vec<W> + Sync), &mut [Vec<W>])>,
+    ) -> Option<Vec<Word>> {
+        if !self.music {
+            return self.next();
+        }
+        let start = self.open0;
+        let count = (self.frames - start).div_ceil(MUSIC_WINDOW).min(windows.clamp(1, MUSIC_BATCH));
+        match count {
+            0 => return None,
+            1 => return self.next(),
+            _ => {}
+        }
+        let decode = |i: usize| {
+            let begin = start + i * MUSIC_WINDOW;
+            self.decode_music(begin, (begin + MUSIC_WINDOW).min(self.frames))
+        };
+        let mut results: [Vec<W>; MUSIC_BATCH] = core::array::from_fn(|_| Vec::new());
+        if let Some(parallel_for) = parallel_for {
+            // The host parallelizes the windows, so avoid nesting the model's step executor.
+            let task = |i| {
+                #[cfg(feature = "std")]
+                return crate::par::enter(None, || decode(i));
+                #[cfg(not(feature = "std"))]
+                decode(i)
+            };
+            parallel_for(&task, &mut results[..count]);
+        } else {
+            self.m.with_threads(|| {
+                for (i, slot) in results[..count].iter_mut().enumerate() {
+                    *slot = decode(i);
+                }
+            });
+        }
+        self.open0 = (start + count * MUSIC_WINDOW).min(self.frames);
+        let mut out = Vec::new();
+        for ws in results.into_iter().take(count) {
+            self.append_words(ws, &mut out);
+        }
+        Some(out)
+    }
+
+    fn decode_music(&self, begin: usize, end: usize) -> Vec<W> {
         let from = begin.saturating_sub(MUSIC_CONTEXT);
         let to = ((end + MUSIC_CONTEXT) * FR as usize).min(self.audio.len());
         let tokens = self.m.asr.full(&self.audio[from * FR as usize..to], self.lang, self.beam);
@@ -123,7 +180,7 @@ impl Transcription<'_> {
         let first = seconds(begin) - 0.02;
         let last = seconds(end) - 0.02;
         ws.retain(|w| w.t >= first && (end == self.frames || w.t < last));
-        Some(self.out(ws))
+        ws
     }
 
     fn next_here(&mut self) -> Option<Vec<Word>> {

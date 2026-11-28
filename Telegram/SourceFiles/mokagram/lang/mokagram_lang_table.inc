@@ -562,6 +562,7 @@
 	{ "Ищу текст…", "Searching lyrics…" },
 	{ "Добавляю таймкоды…", "Adding timestamps…" },
 	{ "Распознаю текст песни…", "Transcribing lyrics…" },
+	{ "Подготавливаю аудио…", "Preparing audio…" },
 	{ "Введи название или исполнителя.", "Enter a title or artist." },
 	{ "Введи название альбома или исполнителя.", "Enter an album title or artist." },
 	{ "Ищу…", "Searching…" },

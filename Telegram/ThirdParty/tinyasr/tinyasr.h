@@ -122,6 +122,12 @@ tinyasr_file *tinyasr_file_new(const tinyasr_models *m, const float *pcm, size_t
 tinyasr_file *tinyasr_music_new(const tinyasr_models *m, const float *pcm, size_t n, const char *langs, uint32_t beam);
 const char *tinyasr_file_lang(const tinyasr_file *f);
 const char *tinyasr_file_next(tinyasr_file *f);
+/* Music: finalize the next batch of windows in chronological order as one JSON array, or NULL at end.
+ * windows is clamped to 1..4. With a NULL executor or only one window, decoding is sequential.
+ * The executor must call task(ctx, i) exactly once for each i in [0, n), in any order and on any threads,
+ * and wait for all calls to finish before returning. It must not retain task/ctx or access f during the call.
+ * A speech file behaves like tinyasr_file_next. Output ownership and progress are the same as file_next. */
+const char *tinyasr_music_next_parallel(tinyasr_file *f, size_t windows, tinyasr_parallel_for parallel_for, void *user);
 float tinyasr_file_progress(const tinyasr_file *f); /* 0..1; -1 for NULL */
 void tinyasr_file_free(tinyasr_file *f);
 

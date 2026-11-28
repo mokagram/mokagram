@@ -8,6 +8,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::{c_char, CStr};
 
+use crate::text::W;
 use crate::{Event, Files, Models, Options, Session, Transcription, Word};
 
 pub struct CSession {
@@ -188,8 +189,8 @@ pub unsafe extern "C" fn tinyasr_set_threads(m: *mut Models, threads: u32) {
 
 /// A task of a parallel step: the host's parallel-for calls it with `ctx` and each index.
 pub type Task = unsafe extern "C" fn(ctx: *mut core::ffi::c_void, i: usize);
-/// The host's parallel-for: call `task(ctx, i)` for every i in 0..n (any threads, any order, possibly at the same time),
-/// return when all have finished.
+/// The host's parallel-for: call `task(ctx, i)` exactly once for every i in 0..n (any threads, any order),
+/// and wait for every call to finish before returning. Do not retain the task or its context.
 pub type ParallelFor = unsafe extern "C" fn(user: *mut core::ffi::c_void, n: usize, task: Task, ctx: *mut core::ffi::c_void);
 
 /// The host's `user` pointer, handed back to its parallel-for from whichever thread runs a step.
@@ -359,11 +360,52 @@ pub unsafe extern "C" fn tinyasr_file_next(f: *mut CFile) -> *const c_char {
     let Some(f) = (unsafe { f.as_mut() }) else {
         return core::ptr::null();
     };
-    match f.f.next() {
+    let ws = f.f.next();
+    file_words(&mut f.out, ws)
+}
+
+/// The next music batch's final words (JSON array), or null when the file is done.
+///
+/// # Safety
+/// `f` is null or exclusively borrowed from a live file handle. The executor must obey the synchronous,
+/// exactly-once `ParallelFor` contract and must not access the file handle during this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tinyasr_music_next_parallel(
+    f: *mut CFile,
+    windows: usize,
+    parallel_for: Option<ParallelFor>,
+    user: *mut core::ffi::c_void,
+) -> *const c_char {
+    let Some(f) = (unsafe { f.as_mut() }) else {
+        return core::ptr::null();
+    };
+    struct Batch<'a> {
+        decode: &'a (dyn Fn(usize) -> Vec<W> + Sync),
+        slots: *mut Vec<W>,
+    }
+    unsafe extern "C" fn task(ctx: *mut core::ffi::c_void, i: usize) {
+        // SAFETY: context lives through the synchronous call; each task writes its own initialized slot.
+        let batch = unsafe { &*ctx.cast::<Batch<'_>>() };
+        let ws = (batch.decode)(i);
+        unsafe { *batch.slots.add(i) = ws };
+    }
+    let ws = f.f.next_music_parallel(windows, parallel_for.map(|run| {
+        move |decode: &(dyn Fn(usize) -> Vec<W> + Sync), slots: &mut [Vec<W>]| {
+            let batch = Batch { decode, slots: slots.as_mut_ptr() };
+            let ctx = (&raw const batch).cast_mut().cast();
+            // SAFETY: the host calls task once per valid index and joins all calls before batch goes away.
+            unsafe { run(user, slots.len(), task, ctx) };
+        }
+    }));
+    file_words(&mut f.out, ws)
+}
+
+fn file_words(out: &mut Vec<u8>, ws: Option<Vec<Word>>) -> *const c_char {
+    match ws {
         Some(ws) => {
             let mut o = String::new();
             words(&ws, &mut o);
-            put(&mut f.out, &o)
+            put(out, &o)
         }
         None => core::ptr::null(),
     }

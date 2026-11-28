@@ -43,6 +43,18 @@ struct Lyrics {
 	bool unavailable = false;
 };
 
+enum class LyricsSyncStage {
+	Idle,
+	Preparing,
+	Recognizing,
+	Aligning,
+};
+
+struct LyricsSyncProgress {
+	LyricsSyncStage stage = LyricsSyncStage::Idle;
+	float fraction = 0.f; // Completed audio fraction, only during Recognizing.
+};
+
 // done вызывается в главном потоке; результат кэшируется по ключу трека.
 void FetchLyrics(
 	const QString &cacheKey,
@@ -53,12 +65,12 @@ void FetchLyrics(
 
 // Вызывает done в главном потоке: статичный текст приходит сразу, а если
 // удалось расставить таймкоды, затем приходит синхронизированная версия.
-// syncing сообщает о начале и завершении обработки текущего трека.
+// progress сообщает о фазе обработки в главном потоке.
 void FetchPlaybackLyrics(
 	const Track &track,
 	Fn<void(Lyrics)> done,
 	bool syncPlain = true,
-	Fn<void(bool)> syncing = nullptr);
+	Fn<void(LyricsSyncProgress)> progress = nullptr);
 
 // Обложка в высоком качестве из открытых каталогов (iTunes, затем Deezer),
 // только если совпали название, исполнитель и длительность. Пустая, если нет.

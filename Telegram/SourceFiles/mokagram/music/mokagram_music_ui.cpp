@@ -12738,6 +12738,12 @@ private:
 		}
 		setPlaybackBarShown(!track.id.isEmpty());
 		if (track.id.isEmpty()) {
+			if (!_lyricsFor.isEmpty()) {
+				_lyricsFor.clear();
+				_lyricsAudio = {};
+				++_lyricsRequest;
+				_view->setSyncProgress({});
+			}
 			_playbackArtworkFor = AudioMsgId();
 			_playbackArtworkLifetime.destroy();
 			_playbackArtworkMedia = nullptr;
@@ -12898,22 +12904,25 @@ private:
 			refreshQueueViews();
 		}
 		const auto provider = Settings::Int(u"lyrics.provider"_q);
-		if (_lyricsFor != track.id || _lyricsProvider != provider) {
+		if (_lyricsFor != track.id || _lyricsProvider != provider
+			|| _lyricsAudio.audio() != current.audio()
+			|| _lyricsAudio.contextId() != current.contextId()) {
 			_lyricsFor = track.id;
 			_lyricsProvider = provider;
+			_lyricsAudio = current;
+			const auto request = ++_lyricsRequest;
 			if (std::exchange(_lyricsMissing, false) && _tab == Tab::Now) {
 				relayout();
 				rebuildTab();
 			}
 			_view->setCommentsTrack(QString());
-			ResolveCommentsTrack(track, crl::guard(this, [=, id = track.id](QString sc) {
-				if (_lyricsFor == id) _view->setCommentsTrack(sc);
+			ResolveCommentsTrack(track, crl::guard(this, [=](QString sc) {
+				if (_lyricsRequest == request) _view->setCommentsTrack(sc);
 			}));
 			_view->setLoading(track.id);
-			const auto id = track.id;
 			FetchPlaybackLyrics(track,
 				crl::guard(this, [=](Lyrics lyrics) {
-					if (_lyricsFor == id && _lyricsProvider == provider) {
+					if (_lyricsRequest == request) {
 						_lyricsMissing = !lyrics.found || lyrics.lines.empty();
 						_view->setLyrics(std::move(lyrics));
 						if (_tab == Tab::Now) {
@@ -12924,9 +12933,9 @@ private:
 					}
 				}),
 				/*syncPlain=*/true,
-				crl::guard(this, [=](bool syncing) {
-					if (_lyricsFor == id && _lyricsProvider == provider) {
-						_view->setSyncing(syncing);
+				crl::guard(this, [=](LyricsSyncProgress progress) {
+					if (_lyricsRequest == request) {
+						_view->setSyncProgress(progress);
 					}
 				}));
 		}
@@ -13226,6 +13235,8 @@ private:
 	QString _timeTotal = u"0:00"_q;
 	QString _lyricsFor;
 	int _lyricsProvider = 0;
+	AudioMsgId _lyricsAudio;
+	uint64 _lyricsRequest = 0;
 	bool _isPlaying = true;
 	bool _closing = false;
 	InfoHover _hover = InfoHover::None;

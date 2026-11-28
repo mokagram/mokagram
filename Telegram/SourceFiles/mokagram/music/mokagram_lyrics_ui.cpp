@@ -620,12 +620,16 @@ void LyricsView::setLyrics(Lyrics lyrics) {
 	update();
 }
 
-void LyricsView::setSyncing(bool syncing) {
-	if (_syncing != syncing) {
-		_syncing = syncing;
-		layoutComments();
-		update();
+void LyricsView::setSyncProgress(LyricsSyncProgress progress) {
+	const auto stageChanged = (_syncProgress.stage != progress.stage);
+	if (!stageChanged && _syncProgress.fraction == progress.fraction) {
+		return;
 	}
+	_syncProgress = progress;
+	if (stageChanged) {
+		layoutComments();
+	}
+	update();
 }
 
 void LyricsView::updateCover() {
@@ -794,7 +798,7 @@ QPointF LyricsView::lineOrigin(double top) const {
 
 void LyricsView::reset() {
 	_lyrics = {};
-	_syncing = false;
+	_syncProgress = {};
 	_timedLines.clear();
 	_current = -1;
 	_scroll = 0.;
@@ -1201,7 +1205,8 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 	}
 	const auto contentHeight = lyricsHeight();
 	const auto ink = st::windowFg->c;
-	if (_syncing || !_lyrics.found) {
+	const auto stage = _syncProgress.stage;
+	if (stage != LyricsSyncStage::Idle || !_lyrics.found) {
 		auto color = ink;
 		color.setAlphaF(light ? .74 : .60);
 		p.setPen(color);
@@ -1210,12 +1215,41 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 		const auto inset = style::ConvertScale(PlayerStyle::kSpace8);
 		const auto status = QRect(inset, top, width() - 2 * inset, height() - top);
 		if (status.isValid()) {
-			const auto text = !_syncing
-				? _status
-				: QString::fromUtf8(Mokagram::Lang::Tr(_lyrics.found
-					? "Добавляю таймкоды…"
-					: "Распознаю текст песни…"));
-			p.drawText(status, Qt::AlignCenter, st::normalFont->elided(text, status.width()));
+			auto text = _status;
+			switch (stage) {
+			case LyricsSyncStage::Idle: break;
+			case LyricsSyncStage::Preparing:
+				text = QString::fromUtf8(Mokagram::Lang::Tr("Подготавливаю аудио…"));
+				break;
+			case LyricsSyncStage::Recognizing:
+				text = QString::fromUtf8(Mokagram::Lang::Tr("Распознаю текст песни…"));
+				break;
+			case LyricsSyncStage::Aligning:
+				text = QString::fromUtf8(Mokagram::Lang::Tr("Добавляю таймкоды…"));
+				break;
+			}
+			auto label = status;
+			if (stage == LyricsSyncStage::Recognizing) {
+				const auto barWidth = std::min(status.width(), style::ConvertScale(160));
+				const auto barHeight = std::max(1, style::ConvertScale(2));
+				const auto gap = style::ConvertScale(PlayerStyle::kSpace4);
+				const auto extra = barHeight + gap;
+				if (status.height() >= st::normalFont->height + extra) {
+					label.adjust(0, 0, 0, -extra);
+					const auto bar = QRectF(
+						status.x() + (status.width() - barWidth) / 2.,
+						label.y() + (label.height() + st::normalFont->height) / 2. + gap,
+						barWidth,
+						barHeight);
+					auto groove = ink;
+					groove.setAlphaF(.20);
+					p.fillRect(bar, groove);
+					auto fill = bar;
+					fill.setWidth(bar.width() * _syncProgress.fraction);
+					p.fillRect(fill, st::activeButtonBg->c);
+				}
+			}
+			p.drawText(label, Qt::AlignCenter, st::normalFont->elided(text, label.width()));
 		}
 		if (!_lyrics.found) {
 			return;
@@ -1279,7 +1313,7 @@ void LyricsView::paintEvent(QPaintEvent *e) {
 }
 
 int LyricsView::lyricsHeight() const {
-	return (_syncing && _lyrics.found)
+	return (_syncProgress.stage != LyricsSyncStage::Idle && _lyrics.found)
 		? std::max(0, height() - style::ConvertScale(32))
 		: height();
 }
@@ -1543,6 +1577,11 @@ private:
 			&& !track.id.isEmpty();
 		setVisible(shown);
 		if (!shown) {
+			if (!_lyricsFor.isEmpty()) {
+				_lyricsFor.clear();
+				_lyricsAudio = {};
+				++_lyricsRequest;
+			}
 			return;
 		}
 		if (_title != track.title || _artist != track.artist) {
@@ -1560,27 +1599,31 @@ private:
 			state.id.changeablePlaybackSpeed()
 				? Core::App().settings().audioPlaybackSpeed() : 1.);
 		const auto provider = Settings::Int(u"lyrics.provider"_q);
-		if (_lyricsFor == track.id && _lyricsProvider == provider) {
+		const auto audio = instance->current(AudioMsgId::Type::Song);
+		if (_lyricsFor == track.id && _lyricsProvider == provider
+			&& _lyricsAudio.audio() == audio.audio()
+			&& _lyricsAudio.contextId() == audio.contextId()) {
 			return;
 		}
 		_lyricsFor = track.id;
 		_lyricsProvider = provider;
+		_lyricsAudio = audio;
+		const auto request = ++_lyricsRequest;
 		_view->setCommentsTrack(QString());
-		ResolveCommentsTrack(track, crl::guard(this, [=, id = track.id](QString sc) {
-			if (_lyricsFor == id) _view->setCommentsTrack(sc);
+		ResolveCommentsTrack(track, crl::guard(this, [=](QString sc) {
+			if (_lyricsRequest == request) _view->setCommentsTrack(sc);
 		}));
 		_view->setLoading(track.id);
-		const auto id = track.id;
 		FetchPlaybackLyrics(track,
 			crl::guard(this, [=](Lyrics lyrics) {
-				if (_lyricsFor == id && _lyricsProvider == provider) {
+				if (_lyricsRequest == request) {
 					_view->setLyrics(std::move(lyrics));
 				}
 			}),
 			/*syncPlain=*/true,
-			crl::guard(this, [=](bool syncing) {
-				if (_lyricsFor == id && _lyricsProvider == provider) {
-					_view->setSyncing(syncing);
+			crl::guard(this, [=](LyricsSyncProgress progress) {
+				if (_lyricsRequest == request) {
+					_view->setSyncProgress(progress);
 				}
 			}));
 	}
@@ -1592,6 +1635,8 @@ private:
 	Ui::ResizeArea *_resize = nullptr;
 	QString _lyricsFor;
 	int _lyricsProvider = 0;
+	AudioMsgId _lyricsAudio;
+	uint64 _lyricsRequest = 0;
 	QString _title;
 	QString _artist;
 
