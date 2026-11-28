@@ -8078,24 +8078,27 @@ void PaintHomeSideGlow(
 	}
 	const auto strength = std::min(
 		(side - minimum) / double(style::ConvertScale(64)), 1.);
-	const auto opacity = light ? (.16 + .08 * pulse) : (.30 + .14 * pulse);
-	tint.setAlphaF(tint.alphaF() * strength * opacity);
+	const auto opacity = light ? (.32 + .12 * pulse) : (.68 + .18 * pulse);
+	tint.setAlphaF(std::min(tint.alphaF() * strength * opacity, .82));
 	const auto left = band.x();
 	const auto right = band.x() + band.width();
 	const auto top = band.y();
 	const auto height = band.height();
 	auto transparent = tint;
 	transparent.setAlpha(0);
-	const auto leftGlow = QLinearGradient(left - side, 0., left, 0.);
+	const auto glowWidth = side * 1.45;
+	auto leftGlow = QLinearGradient(left - glowWidth, 0., left, 0.);
 	leftGlow.setColorAt(0., transparent);
-	leftGlow.setColorAt(.72, transparent);
+	leftGlow.setColorAt(.5, transparent);
+	leftGlow.setColorAt(.86, tint);
 	leftGlow.setColorAt(1., tint);
-	const auto rightGlow = QLinearGradient(right, 0., right + side, 0.);
+	auto rightGlow = QLinearGradient(right, 0., right + glowWidth, 0.);
 	rightGlow.setColorAt(0., tint);
-	rightGlow.setColorAt(.28, transparent);
+	rightGlow.setColorAt(.14, tint);
+	rightGlow.setColorAt(.5, transparent);
 	rightGlow.setColorAt(1., transparent);
-	p.fillRect(QRectF(left - side, top, side, height), leftGlow);
-	p.fillRect(QRectF(right, top, side, height), rightGlow);
+	p.fillRect(QRectF(left - glowWidth, top, glowWidth, height), leftGlow);
+	p.fillRect(QRectF(right, top, glowWidth, height), rightGlow);
 }
 
 struct PlayerSpringSpec {
