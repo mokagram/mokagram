@@ -161,6 +161,8 @@ PRIVATE
     mokagram/inline/mokagram_inline.h
     mokagram/inline/mokagram_inline_ui.cpp
     mokagram/inline/mokagram_inline_ui.h
+    mokagram/tiktok/mokagram_tiktok.cpp
+    mokagram/tiktok/mokagram_tiktok.h
     mokagram/feed/mokagram_feed.cpp
     mokagram/feed/mokagram_feed.h
     lang/translate_external_provider.cpp

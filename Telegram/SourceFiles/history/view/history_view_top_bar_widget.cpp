@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_top_bar_widget.h"
 #include "mokagram/peek/mokagram_peek.h"
+#include "mokagram/tiktok/mokagram_tiktok.h"
 #include "mokagram/notes/mokagram_notes.h"
 #include "mokagram/music/mokagram_music_presence.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
@@ -135,6 +136,7 @@ TopBarWidget::TopBarWidget(
 , _groupCall(this, st::topBarGroupCall)
 , _search(this, st::topBarSearch)
 , _infoToggle(this, st::topBarInfo)
+, _tiktok(Mokagram::TikTok::MakeButton(this))
 , _menuToggle(this, st::topBarMenuToggle)
 , _titlePeerText(st::windowMinWidth / 3)
 , _onlineUpdater([=] { updateOnlineDisplay(); }) {
@@ -167,6 +169,9 @@ TopBarWidget::TopBarWidget(
 	_menuToggle->addClickHandler([=](auto) { showPeerMenu(); });
 	_menuToggle->setAcceptBoth(true, true);
 	_infoToggle->setClickedCallback([=] { toggleInfoSection(); });
+	_tiktok->setClickedCallback([=] {
+		_controller->content()->toggleTikTokColumn();
+	});
 	_back->setAcceptBoth();
 	_back->addClickHandler([=](Qt::MouseButton) {
 		InvokeQueued(_back.data(), [=] { backClicked(); });
@@ -479,6 +484,14 @@ void TopBarWidget::showCallMenu() {
 }
 
 void TopBarWidget::toggleInfoSection() {
+	// Mokagram: return to chat info when it shares the right column.
+	if (_controller->content()->tiktokColumnShown()) {
+		const auto restoreInfo = _controller->columns().thirdSectionInfoEnabled();
+		_controller->content()->toggleTikTokColumn();
+		if (restoreInfo) {
+			return;
+		}
+	}
 	const auto isThreeColumn = _controller->adaptive().isThreeColumn();
 	if (isThreeColumn
 		&& (_controller->columns().thirdSectionInfoEnabled()
@@ -1412,6 +1425,15 @@ void TopBarWidget::updateControlsGeometry() {
 	if (!_infoToggle->isHidden()) {
 		_infoToggle->moveToRight(_rightTaken, otherButtonsTop);
 		_rightTaken += _infoToggle->width();
+	}
+	_tiktok->setVisible(!hasSelected
+		&& !_searchMode
+		&& !_chooseForReportReason
+		&& _activeChat.key.peer()
+		&& _controller->canShowThirdSection());
+	if (!_tiktok->isHidden()) {
+		_tiktok->moveToRight(_rightTaken, otherButtonsTop);
+		_rightTaken += _tiktok->width();
 	}
 	if (!_call->isHidden() || !_groupCall->isHidden()) {
 		_call->moveToRight(_rightTaken, otherButtonsTop);

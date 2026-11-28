@@ -2885,6 +2885,8 @@ int SessionController::minimalThreeColumnWidth() const {
 auto SessionController::computeColumnLayout() const -> ColumnLayout {
 	auto layout = Adaptive::WindowLayout::OneColumn;
 
+	const auto main = widget()->sessionContent();
+	const auto tiktok = main && main->tiktokColumnShown();
 	auto bodyWidth = widget()->bodyWidget()->width() - filtersWidth();
 	auto dialogsWidth = 0, chatWidth = 0, thirdWidth = 0;
 
@@ -2904,7 +2906,8 @@ auto SessionController::computeColumnLayout() const -> ColumnLayout {
 		}
 		if (_extendingForThirdSection
 			|| (!columns().tabbedSelectorSectionEnabled()
-				&& !columns().thirdSectionInfoEnabled())) {
+				&& !columns().thirdSectionInfoEnabled()
+				&& !tiktok)) {
 			return true;
 		}
 		return false;
@@ -3069,6 +3072,7 @@ void SessionController::closeThirdSection() {
 			widget()->width() + (newBodyWidth - layout.bodyWidth),
 			widget()->height());
 	}
+	content()->clearTikTokColumn(); // Mokagram.
 	columns().setTabbedSelectorSectionEnabled(false);
 	columns().setThirdSectionInfoEnabled(false);
 	Core::App().saveSettingsDelayed();

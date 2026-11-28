@@ -144,6 +144,10 @@ public:
 	void showSection(
 		std::shared_ptr<Window::SectionMemento> memento,
 		const SectionShow &params);
+	bool tiktokColumnShown() const;
+	void toggleTikTokColumn();
+	void clearTikTokColumn();
+
 	void updateColumnLayout();
 	void columnsRestored();
 	bool stackIsEmpty() const;
