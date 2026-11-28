@@ -45,24 +45,15 @@
 
 | Система | Версия | Файл |
 |---|---|---|
-| **macOS Apple Silicon (arm64)** | v0.1.9 | [mokaGram-7.3.3-arm64.dmg](https://github.com/mokagram/mokagram/releases/download/v0.1.9/mokaGram-7.3.3-arm64.dmg) |
-| **Windows** | v0.1.7 | [mokagram-win-x64.zip](https://github.com/mokagram/mokagram/releases/download/v0.1.7/mokagram-win-x64.zip) |
-| **Linux x86_64** | v0.1.10 | [AppImage](https://github.com/mokagram/mokagram/releases/download/v0.1.10/mokagram-x86_64.AppImage) · [.deb](https://github.com/mokagram/mokagram/releases/download/v0.1.10/mokagram_0.1.10_amd64.deb) · [.rpm](https://github.com/mokagram/mokagram/releases/download/v0.1.10/mokagram-0.1.10-1.x86_64.rpm) · [pacman](https://github.com/mokagram/mokagram/releases/download/v0.1.10/mokagram-0.1.10-1-x86_64.pkg.tar.zst) · [tar.xz](https://github.com/mokagram/mokagram/releases/download/v0.1.10/mokagram-linux-x64.tar.xz) |
+| **macOS Apple Silicon (arm64)** | v0.1.12 (предрелиз) | [mokagram-macos-arm64.dmg](https://github.com/mokagram/mokagram/releases/download/v0.1.12/mokagram-macos-arm64.dmg) |
+| **Windows x64** | v0.1.14 | [mokaGram-v0.1.14-windows-x64.zip](https://github.com/mokagram/mokagram/releases/download/v0.1.14/mokaGram-v0.1.14-windows-x64.zip) |
+| **Linux x86_64** | v0.1.15 | [AppImage](https://github.com/mokagram/mokagram/releases/download/v0.1.15/mokagram-x86_64.AppImage) · [.rpm](https://github.com/mokagram/mokagram/releases/download/v0.1.15/mokagram-0.1.15-1.x86_64.rpm) · [tar.xz](https://github.com/mokagram/mokagram/releases/download/v0.1.15/mokagram-linux-x64.tar.xz) |
 
-macOS: откройте DMG и перетащите **mokaGram** в **Applications**. Версия клиента в macOS: **7.3.3**. В **v0.1.10** обновлены пять Linux-пакетов; macOS доступен из v0.1.9, Windows из v0.1.7.
+Откройте DMG и перетащите **mokaGram** в **Applications**. macOS и Windows могут показать предупреждение при первом запуске.
 
-Сборки macOS и Windows без подписи разработчика, система может предупредить при первом запуске.
+**AppImage:** разрешите выполнение файла и запустите его. **tar.xz:** распакуйте и запустите `mokaGram/Telegram`. Установите RPM через менеджер пакетов и запустите `mokagram`. Для Python-плагинов в Linux установите `python3`, для их изоляции также `bubblewrap` (`bwrap`).
 
-### Новое в v0.1.10 для Linux
-
-- Linux получил функции текущей версии клиента: полноэкранный плеер, Dynamic Island, импорт и синхронизацию плейлистов SoundCloud, выбор и закрепление источников музыки.
-- Плавающее поле ввода, обновлённые пузыри сообщений, лента каналов и отдельная страница настроек производительности.
-- Исправления авторизации SoundCloud, истории сообщений, файловых прав плагинов и работы плеера в узком окне.
-- Все пять форматов включают Qt и библиотеки среды выполнения. Для Python-плагинов установите `python3`, для их изоляции также `bubblewrap` (`bwrap`).
-
-**AppImage:** разрешите выполнение файла и запустите его. **tar.xz:** распакуйте и запустите `mokaGram/Telegram`. Пакеты deb, rpm и pacman устанавливаются штатным менеджером пакетов; команда запуска: `mokagram`.
-
-[Release notes v0.1.10](https://github.com/mokagram/mokagram/releases/tag/v0.1.10) · [Текст в репозитории](docs/releases/v0.1.10.md) · [SHA256SUMS](https://github.com/mokagram/mokagram/releases/download/v0.1.10/SHA256SUMS).
+[Все релизы и список изменений](https://github.com/mokagram/mokagram/releases)
 
 ## Плагины
 
