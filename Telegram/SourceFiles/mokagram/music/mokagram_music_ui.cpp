@@ -8084,40 +8084,18 @@ void PaintHomeSideGlow(
 	const auto right = band.x() + band.width();
 	const auto top = band.y();
 	const auto height = band.height();
-	const auto fade = [&](QRectF rect, QPointF center, double radius) {
-		auto gradient = QRadialGradient(center, radius);
-		gradient.setColorAt(0., tint);
-		gradient.setColorAt(.42, tint);
-		auto transparent = tint;
-		transparent.setAlpha(0);
-		gradient.setColorAt(1., transparent);
-		p.fillRect(rect, gradient);
-	};
-	fade(
-		QRectF(left - side, top, side, height),
-		QPointF(left - side * .08, top + height * .34),
-		side * 1.08);
-	fade(
-		QRectF(right, top, side, height),
-		QPointF(right + side * .08, top + height * .34),
-		side * 1.08);
-
-	const auto lowerFade = [&](QRectF rect, QPointF center) {
-		auto lower = tint;
-		lower.setAlphaF(lower.alphaF() * .72);
-		auto gradient = QRadialGradient(center, side * .9);
-		gradient.setColorAt(0., lower);
-		gradient.setColorAt(.5, lower);
-		lower.setAlpha(0);
-		gradient.setColorAt(1., lower);
-		p.fillRect(rect, gradient);
-	};
-	lowerFade(
-		QRectF(left - side * .12, top + height * .58, side * 1.12, height * .42),
-		QPointF(left - side * .02, top + height * .92));
-	lowerFade(
-		QRectF(right - side, top + height * .58, side * 1.12, height * .42),
-		QPointF(right + side * .02, top + height * .92));
+	auto transparent = tint;
+	transparent.setAlpha(0);
+	const auto leftGlow = QLinearGradient(left - side, 0., left, 0.);
+	leftGlow.setColorAt(0., transparent);
+	leftGlow.setColorAt(.72, transparent);
+	leftGlow.setColorAt(1., tint);
+	const auto rightGlow = QLinearGradient(right, 0., right + side, 0.);
+	rightGlow.setColorAt(0., tint);
+	rightGlow.setColorAt(.28, transparent);
+	rightGlow.setColorAt(1., transparent);
+	p.fillRect(QRectF(left - side, top, side, height), leftGlow);
+	p.fillRect(QRectF(right, top, side, height), rightGlow);
 }
 
 struct PlayerSpringSpec {
