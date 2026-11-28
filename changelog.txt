@@ -21,7 +21,7 @@ mokaGram (27.11.26)
 - Use a readable theme surface and accent for the chat translation bar.
 - Center the sticker and caption when lyrics are missing, and let users change or restore the sticker with a right-click.
 - Group Music search results and the Now Playing queue into readable track lists.
-- Restore the cover-color glow and its soft transition in the wide side margins of Music detail pages.
+- Fade the Music detail page glow from the outer window edges toward the content.
 - Pulse the side glow of Music detail pages with bass hits during playback.
 - Use theme colors in the chat lyrics sidebar and match the translation strip at the chat header corners.
 - Keep the profile screenshot title readable over animated artwork.

@@ -8067,39 +8067,31 @@ constexpr auto kHomeSideGlowMin = 96;
 
 void PaintHomeSideGlow(
 		QPainter &p,
-		QRect band,
-		int width,
+		QSize window,
+		QRect column,
 		QColor tint,
 		bool light,
 		double pulse) {
-	const auto side = HomeSideGlowWidth(width, band);
+	const auto side = HomeSideGlowWidth(window.width(), column);
 	const auto minimum = style::ConvertScale(kHomeSideGlowMin);
-	if (side <= minimum || band.isEmpty() || !tint.alpha()) {
+	if (side <= minimum || window.isEmpty() || column.isEmpty() || !tint.alpha()) {
 		return;
 	}
 	const auto strength = std::min(
 		(side - minimum) / double(style::ConvertScale(64)), 1.);
 	const auto opacity = light ? (.32 + .12 * pulse) : (.68 + .18 * pulse);
 	tint.setAlphaF(std::min(tint.alphaF() * strength * opacity, .82));
-	const auto left = band.x();
-	const auto right = band.x() + band.width();
-	const auto top = band.y();
-	const auto height = band.height();
+	const auto width = window.width();
+	const auto height = window.height();
 	auto transparent = tint;
 	transparent.setAlpha(0);
-	const auto glowWidth = side * 1.45;
-	auto leftGlow = QLinearGradient(left - glowWidth, 0., left, 0.);
-	leftGlow.setColorAt(0., transparent);
-	leftGlow.setColorAt(.5, transparent);
-	leftGlow.setColorAt(.86, tint);
-	leftGlow.setColorAt(1., tint);
-	auto rightGlow = QLinearGradient(right, 0., right + glowWidth, 0.);
-	rightGlow.setColorAt(0., tint);
-	rightGlow.setColorAt(.14, tint);
-	rightGlow.setColorAt(.5, transparent);
-	rightGlow.setColorAt(1., transparent);
-	p.fillRect(QRect(left - side, top, side, height), leftGlow);
-	p.fillRect(QRect(right, top, side, height), rightGlow);
+	auto glow = QLinearGradient(0., 0., side, 0.);
+	glow.setColorAt(0., tint);
+	glow.setColorAt(1., transparent);
+	p.fillRect(QRect(0, 0, side, height), glow);
+	glow.setStart(width, 0.);
+	glow.setFinalStop(width - side, 0.);
+	p.fillRect(QRect(width - side, 0, side, height), glow);
 }
 
 struct PlayerSpringSpec {
@@ -10655,12 +10647,9 @@ protected:
 	}
 
 	void repaintHomeSideGlow() {
-		const auto column = _tabScroll->geometry();
-		const auto side = HomeSideGlowWidth(width(), column);
-		const auto top = column.y();
-		const auto right = column.right() + 1;
-		update(QRect(column.x() - side, top, side, height() - top));
-		update(QRect(right, top, side, height() - top));
+		const auto side = HomeSideGlowWidth(width(), _tabScroll->geometry());
+		update(QRect(0, 0, side, height()));
+		update(QRect(width() - side, 0, side, height()));
 	}
 
 	void setHomeSideGlow(QColor accent) {
@@ -12235,10 +12224,9 @@ protected:
 		const auto layout = computeLayout();
 		if (_tab == Tab::Home && _homeAlbumOpen
 			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
-			auto band = _tabScroll->geometry();
-			band.setHeight(layout.contentBottom - band.y());
-			PaintHomeSideGlow(p, band, width(), homeSideGlowColor(),
-				IsLightMusicTheme(), _homeSideGlowPulsing ? _backgroundPulse : 0.);
+			PaintHomeSideGlow(p, size(), _tabScroll->geometry(),
+				homeSideGlowColor(), IsLightMusicTheme(),
+				_homeSideGlowPulsing ? _backgroundPulse : 0.);
 		}
 		if (_tab == Tab::Search && showCatalogFilterSkeleton()) {
 			auto color = st::windowSubTextFg->c;
