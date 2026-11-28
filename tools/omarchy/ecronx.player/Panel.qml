@@ -72,11 +72,20 @@ Panel {
     if (o.has !== undefined) firstState = false
   }
   Process { id: notif }
-  readonly property int lineIdx: {
+  readonly property int anchorLineIdx: {
     if (!lyricsHere || !lyrics.synced) return -1
     var L = lyrics.lines, p = livePos + 150, r = -1
-    for (var i = 0; i < L.length; i++) { if (L[i][0] <= p) r = i; else break }
+    for (var i = 0; i < L.length; i++) {
+      if (L[i][0] < 0) continue
+      if (L[i][0] > p) break
+      r = i
+    }
     return r
+  }
+  readonly property int lineIdx: {
+    if (anchorLineIdx < 0) return -1
+    var until = lyrics.lines[anchorLineIdx][2]
+    return until > 0 && livePos + 150 >= until ? -1 : anchorLineIdx
   }
 
   Socket {
@@ -634,7 +643,7 @@ Panel {
               height: Style.space(190)
               clip: true
               model: root.lyricsHere ? root.lyrics.lines : []
-              currentIndex: root.lineIdx
+              currentIndex: root.anchorLineIdx
               highlightRangeMode: root.lyrics.synced ? ListView.StrictlyEnforceRange : ListView.NoHighlightRange
               preferredHighlightBegin: height / 2 - Style.space(18)
               preferredHighlightEnd: height / 2 + Style.space(18)
@@ -659,7 +668,7 @@ Panel {
                 Behavior on opacity { NumberAnimation { duration: 200 } }
                 MouseArea {
                   anchors.fill: parent
-                  enabled: root.lyrics.synced
+                  enabled: root.lyrics.synced && modelData[0] >= 0
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.send("seek " + modelData[0])
                 }

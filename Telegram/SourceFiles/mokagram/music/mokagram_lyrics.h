@@ -25,12 +25,15 @@ struct LyricWord {
 	int to = 0;
 };
 
+inline constexpr auto kUntimedLyricMs = qint64(-1);
+
 struct LyricLine {
 	qint64 timeMs = 0;
 	QString text;
 	std::vector<LyricWord> words = {};
 	QString translation = {};
 	QString romanization = {};
+	qint64 untilMs = 0; // A known end before an untimed gap; 0 means no cutoff.
 };
 
 struct Lyrics {

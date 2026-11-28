@@ -35,7 +35,7 @@ struct Row {
 	int line;
 	int begin;
 	int end;
-	qint64 startMs = -1;
+	qint64 startMs = kUntimedLyricMs;
 	qint64 endMs = 0;
 };
 
@@ -94,31 +94,24 @@ struct Row {
 	return matches;
 }
 
-[[nodiscard]] bool FillLineGaps(std::vector<Row> &rows) {
-	if (rows.front().startMs < 0 || rows.back().startMs < 0) {
-		return false;
-	}
-	for (auto left = 0, right = 1; right < int(rows.size()); ++right) {
-		if (rows[right].startMs < 0) {
+void FillLineGaps(std::vector<Row> &rows) {
+	auto left = -1;
+	for (auto right = 0; right < int(rows.size()); ++right) {
+		if (rows[right].startMs == kUntimedLyricMs) {
 			continue;
 		}
-		if (rows[right].startMs <= rows[left].startMs) {
-			return false;
-		}
-		const auto missing = right - left - 1;
-		if (missing) {
+		if (left >= 0) {
+			const auto missing = right - left - 1;
 			const auto from = rows[left].endMs;
 			const auto gap = rows[right].startMs - from;
-			if (missing > kMaxGapLines || gap < 450 * missing || gap > kMaxGapMs) {
-				return false;
-			}
-			for (auto i = 1; i <= missing; ++i) {
-				rows[left + i].startMs = from + gap * i / (missing + 1);
+			if (missing <= kMaxGapLines && gap >= 450 * missing && gap <= kMaxGapMs) {
+				for (auto i = 1; i <= missing; ++i) {
+					rows[left + i].startMs = from + gap * i / (missing + 1);
+				}
 			}
 		}
 		left = right;
 	}
-	return true;
 }
 
 } // namespace
@@ -174,9 +167,11 @@ Lyrics AlignLyrics(Lyrics source, std::span<const Asr::TimedWord> heard) {
 	const auto matches = FindMatches(tokens, heardTokens);
 	const auto matched = std::count_if(matches.begin(), matches.end(), [](int i) { return i >= 0; });
 	if ((matched < 4 && matched != int(tokens.size()))
-		|| matched * 2 < int(tokens.size()) || matched * 3 < int(heardTokens.size())) {
+		|| matched * 3 < int(tokens.size()) || matched * 4 < int(heardTokens.size())) {
 		return source;
 	}
+	auto anchorCount = 0;
+	auto previousStart = kUntimedLyricMs;
 	for (auto &row : rows) {
 		auto first = -1;
 		auto last = -1;
@@ -192,22 +187,37 @@ Lyrics AlignLyrics(Lyrics source, std::span<const Asr::TimedWord> heard) {
 			continue;
 		}
 		const auto lead = std::min(600, (first - row.begin) * 200);
-		row.startMs = std::max<qint64>(0, heard[matches[first]].startMs - lead);
+		const auto firstWord = heard[matches[first]].startMs;
+		const auto start = std::max(previousStart + 1, firstWord - lead);
+		if (start > firstWord) {
+			continue;
+		}
+		row.startMs = previousStart = start;
 		row.endMs = heard[matches[last]].endMs;
+		++anchorCount;
 	}
-	if (!FillLineGaps(rows)) {
+	if (anchorCount < std::min(2, int(rows.size()))) {
 		return source;
 	}
+	FillLineGaps(rows);
 	// Keep exact word timing only on fully matched lines. Interpolated or
 	// partially matched lines use the player's existing line highlight.
 	auto next = int(source.lines.size());
-	auto timestamp = std::max(rows.back().startMs + 1, rows.back().endMs);
+	auto timestamp = (rows.back().startMs == kUntimedLyricMs)
+		? kUntimedLyricMs
+		: std::max(rows.back().startMs + 1, rows.back().endMs);
 	for (auto row = rows.rbegin(); row != rows.rend(); ++row) {
 		while (--next > row->line) {
 			source.lines[next].timeMs = timestamp;
 		}
 		auto &line = source.lines[row->line];
 		line.timeMs = timestamp = row->startMs;
+		if (line.timeMs == kUntimedLyricMs) {
+			continue;
+		}
+		if (row != rows.rbegin() && std::prev(row)->startMs == kUntimedLyricMs) {
+			line.untilMs = std::max(line.timeMs + 1, row->endMs);
+		}
 		if (std::find(matches.begin() + row->begin, matches.begin() + row->end, -1)
 				!= matches.begin() + row->end) {
 			continue;

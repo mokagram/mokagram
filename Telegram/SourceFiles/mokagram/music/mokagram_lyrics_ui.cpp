@@ -600,6 +600,14 @@ void LyricsView::setLoading(const QString &trackId) {
 void LyricsView::setLyrics(Lyrics lyrics) {
 	reset();
 	_lyrics = std::move(lyrics);
+	if (_lyrics.synced) {
+		_timedLines.reserve(_lyrics.lines.size());
+		for (auto i = 0; i < int(_lyrics.lines.size()); ++i) {
+			if (_lyrics.lines[i].timeMs != kUntimedLyricMs) {
+				_timedLines.push_back(i);
+			}
+		}
+	}
 	_status = _lyrics.found
 		? QString()
 		: _lyrics.unavailable
@@ -772,11 +780,13 @@ QPointF LyricsView::lineOrigin(double top) const {
 		return -1;
 	}
 	const auto index = lineAtOffset(y - (anchorY() - _scroll));
-	return (index >= 0 && index < int(_lyrics.lines.size())) ? index : -1;
+	return (index >= 0 && index < int(_lyrics.lines.size())
+		&& _lyrics.lines[index].timeMs != kUntimedLyricMs) ? index : -1;
 }
 
 void LyricsView::reset() {
 	_lyrics = {};
+	_timedLines.clear();
 	_current = -1;
 	_scroll = 0.;
 	_plainScroll = 0.;
@@ -839,18 +849,20 @@ void LyricsView::tick() {
 	_last = now;
 	auto changed = false;
 	auto needLayout = false;
-	if (_lyrics.found && _lyrics.synced && !_lyrics.lines.empty()) {
+	if (!_timedLines.empty()) {
 		const auto position = livePosition() + _timingOffset;
 		const auto at = position + 120;
-		// LRC lines are timestamp-sorted; upper_bound keeps the last duplicate.
+		// Ignore untimed rows, and prefer the last line of a duplicate timestamp.
 		const auto next = std::upper_bound(
-			_lyrics.lines.begin(),
-			_lyrics.lines.end(),
+			_timedLines.begin(),
+			_timedLines.end(),
 			at,
-			[](qint64 position, const LyricLine &line) {
-				return position < line.timeMs;
+			[&](qint64 position, int index) {
+				return position < _lyrics.lines[index].timeMs;
 			});
-		const auto index = int(next - _lyrics.lines.begin()) - 1;
+		const auto anchor = (next == _timedLines.begin()) ? -1 : *std::prev(next);
+		const auto cutoff = (anchor < 0) ? 0 : _lyrics.lines[anchor].untilMs;
+		const auto index = (cutoff && at >= cutoff) ? -1 : anchor;
 		if (_current != index) {
 			if (_current >= 0 && _weights[_current] > 0.f) {
 				_fadingWeights.push_back(_current);
@@ -861,7 +873,7 @@ void LyricsView::tick() {
 			changed = needLayout = true;
 			_current = index;
 		}
-		auto target = centerOf(std::max(index, 0));
+		auto target = centerOf(std::max(anchor, 0));
 		const auto topMargin = double(style::ConvertScale(_big ? 32 : 16));
 		target = std::max(target, anchorY() - topMargin);
 		const auto snap = !_scrollReady;
@@ -944,7 +956,9 @@ void LyricsView::tick() {
 	// У обычного LRC известен только старт строки.
 	const auto start = line.timeMs;
 	auto span = qint64(std::max(int(line.text.size()), 1)) * 85;
-	if (index + 1 < int(lines.size())) {
+	if (line.untilMs) {
+		span = std::min(span, line.untilMs - start);
+	} else if (index + 1 < int(lines.size()) && lines[index + 1].timeMs != kUntimedLyricMs) {
 		span = std::min(span, lines[index + 1].timeMs - start - 150);
 	}
 	span = std::max<qint64>(span, 250);

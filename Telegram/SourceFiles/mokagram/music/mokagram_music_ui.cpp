@@ -15710,7 +15710,11 @@ void BridgeSend(const QByteArray &line) {
 void BridgeSendLyrics(const QString &id, const Lyrics &lyrics) {
 	auto lines = QJsonArray();
 	for (const auto &line : lyrics.lines) {
-		lines.push_back(QJsonArray{ double(line.timeMs), line.text });
+		auto row = QJsonArray{ double(line.timeMs), line.text };
+		if (line.untilMs) {
+			row.push_back(double(line.untilMs));
+		}
+		lines.push_back(std::move(row));
 	}
 	auto object = QJsonObject();
 	object.insert(u"t"_q, u"lyrics"_q);

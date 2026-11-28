@@ -123,6 +123,7 @@ private:
 	rpl::event_stream<qint64> _lineClicked;
 	const not_null<TimedComments*> _comments;
 	Lyrics _lyrics;
+	std::vector<int> _timedLines;
 	QString _status;
 	QTimer _timer;
 	QElapsedTimer _clock;
