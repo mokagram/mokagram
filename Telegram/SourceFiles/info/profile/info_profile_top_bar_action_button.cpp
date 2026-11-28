@@ -8,13 +8,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_top_bar_action_button.h"
 #include "mokagram/appearance/mokagram_appearance.h"
 
+#include "lottie/lottie_icon.h"
 #include "ui/effects/animation_value.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/painter.h"
 #include "ui/rect.h"
-#include "lottie/lottie_icon.h"
-#include "styles/style_layers.h"
+
 #include "styles/style_info.h"
+#include "styles/style_layers.h"
 
 namespace Info::Profile {
 namespace {

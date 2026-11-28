@@ -13,9 +13,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "lang/lang_keys.h"
 #include "api/api_user_privacy.h"
+#include "apiwrap.h"
 #include "boxes/edit_privacy_box.h"
+#include "lang/lang_keys.h"
 #include "main/main_session.h"
-#include "settings/settings_common.h"
 #include "settings/sections/settings_privacy_security.h"
 #include "ui/vertical_list.h"
 #include "mokagram/appearance/mokagram_appearance.h"
@@ -28,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/padding_wrap.h"
 #include "ui/painter.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_settings.h"
 #include "styles/style_window.h"
 
