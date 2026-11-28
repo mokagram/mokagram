@@ -1600,7 +1600,7 @@ void RefreshAvailability() {
 				state.found = lyrics.found;
 				state.changes.fire({});
 			}
-		});
+		}, /*syncPlain=*/false);
 	LoadPlaybackArtwork(track);
 }
 

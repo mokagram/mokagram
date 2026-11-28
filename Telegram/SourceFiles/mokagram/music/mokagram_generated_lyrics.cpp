@@ -14,9 +14,14 @@
 #include "media/player/media_player_instance.h"
 #include "media/streaming/media_streaming_loader.h"
 #include "mokagram/asr/mokagram_asr.h"
+#include "mokagram/music/mokagram_lyrics_alignment.h"
 #include "mokagram/music/mokagram_soundcloud.h"
+#include "mokagram/settings/mokagram_settings.h"
+
+#include <crl/crl.h>
 
 #include <map>
+#include <tuple>
 
 namespace Mokagram::Music {
 namespace {
@@ -85,9 +90,66 @@ constexpr auto kPartTimeout = crl::time(30000);
 	return a.audio() == b.audio() && a.contextId() == b.contextId();
 }
 
-std::map<QString, Lyrics> &GeneratedCache() {
-	static auto cache = std::map<QString, Lyrics>();
+using AlignmentKey = std::vector<std::tuple<QString, QString, QString>>;
+
+[[nodiscard]] AlignmentKey SourceText(const Lyrics &source) {
+	auto result = AlignmentKey();
+	result.reserve(source.lines.size());
+	for (const auto &line : source.lines) {
+		result.emplace_back(line.text, line.translation, line.romanization);
+	}
+	return result;
+}
+
+struct Alignment {
+	std::optional<Lyrics> result;
+	std::vector<Fn<void(Lyrics)>> waiting;
+};
+
+struct Transcript {
+	const std::vector<Asr::TimedWord> words;
+	Lyrics generated;
+	std::map<AlignmentKey, Alignment> aligned;
+};
+
+using TranscriptPtr = std::shared_ptr<Transcript>;
+
+std::map<QString, TranscriptPtr> &TranscriptCache() {
+	static auto cache = std::map<QString, TranscriptPtr>();
 	return cache;
+}
+
+void SyncPlainLyrics(
+		TranscriptPtr transcript,
+		AlignmentKey key,
+		Lyrics source,
+		Fn<void(Lyrics)> done) {
+	const auto entry = &transcript->aligned[std::move(key)];
+	if (entry->result) {
+		if (entry->result->synced) {
+			done(*entry->result);
+		}
+		return;
+	}
+	const auto start = entry->waiting.empty();
+	entry->waiting.push_back(std::move(done));
+	if (start) {
+		crl::async([transcript = std::move(transcript), entry,
+				source = std::move(source)]() mutable {
+			auto aligned = AlignLyrics(std::move(source), transcript->words);
+			crl::on_main([transcript = std::move(transcript), entry,
+					aligned = std::move(aligned)]() mutable {
+				(void)transcript; // Keeps the map entry alive.
+				entry->result = aligned.synced ? std::move(aligned) : Lyrics();
+				const auto waiting = std::exchange(entry->waiting, {});
+				if (entry->result->synced) {
+					for (const auto &done : waiting) {
+						done(*entry->result);
+					}
+				}
+			});
+		});
+	}
 }
 
 class Recognition;
@@ -99,7 +161,7 @@ public:
 		QString key,
 		const AudioMsgId &audio,
 		const char *languages,
-		Fn<void(Lyrics)> done)
+		Fn<void(TranscriptPtr)> done)
 	: _key(std::move(key))
 	, _audio(audio)
 	, _languages(languages)
@@ -111,7 +173,7 @@ public:
 		return SameAudio(_audio, audio);
 	}
 
-	void join(Fn<void(Lyrics)> done) {
+	void join(Fn<void(TranscriptPtr)> done) {
 		_waiting.push_back(std::move(done));
 	}
 
@@ -167,9 +229,9 @@ public:
 		loadNext();
 	}
 
-	void finish(Lyrics result) {
-		if (result.found) {
-			auto &cache = GeneratedCache();
+	void finish(TranscriptPtr result) {
+		if (result) {
+			auto &cache = TranscriptCache();
 			if (cache.size() >= 64) {
 				cache.erase(cache.begin());
 			}
@@ -177,7 +239,7 @@ public:
 		}
 		auto waiting = std::move(_waiting);
 		Active().reset();
-		crl::on_main([waiting = std::move(waiting), result = std::move(result)]() mutable {
+		crl::on_main([waiting = std::move(waiting), result = std::move(result)] {
 			for (const auto &done : waiting) {
 				done(result);
 			}
@@ -198,14 +260,16 @@ private:
 		Asr::Engine::Instance().transcribeSong(
 			std::move(bytes), std::move(location), _languages, _guard.make_guard(),
 			[this](std::vector<Asr::TimedWord> words) {
-				finish(LyricsFromWords(words));
+				finish(words.empty()
+					? nullptr
+					: std::make_shared<Transcript>(std::move(words)));
 			});
 	}
 
 	const QString _key;
 	const AudioMsgId _audio;
 	const char *const _languages;
-	std::vector<Fn<void(Lyrics)>> _waiting;
+	std::vector<Fn<void(TranscriptPtr)>> _waiting;
 	QByteArray _bytes;
 	std::unique_ptr<Media::Streaming::Loader> _loader;
 	base::Timer _timeout;
@@ -220,39 +284,83 @@ std::unique_ptr<Recognition> &Active() {
 
 } // namespace
 
-void FetchPlaybackLyrics(const Track &track, Fn<void(Lyrics)> done) {
+void FetchPlaybackLyrics(const Track &track, Fn<void(Lyrics)> done, bool syncPlain) {
 	const auto audio = Media::Player::instance()->current(kSong);
+	const auto provider = Settings::Int(u"lyrics.provider"_q);
 	const auto session = audio.audio()
 		? base::make_weak(&audio.audio()->session())
 		: base::weak_ptr<Main::Session>();
+	const auto current = [=] {
+		return !Core::Quitting()
+			&& session.get()
+			&& provider == Settings::Int(u"lyrics.provider"_q)
+			&& SameAudio(audio, Media::Player::instance()->current(kSong));
+	};
 	FetchLyrics(track.id, track.title, track.artist, track.durationMs,
-		[key = track.id, duration = track.durationMs, audio, session,
+		[key = track.id, duration = track.durationMs, audio, current, syncPlain,
 		 languages = SongLanguages(track.title, track.artist),
-		 done = std::move(done)](Lyrics result) {
-			if (result.found || Core::Quitting() || !session.get()
-				|| duration > Asr::kMaxRecordingDurationMs
-				|| !SameAudio(audio, Media::Player::instance()->current(kSong))) {
-				done(std::move(result));
+		 done = std::move(done)](Lyrics source) {
+			if (source.synced || (source.found && !syncPlain)
+				|| duration > Asr::kMaxRecordingDurationMs || !current()) {
+				done(std::move(source));
 				return;
 			}
-			const auto &cache = GeneratedCache();
-			if (const auto i = cache.find(key); i != cache.end()) {
-				done(i->second);
-				return;
+			const auto &cache = TranscriptCache();
+			const auto i = cache.find(key);
+			const auto cached = (i != cache.end()) ? i->second : nullptr;
+			auto alignmentKey = AlignmentKey();
+			if (source.found) {
+				alignmentKey = SourceText(source);
+				if (cached) {
+					const auto entry = cached->aligned.find(alignmentKey);
+					if (entry != cached->aligned.end() && entry->second.result) {
+						const auto &result = *entry->second.result;
+						done(result.synced ? result : std::move(source));
+						return;
+					}
+				}
+				done(source);
+				if (!current()) {
+					return;
+				}
 			}
-			auto generate = [done, unavailable = result.unavailable](Lyrics lyrics) {
-				lyrics.unavailable = !lyrics.found && unavailable;
-				done(std::move(lyrics));
+			auto useTranscript = [done, current, alignmentKey = std::move(alignmentKey),
+					source = std::move(source)](
+					TranscriptPtr transcript) mutable {
+				if (!current()) {
+					return;
+				}
+				if (source.found) {
+					if (transcript) {
+						SyncPlainLyrics(std::move(transcript), std::move(alignmentKey), std::move(source),
+							[done, current](Lyrics aligned) {
+								if (current()) {
+									done(std::move(aligned));
+								}
+							});
+					}
+				} else if (transcript) {
+					if (!transcript->generated.found) {
+						transcript->generated = LyricsFromWords(transcript->words);
+					}
+					done(transcript->generated);
+				} else {
+					done(std::move(source));
+				}
 			};
+			if (cached) {
+				useTranscript(cached);
+				return;
+			}
 			auto &active = Active();
 			if (active && active->matches(audio)) {
-				active->join(std::move(generate));
+				active->join(std::move(useTranscript));
 				return;
 			}
 			if (active) {
 				active->finish({});
 			}
-			active = std::make_unique<Recognition>(key, audio, languages, std::move(generate));
+			active = std::make_unique<Recognition>(key, audio, languages, std::move(useTranscript));
 			active->start();
 		});
 }

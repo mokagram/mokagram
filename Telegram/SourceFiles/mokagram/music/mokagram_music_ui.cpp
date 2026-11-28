@@ -15680,6 +15680,7 @@ struct ShellBridge {
 	qint64 coverKey = 0;
 	int coverSerial = 0;
 	QString lyricsId;
+	int lyricsProvider = -1;
 	QByteArray lyricsLine;
 	QByteArray lastLibrary;
 	QString commentsId;
@@ -15814,9 +15815,10 @@ void BridgePush(bool force = false) {
 			}
 		}
 		state.insert(u"queue"_q, list);
-		if (b.lyricsId != track.id) {
+		const auto changedTrack = b.lyricsId != track.id;
+		const auto provider = Settings::Int(u"lyrics.provider"_q);
+		if (changedTrack) {
 			b.lyricsId = track.id;
-			b.lyricsLine.clear();
 			b.lastCommentsLine.clear();
 			const auto id = track.id;
 			if (!IsTelegramTrack(track)) {
@@ -15839,9 +15841,14 @@ void BridgePush(bool force = false) {
 					BridgeSend(Bridge().lastCommentsLine);
 				});
 			}
+		}
+		if (changedTrack || b.lyricsProvider != provider) {
+			b.lyricsProvider = provider;
+			b.lyricsLine.clear();
+			const auto id = track.id;
 			FetchPlaybackLyrics(track,
 				[=](Lyrics lyrics) {
-					if (Bridge().lyricsId == id) {
+					if (Bridge().lyricsId == id && Bridge().lyricsProvider == provider) {
 						BridgeSendLyrics(id, lyrics);
 					}
 				});

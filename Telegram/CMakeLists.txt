@@ -149,6 +149,8 @@ PRIVATE
     mokagram/music/mokagram_generated_lyrics.cpp
     mokagram/music/mokagram_lyrics.cpp
     mokagram/music/mokagram_lyrics.h
+    mokagram/music/mokagram_lyrics_alignment.cpp
+    mokagram/music/mokagram_lyrics_alignment.h
     mokagram/music/mokagram_lyrics_ui.cpp
     mokagram/music/mokagram_lyrics_ui.h
     mokagram/music/mokagram_player_style.h

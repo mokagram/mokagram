@@ -48,8 +48,12 @@ void FetchLyrics(
 	qint64 durationMs,
 	Fn<void(Lyrics)> done);
 
-// Ищет текст текущего трека; если источники его не нашли, распознаёт аудио.
-void FetchPlaybackLyrics(const Track &track, Fn<void(Lyrics)> done);
+// Вызывает done в главном потоке: статичный текст приходит сразу, а если
+// удалось расставить таймкоды, затем приходит синхронизированная версия.
+void FetchPlaybackLyrics(
+	const Track &track,
+	Fn<void(Lyrics)> done,
+	bool syncPlain = true);
 
 // Обложка в высоком качестве из открытых каталогов (iTunes, затем Deezer),
 // только если совпали название, исполнитель и длительность. Пустая, если нет.
