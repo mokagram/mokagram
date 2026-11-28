@@ -8,6 +8,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_send_progress.h"
 
 #include "apiwrap.h"
+#include "base/unixtime.h"
+#include "data/data_peer.h"
+#include "data/data_peer_values.h"
+#include "data/data_user.h"
+#include "history/history.h"
+#include "main/main_session.h"
 #include "mokagram/ghost/mokagram_ghost.h"
 
 namespace Api {
