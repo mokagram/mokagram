@@ -5324,9 +5324,10 @@ private:
 		});
 		anim::Disables() | rpl::on_next([this] { updateWaffleMotion(); }, lifetime());
 		PowerSaving::Changes() | rpl::on_next([this] { updateWaffleMotion(); }, lifetime());
+		// Qt can emit this signal outside Sandbox::notify().
 		connect(qApp, &QGuiApplication::applicationStateChanged, this, [this] {
 			updateWaffleMotion();
-		});
+		}, Qt::QueuedConnection);
 	}
 
 	void updateWaffleMotion() {
