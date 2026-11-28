@@ -12911,11 +12911,7 @@ private:
 			}));
 			_view->setLoading(track.id);
 			const auto id = track.id;
-			FetchLyrics(
-				id,
-				track.title,
-				track.artist,
-				track.durationMs,
+			FetchPlaybackLyrics(track,
 				crl::guard(this, [=](Lyrics lyrics) {
 					if (_lyricsFor == id && _lyricsProvider == provider) {
 						_lyricsMissing = !lyrics.found || lyrics.lines.empty();
@@ -15843,11 +15839,7 @@ void BridgePush(bool force = false) {
 					BridgeSend(Bridge().lastCommentsLine);
 				});
 			}
-			FetchLyrics(
-				id,
-				track.title,
-				track.artist,
-				track.durationMs,
+			FetchPlaybackLyrics(track,
 				[=](Lyrics lyrics) {
 					if (Bridge().lyricsId == id) {
 						BridgeSendLyrics(id, lyrics);

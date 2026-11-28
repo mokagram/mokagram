@@ -116,8 +116,9 @@ constexpr auto kRetryDelay = 1500;
 	std::sort(result.lines.begin(), result.lines.end(), [](const auto &a, const auto &b) {
 		return a.timeMs < b.timeMs;
 	});
-	result.synced = !result.lines.empty();
-	result.found = result.synced;
+	result.synced = result.found = std::ranges::any_of(result.lines, [](const LyricLine &line) {
+		return !line.text.isEmpty();
+	});
 	return result;
 }
 
@@ -207,6 +208,9 @@ void ScaleTimes(Lyrics &lyrics, double ratio) {
 }
 
 [[nodiscard]] Lyrics ParsePlain(const QString &text) {
+	if (text.trimmed().isEmpty()) {
+		return {};
+	}
 	auto result = Lyrics();
 	for (const auto &raw : text.split('\n')) {
 		result.lines.push_back({ 0, raw.trimmed() });

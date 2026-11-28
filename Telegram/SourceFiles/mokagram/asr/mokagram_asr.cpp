@@ -5,6 +5,7 @@
 
 #include "base/unixtime.h"
 #include "core/application.h"
+#include "core/file_location.h"
 #include "data/data_changes.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
@@ -34,8 +35,10 @@ extern "C" {
 #include <zlib.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -53,6 +56,7 @@ constexpr auto kKeyAutoNew = "asr.autoNew";
 constexpr auto kAsrModelFile = "en-ru-uk.tzf";
 constexpr auto kVadModelFile = "silero_vad.onnx";
 constexpr auto kSampleRate = 16000;
+constexpr auto kMaxRecordingSeconds = kMaxRecordingDurationMs / 1000;
 
 [[nodiscard]] QString U(const char *text) {
 	return QString::fromUtf8(Lang::Tr(text));
@@ -104,25 +108,19 @@ bool EnsureFile(const QString &resource, const QString &target) {
 	return output.flush();
 }
 
-// Decode an Ogg/Opus voice message into mono float PCM at 16 kHz, which is
-// the tinyasr input format. Uses the same FFmpeg helpers as the client's
-// waveform decoder, but resamples to float and to the model's sample rate.
-std::vector<float> DecodePcm(const QByteArray &bytes) {
-	std::vector<float> result;
-	if (bytes.isEmpty()) {
-		return result;
+// Decode audio into mono float PCM at the recognizer's sample rate.
+std::vector<float> DecodePcm(
+		FFmpeg::FormatPointer format,
+		const auto &cancelled,
+		size_t maxSamples = 0) {
+	if (!format || cancelled()) {
+		return {};
 	}
-	auto bytesWrap = FFmpeg::ReadBytesWrap{
-		.size = bytes.size(),
-		.data = reinterpret_cast<const uchar*>(bytes.constData()),
-	};
-	auto format = FFmpeg::MakeFormatPointer(
-		&bytesWrap,
-		&FFmpeg::ReadBytesWrap::Read,
-		nullptr,
-		&FFmpeg::ReadBytesWrap::Seek);
-	if (!format) {
-		return result;
+	auto result = std::vector<float>();
+	if (maxSamples && format->duration > 0) {
+		result.reserve(std::min<size_t>(
+			maxSamples,
+			av_rescale(format->duration, kSampleRate, AV_TIME_BASE)));
 	}
 	if (avformat_find_stream_info(format.get(), nullptr) < 0) {
 		return result;
@@ -143,7 +141,7 @@ std::vector<float> DecodePcm(const QByteArray &bytes) {
 	auto swr = FFmpeg::SwresamplePointer();
 	auto packet = FFmpeg::Packet();
 	auto eof = false;
-	while (true) {
+	while (!cancelled()) {
 		const auto received = avcodec_receive_frame(codec.get(), frame.get());
 		if (received == 0) {
 			auto mono = AVChannelLayout AV_CHANNEL_LAYOUT_MONO;
@@ -158,17 +156,20 @@ std::vector<float> DecodePcm(const QByteArray &bytes) {
 			if (!swr) {
 				return {};
 			}
-			const auto capacity = swr_get_out_samples(swr.get(), frame->nb_samples);
+			const auto oldSize = result.size();
+			const auto available = swr_get_out_samples(swr.get(), frame->nb_samples);
+			const auto capacity = (maxSamples && available > 0)
+				? int(std::min<size_t>(available, maxSamples - oldSize + 1))
+				: available;
 			if (capacity <= 0) {
 				continue;
 			}
-			const auto oldSize = result.size();
 			result.resize(oldSize + capacity);
 			auto out = reinterpret_cast<uint8_t*>(result.data() + oldSize);
 			const auto samples = swr_convert(
 				swr.get(), &out, capacity,
 				(const uint8_t**)frame->extended_data, frame->nb_samples);
-			if (samples < 0) {
+			if (samples < 0 || (maxSamples && oldSize + samples > maxSamples)) {
 				return {};
 			}
 			result.resize(oldSize + samples);
@@ -198,36 +199,109 @@ std::vector<float> DecodePcm(const QByteArray &bytes) {
 			return {};
 		}
 	}
-	return result;
+	return cancelled() ? std::vector<float>() : std::move(result);
+}
+
+[[nodiscard]] auto BytesFormat(FFmpeg::ReadBytesWrap &wrap) {
+	return FFmpeg::MakeFormatPointer(
+		&wrap,
+		&FFmpeg::ReadBytesWrap::Read,
+		nullptr,
+		&FFmpeg::ReadBytesWrap::Seek);
+}
+
+[[nodiscard]] auto BytesWrap(const QByteArray &bytes) {
+	return FFmpeg::ReadBytesWrap{
+		.size = bytes.size(),
+		.data = reinterpret_cast<const uchar*>(bytes.constData()),
+	};
 }
 
 // The recognizer emits a JSON array of final words per file piece:
 //   [{"text":"привет","start":0.12,"end":0.5}, ...]
 // There are no "commit" wrappers here: those belong to session events.
-QString ParseTranscript(const QByteArray &json) {
-	const auto document = QJsonDocument::fromJson(json);
+Segment ParseTranscript(const char *json, bool timed) {
+	const auto document = QJsonDocument::fromJson(
+		QByteArray::fromRawData(json, std::strlen(json)));
 	if (!document.isArray()) {
-		return QString();
+		return {};
 	}
-	auto result = QString();
+	auto result = Segment();
 	auto first = true;
 	for (const auto &value : document.array()) {
 		if (!value.isObject()) {
 			continue;
 		}
 		const auto object = value.toObject();
+		const auto start = timed ? object.value(u"start"_q).toDouble(-1.) : 0.;
 		const auto text = object.value(u"text"_q).toString();
-		if (text.isEmpty()) {
+		if (text.isEmpty() || !(start >= 0. && start <= kMaxRecordingSeconds)) {
 			continue;
+		}
+		if (first && timed) {
+			result.startMs = qRound64(start * 1000.);
 		}
 		// "join": true means no space before the word (Khmer syllables).
 		if (!first && !object.value(u"join"_q).toBool()) {
-			result.append(u" "_q);
+			result.text.append(u' ');
 		}
-		result.append(text);
+		result.text.append(text);
 		first = false;
 	}
-	return result.trimmed();
+	result.text = result.text.trimmed();
+	return result;
+}
+
+void Recognize(
+		tinyasr_models *models,
+		std::vector<float> pcm,
+		const char *languages,
+		const auto &cancelled,
+		const auto &consume) {
+	if (pcm.empty() || cancelled()) {
+		return;
+	}
+	const auto file = std::unique_ptr<tinyasr_file, decltype(&tinyasr_file_free)>(
+		tinyasr_file_new(models, pcm.data(), pcm.size(), languages, 4),
+		&tinyasr_file_free);
+	std::vector<float>().swap(pcm);
+	while (file && !cancelled()) {
+		const auto piece = tinyasr_file_next(file.get());
+		if (!piece) {
+			break;
+		}
+		consume(piece);
+	}
+}
+
+struct RecordingTask {
+	QByteArray bytes;
+	Core::FileLocation location;
+	base::binary_guard guard;
+	Fn<void(std::vector<Segment>)> done;
+};
+
+[[nodiscard]] std::vector<float> DecodeRecording(
+		const RecordingTask &task,
+		const auto &cancelled) {
+	constexpr auto kMaxSamples = size_t(kMaxRecordingSeconds * kSampleRate);
+	if (!task.bytes.isEmpty()) {
+		auto wrap = BytesWrap(task.bytes);
+		return DecodePcm(BytesFormat(wrap), cancelled, kMaxSamples);
+	}
+	if (!task.location.accessEnable()) {
+		return {};
+	}
+	const auto access = gsl::finally([&] { task.location.accessDisable(); });
+	auto wrap = FFmpeg::ReadFileWrap{ QFile(task.location.name()) };
+	if (!wrap.file.open(QIODevice::ReadOnly)) {
+		return {};
+	}
+	return DecodePcm(FFmpeg::MakeFormatPointer(
+		&wrap,
+		&FFmpeg::ReadFileWrap::Read,
+		nullptr,
+		&FFmpeg::ReadFileWrap::Seek), cancelled, kMaxSamples);
 }
 
 struct Task {
@@ -299,16 +373,13 @@ public:
 		if (_thread.joinable()) {
 			_thread.join();
 		}
-		std::lock_guard lock(_mutex);
-		if (_models) {
-			tinyasr_free(_models);
-		}
+		tinyasr_free(_models.load());
 	}
 
 	bool init() {
-		std::lock_guard lock(_mutex);
+		std::lock_guard lock(_modelMutex);
 		if (_initialized) {
-			return _models != nullptr;
+			return ready();
 		}
 		_initialized = true;
 		const auto dir = ModelDir();
@@ -331,24 +402,20 @@ public:
 		const auto asrBytes = asrFile.readAll();
 		const auto vadBytes = vadFile.readAll();
 		char error[512] = {};
-		_models = tinyasr_load(
+		const auto models = tinyasr_load(
 			reinterpret_cast<const uint8_t*>(asrBytes.constData()), asrBytes.size(),
 			reinterpret_cast<const uint8_t*>(vadBytes.constData()), vadBytes.size(),
 			error, sizeof(error));
-		if (!_models) {
+		if (!models) {
 			LOG(("[mokagram-asr] model load failed: %1").arg(QString::fromLatin1(error)));
 			return false;
 		}
-		// The vendored crate is built without std: its parallel-for and
-		// built-in thread pool are compiled out, so this is a no-op.
-		// Recognition still runs on our own background thread.
-		_thread = std::thread([this] { Loop(); });
+		_models = models;
 		return true;
 	}
 
 	[[nodiscard]] bool ready() const {
-		std::lock_guard lock(_mutex);
-		return _models != nullptr;
+		return _models.load() != nullptr;
 	}
 
 	void enqueue(Task task) {
@@ -358,6 +425,16 @@ public:
 				return;
 			}
 			_queue.push_back(std::move(task));
+			startWorker();
+		}
+		_queueCondition.notify_one();
+	}
+
+	void enqueue(RecordingTask task) {
+		{
+			std::lock_guard lock(_mutex);
+			_recording = std::move(task);
+			startWorker();
 		}
 		_queueCondition.notify_one();
 	}
@@ -377,52 +454,82 @@ public:
 	}
 
 private:
+	void startWorker() {
+		if (!_thread.joinable()) {
+			_thread = std::thread([this] { Loop(); });
+		}
+	}
+
+	void transcribeRecording(RecordingTask task) {
+		const auto cancelled = [&] { return _stop || !task.guard.alive(); };
+		auto segments = std::vector<Segment>();
+		if (!cancelled() && init()) {
+			auto pcm = DecodeRecording(task, cancelled);
+			task.bytes = {};
+			Recognize(_models.load(), std::move(pcm), nullptr, cancelled,
+				[&](const char *piece) {
+					auto segment = ParseTranscript(piece, true);
+					if (!segment.text.isEmpty()) {
+						segments.push_back(std::move(segment));
+					}
+				});
+		}
+		if (!cancelled()) {
+			crl::on_main(std::move(task.guard), [
+				done = std::move(task.done),
+				segments = std::move(segments)
+			]() mutable {
+				done(std::move(segments));
+			});
+		}
+	}
+
 	void Loop() {
 		while (true) {
 			std::optional<Task> current;
+			std::optional<RecordingTask> recording;
 			{
 				std::unique_lock lock(_mutex);
-				_queueCondition.wait(lock, [&] { return _stop || !_queue.empty(); });
+				_queueCondition.wait(lock, [&] {
+					return _stop || !_queue.empty() || _recording.has_value();
+				});
 				if (_stop) {
 					return;
 				}
-				current.emplace(std::move(_queue.front()));
-				_queue.pop_front();
+				if (!_queue.empty()) {
+					current.emplace(std::move(_queue.front()));
+					_queue.pop_front();
+				} else {
+					recording = std::exchange(_recording, std::nullopt);
+				}
+			}
+			if (recording) {
+				transcribeRecording(std::move(*recording));
+				continue;
 			}
 			const auto task = &*current;
 			auto transcript = QString();
-			auto failed = false;
-			do {
-				const auto pcm = DecodePcm(task->bytes);
-				if (pcm.empty()) {
-					failed = true;
-					break;
-				}
-				auto *file = tinyasr_file_new(
-					_models, pcm.data(), pcm.size(), "ru,en", 4);
-				if (!file) {
-					failed = true;
-					break;
-				}
-				while (const auto *piece = tinyasr_file_next(file)) {
-					const auto text = ParseTranscript(QByteArray(piece));
-					if (text.isEmpty()) {
-						continue;
+			const auto cancelled = [&] { return _stop.load(); };
+			auto wrap = BytesWrap(task->bytes);
+			Recognize(_models.load(), DecodePcm(BytesFormat(wrap), cancelled),
+				"ru,en", cancelled, [&](const char *piece) {
+					const auto text = ParseTranscript(piece, false).text;
+					if (!text.isEmpty()) {
+						if (!transcript.isEmpty()) {
+							transcript.append(u' ');
+						}
+						transcript.append(text);
 					}
-					if (!transcript.isEmpty()) {
-						transcript.append(u" "_q);
-					}
-					transcript.append(text);
-				}
-				tinyasr_file_free(file);
-				transcript = transcript.trimmed();
-				failed = transcript.isEmpty();
-			} while (false);
+				});
+			if (cancelled()) {
+				return;
+			}
+			const auto failed = transcript.isEmpty();
 
 			{
 				std::lock_guard lock(_mutex);
 				_pending.erase(task->id);
-				_results[task->id] = Result{ .text = transcript, .failed = failed };
+				_results[task->id] = Result{ .text = std::move(transcript), .failed = failed };
 			}
 			crl::on_main(task->session, [id = task->id, session = task->session] {
 				const auto strong = session.get();
@@ -435,12 +542,14 @@ private:
 
 	mutable std::mutex _mutex;
 	std::condition_variable _queueCondition;
-	bool _stop = false;
-	bool _initialized = false;
+	std::atomic<bool> _stop = false;
 	std::deque<Task> _queue;
+	std::optional<RecordingTask> _recording;
 	std::set<FullMsgId> _pending;
 	std::map<FullMsgId, Result> _results;
-	tinyasr_models *_models = nullptr;
+	std::mutex _modelMutex;
+	bool _initialized = false;
+	std::atomic<tinyasr_models*> _models = nullptr;
 	std::thread _thread;
 };
 
@@ -466,6 +575,19 @@ void Engine::transcribe(not_null<Main::Session*> session, FullMsgId id, const QB
 		return;
 	}
 	_impl->enqueue(Task(id, bytes, session));
+}
+
+void Engine::transcribeRecording(
+		QByteArray bytes,
+		Core::FileLocation location,
+		base::binary_guard guard,
+		Fn<void(std::vector<Segment>)> done) {
+	_impl->enqueue(RecordingTask{
+		std::move(bytes),
+		std::move(location),
+		std::move(guard),
+		std::move(done),
+	});
 }
 
 std::optional<Result> Engine::result(FullMsgId id) const {

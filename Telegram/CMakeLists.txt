@@ -146,6 +146,7 @@ PRIVATE
     mokagram/appearance/mokagram_appearance.h
     mokagram/music/mokagram_music_canvas.cpp
     mokagram/music/mokagram_music_canvas.h
+    mokagram/music/mokagram_generated_lyrics.cpp
     mokagram/music/mokagram_lyrics.cpp
     mokagram/music/mokagram_lyrics.h
     mokagram/music/mokagram_lyrics_ui.cpp

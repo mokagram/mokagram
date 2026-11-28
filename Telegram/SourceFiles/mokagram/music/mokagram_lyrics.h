@@ -16,6 +16,8 @@ class QImage;
 
 namespace Mokagram::Music {
 
+struct Track;
+
 struct LyricWord {
 	qint64 startMs = 0;
 	qint64 endMs = 0;
@@ -45,6 +47,9 @@ void FetchLyrics(
 	const QString &artist,
 	qint64 durationMs,
 	Fn<void(Lyrics)> done);
+
+// Ищет текст текущего трека; если источники его не нашли, распознаёт аудио.
+void FetchPlaybackLyrics(const Track &track, Fn<void(Lyrics)> done);
 
 // Обложка в высоком качестве из открытых каталогов (iTunes, затем Deezer),
 // только если совпали название, исполнитель и длительность. Пустая, если нет.

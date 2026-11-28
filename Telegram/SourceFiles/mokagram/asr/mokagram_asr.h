@@ -6,6 +6,7 @@
 // в сеть.
 #pragma once
 
+#include "base/binary_guard.h"
 #include "base/weak_ptr.h"
 
 #include <QtCore/QByteArray>
@@ -15,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace Main {
 class Session;
@@ -22,7 +24,13 @@ class Session;
 
 struct FullMsgId;
 
+namespace Core {
+class FileLocation;
+} // namespace Core
+
 namespace Mokagram::Asr {
+
+inline constexpr auto kMaxRecordingDurationMs = 15 * 60 * 1000;
 
 // Один результат на сообщение.
 struct Result {
@@ -32,8 +40,12 @@ struct Result {
 	bool shown = false;
 };
 
-// Движок живёт в фоновом потоке. Методы result() и subscribe() вызываются
-// только в главном потоке, transcribe() потокобезопасен.
+struct Segment {
+	qint64 startMs = 0;
+	QString text;
+};
+
+// Распознавание выполняется в фоновом потоке.
 class Engine final {
 public:
 	static Engine &Instance();
@@ -44,6 +56,15 @@ public:
 
 	// Ставит задачу в очередь расшифровки. bytes это содержимое .ogg/opus.
 	void transcribe(not_null<Main::Session*> session, FullMsgId id, const QByteArray &bytes);
+
+	// Готовая аудиозапись: данные в памяти или локальный файл. done вызывается
+	// в главном потоке, если задача не отменена. Пустой результат означает,
+	// что запись не удалось распознать.
+	void transcribeRecording(
+		QByteArray bytes,
+		Core::FileLocation location,
+		base::binary_guard guard,
+		Fn<void(std::vector<Segment>)> done);
 
 	[[nodiscard]] std::optional<Result> result(FullMsgId id) const;
 	void markShown(FullMsgId id);

@@ -1532,11 +1532,7 @@ private:
 		}));
 		_view->setLoading(track.id);
 		const auto id = track.id;
-		FetchLyrics(
-			id,
-			track.title,
-			track.artist,
-			track.durationMs,
+		FetchPlaybackLyrics(track,
 			crl::guard(this, [=](Lyrics lyrics) {
 				if (_lyricsFor == id && _lyricsProvider == provider) {
 					_view->setLyrics(std::move(lyrics));
@@ -1597,11 +1593,7 @@ void RefreshAvailability() {
 		return;
 	}
 	const auto id = track.id;
-	FetchLyrics(
-		id,
-		track.title,
-		track.artist,
-		track.durationMs,
+	FetchPlaybackLyrics(track,
 		[=](Lyrics lyrics) {
 			auto &state = Availability();
 			if (state.id == id && state.provider == provider && state.found != lyrics.found) {
