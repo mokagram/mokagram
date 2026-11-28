@@ -1275,7 +1275,10 @@ MainMenu::MainMenu(
 	this,
 	_controller->session().user(),
 	[] {
-		// Mokagram: аватарка в шапке крупнее.
+		if (!Mokagram::Appearance::UseMaterial3()) {
+			return std::cref(st::mainMenuUserpic);
+		}
+		// Аватарка в шапке крупнее в Material 3.
 		static const auto result = [] {
 			auto copy = st::mainMenuUserpic;
 			copy.size = QSize(64, 64);
