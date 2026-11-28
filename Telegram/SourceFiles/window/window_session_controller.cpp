@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mokagram/plugins/mokagram_plugin_api.h"
 #include "mokagram/plugins/mokagram_plugin_install.h"
 #include "window/window_session_controller.h"
+#include "mokagram/tiktok/mokagram_tiktok.h"
 
 #include "apiwrap.h"
 #include "api/api_cloud_password.h"
@@ -2885,6 +2886,8 @@ int SessionController::minimalThreeColumnWidth() const {
 auto SessionController::computeColumnLayout() const -> ColumnLayout {
 	auto layout = Adaptive::WindowLayout::OneColumn;
 
+	const auto main = widget()->sessionContent();
+	const auto tiktok = main && main->tiktokColumnShown();
 	auto bodyWidth = widget()->bodyWidget()->width() - filtersWidth();
 	auto dialogsWidth = 0, chatWidth = 0, thirdWidth = 0;
 
@@ -2904,7 +2907,8 @@ auto SessionController::computeColumnLayout() const -> ColumnLayout {
 		}
 		if (_extendingForThirdSection
 			|| (!columns().tabbedSelectorSectionEnabled()
-				&& !columns().thirdSectionInfoEnabled())) {
+				&& !columns().thirdSectionInfoEnabled()
+				&& !tiktok)) {
 			return true;
 		}
 		return false;
@@ -2946,6 +2950,10 @@ int SessionController::countDialogsWidthFromRatio(int bodyWidth) const {
 }
 
 int SessionController::countThirdColumnWidthFromRatio(int bodyWidth) const {
+	if (const auto main = widget()->sessionContent();
+		main && main->tiktokColumnShown()) {
+		return Mokagram::TikTok::ColumnWidth(*main);
+	}
 	auto result = columns().thirdColumnWidth();
 	accumulate_max(result, st::columnMinimalWidthThird);
 	accumulate_min(result, st::columnMaximalWidthThird);
@@ -3028,8 +3036,10 @@ void SessionController::resizeForThirdSection() {
 		}
 		return widget()->tryToExtendWidthBy(minimal);
 	}();
+	const auto main = widget()->sessionContent();
+	const auto tiktok = main && main->tiktokColumnShown();
 	if (extendedBy) {
-		if (extendBy != columns().thirdColumnWidth()) {
+		if (!tiktok && extendBy != columns().thirdColumnWidth()) {
 			columns().setThirdColumnWidth(std::max(
 				extendBy - deficit,
 				st::columnMinimalWidthThird));
@@ -3041,7 +3051,7 @@ void SessionController::resizeForThirdSection() {
 			(currentRatio * layout.bodyWidth) / newBodyWidth,
 			nochat);
 	}
-	auto savedValue = (extendedBy == extendBy && !oneColumn)
+	auto savedValue = (extendedBy == extendBy && !oneColumn && !tiktok)
 		? -1
 		: extendedBy;
 	columns().setThirdSectionExtendedBy(savedValue);
@@ -3069,6 +3079,7 @@ void SessionController::closeThirdSection() {
 			widget()->width() + (newBodyWidth - layout.bodyWidth),
 			widget()->height());
 	}
+	content()->clearTikTokColumn(); // Mokagram.
 	columns().setTabbedSelectorSectionEnabled(false);
 	columns().setThirdSectionInfoEnabled(false);
 	Core::App().saveSettingsDelayed();

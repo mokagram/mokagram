@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mainwidget.h"
+#include "mokagram/tiktok/mokagram_tiktok.h"
+#include "mokagram/music/mokagram_music_ui.h"
 
 #include "api/api_updates.h"
 #include "api/api_views.h"
@@ -1995,6 +1997,38 @@ void MainWidget::showSection(
 	showNewSection(std::move(memento), params);
 }
 
+// Mokagram: TikTok uses the third column without saving an open site
+// in the account's chat layout preferences.
+bool MainWidget::tiktokColumnShown() const {
+	return property("mokaTikTokColumn").toBool();
+}
+
+void MainWidget::clearTikTokColumn() {
+	setProperty("mokaTikTokColumn", false);
+}
+
+void MainWidget::toggleTikTokColumn() {
+	if (tiktokColumnShown()) {
+		const auto &columns = _controller->columns();
+		if (columns.thirdSectionInfoEnabled()
+			|| columns.tabbedSelectorSectionEnabled()) {
+			clearTikTokColumn();
+			destroyThirdSection();
+			_thirdShadow.destroy();
+		} else {
+			_controller->closeThirdSection();
+		}
+	} else if (_controller->canShowThirdSection()) {
+		if (Mokagram::Settings::Bool(u"lyrics.enabled"_q)) {
+			Mokagram::Music::ToggleLyricsPanel(_controller, this);
+		}
+		setProperty("mokaTikTokColumn", true);
+		_controller->resizeForThirdSection();
+		destroyThirdSection();
+	}
+	updateControlsGeometry();
+}
+
 void MainWidget::updateColumnLayout() {
 	updateWindowAdaptiveLayout();
 }
@@ -2180,9 +2214,18 @@ void MainWidget::showNewSection(
 		? _thirdSection
 		: _mainSection;
 	if (newThirdSection) {
+		// Mokagram: an explicit request for another panel replaces TikTok.
+		const auto tiktok = Mokagram::TikTok::IsSection(memento.get());
+		if (!tiktok && tiktokColumnShown()) {
+			clearTikTokColumn();
+		}
 		_thirdSection = std::move(newThirdSection);
 		_thirdSection->removeRequests(
 		) | rpl::on_next([=] {
+			if (tiktok) {
+				toggleTikTokColumn();
+				return;
+			}
 			destroyThirdSection();
 			_thirdShadow.destroy();
 			updateControlsGeometry();
@@ -2772,7 +2815,14 @@ void MainWidget::updateControlsGeometry() {
 		}
 	}
 	if (isThreeColumn()) {
-		if (!_thirdSection
+		if (!_thirdSection && tiktokColumnShown()) {
+			showNewSection(
+				Mokagram::TikTok::MakeSection(),
+				Window::SectionShow(
+					Window::SectionShow::Way::ClearStack,
+					anim::type::instant,
+					anim::activation::background).withThirdColumn());
+		} else if (!_thirdSection
 			&& !_controller->takeThirdSectionFromLayer()) {
 			auto params = Window::SectionShow(
 				Window::SectionShow::Way::ClearStack,
@@ -3018,11 +3068,16 @@ void MainWidget::ensureThirdColumnResizeAreaCreated() {
 		return;
 	}
 	auto moveLeftCallback = [=](int globalLeft) {
-		auto newWidth = mapToGlobal(QPoint(width(), 0)).x() - globalLeft;
-		_controller->columns().setThirdColumnWidth(newWidth);
+		const auto newWidth = mapToGlobal(QPoint(width(), 0)).x() - globalLeft;
+		if (tiktokColumnShown()) {
+			Mokagram::TikTok::SetColumnWidth(*this, newWidth);
+			updateControlsGeometry();
+		} else {
+			_controller->columns().setThirdColumnWidth(newWidth);
+		}
 	};
 	auto moveFinishedCallback = [=] {
-		if (!isThreeColumn() || !_thirdSection) {
+		if (!isThreeColumn() || !_thirdSection || tiktokColumnShown()) {
 			return;
 		}
 		_controller->columns().setThirdColumnWidth(std::clamp(
@@ -3085,6 +3140,10 @@ auto MainWidget::thirdSectionForCurrentMainSection(
 void MainWidget::updateThirdColumnToCurrentChat(
 		Dialogs::Key key,
 		bool canWrite) {
+	// Mokagram: the TikTok panel is independent of the current chat.
+	if (tiktokColumnShown()) {
+		return;
+	}
 	auto saveOldThirdSection = [&] {
 		if (saveThirdSectionToStackBack()) {
 			_stack.back()->setThirdSectionMemento(

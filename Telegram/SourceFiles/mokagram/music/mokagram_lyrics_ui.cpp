@@ -1801,6 +1801,10 @@ rpl::producer<> LyricsAvailabilityChanges() {
 void ToggleLyricsPanel(
 		not_null<Window::SessionController*> controller,
 		not_null<Ui::RpWidget*> anchor) {
+	if (!Mokagram::Settings::Bool(u"lyrics.enabled"_q)
+		&& controller->content()->tiktokColumnShown()) {
+		controller->content()->toggleTikTokColumn();
+	}
 	// Панель стоит на месте третьей колонки: если её нет, открываем (как кнопка
 	// «Информация» в шапке чата) и при закрытии панели закроем обратно.
 	if (!Mokagram::Settings::Bool(u"lyrics.enabled"_q)
