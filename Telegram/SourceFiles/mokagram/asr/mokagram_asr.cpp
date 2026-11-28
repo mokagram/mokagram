@@ -61,6 +61,8 @@ constexpr auto kVadModelFile = "silero_vad.onnx";
 constexpr auto kSampleRate = 16000;
 constexpr auto kMaxRecordingSeconds = kMaxRecordingDurationMs / 1000;
 constexpr auto kMaxSongThreads = 4;
+constexpr auto kMaxPendingTasks = 24;
+constexpr auto kMaxCachedResults = 4096;
 
 [[nodiscard]] QString U(const char *text) {
 	return QString::fromUtf8(Lang::Tr(text));
@@ -365,11 +367,12 @@ struct RecordingTask {
 
 struct Task {
 	FullMsgId id;
+	Main::Session *owner = nullptr;
 	QByteArray bytes;
 	base::weak_ptr<Main::Session> session;
 
 	Task(FullMsgId id, QByteArray bytes, not_null<Main::Session*> session)
-	: id(id), bytes(std::move(bytes)), session(base::make_weak(session)) {
+	: id(id), owner(session.get()), bytes(std::move(bytes)), session(base::make_weak(session)) {
 	}
 };
 
@@ -390,7 +393,7 @@ void TranscribeNewMessage(const Data::MessageUpdate &update) {
 	const auto session = &document->session();
 	const auto id = item->fullId();
 	auto &engine = Engine::Instance();
-	if (engine.result(id)) {
+	if (engine.result(session, id)) {
 		return;
 	}
 	if (const auto view = document->activeMediaView()) {
@@ -480,7 +483,9 @@ public:
 	void enqueue(Task task) {
 		{
 			std::lock_guard lock(_mutex);
-			if (_results.contains(task.id) || !_pending.emplace(task.id).second) {
+			if (_pending.size() >= kMaxPendingTasks
+				|| resultExists(task.owner, task.id)
+				|| !_pending.emplace(task.owner, task.id).second) {
 				return;
 			}
 			_queue.push_back(std::move(task));
@@ -498,17 +503,30 @@ public:
 		_queueCondition.notify_one();
 	}
 
-	[[nodiscard]] std::optional<Result> result(FullMsgId id) const {
+	[[nodiscard]] std::optional<Result> result(
+			not_null<Main::Session*> session,
+			FullMsgId id) const {
 		std::lock_guard lock(_mutex);
-		const auto i = _results.find(id);
-		return (i == _results.end()) ? std::nullopt : std::optional<Result>(i->second);
+		const auto owner = _results.find(session.get());
+		if (owner == end(_results)) {
+			return std::nullopt;
+		}
+		const auto i = owner->second.find(id);
+		if (i == end(owner->second) || i->second.session.get() != session.get()) {
+			return std::nullopt;
+		}
+		return i->second.result;
 	}
 
-	void markShown(FullMsgId id) {
+	void markShown(not_null<Main::Session*> session, FullMsgId id) {
 		std::lock_guard lock(_mutex);
-		auto i = _results.find(id);
-		if (i != _results.end()) {
-			i->second.shown = true;
+		const auto owner = _results.find(session.get());
+		if (owner == end(_results)) {
+			return;
+		}
+		auto i = owner->second.find(id);
+		if (i != end(owner->second) && i->second.session.get() == session.get()) {
+			i->second.result.shown = true;
 		}
 	}
 
@@ -593,8 +611,32 @@ private:
 
 			{
 				std::lock_guard lock(_mutex);
-				_pending.erase(task->id);
-				_results[task->id] = Result{ .text = std::move(transcript), .failed = failed };
+				_pending.erase({ task->owner, task->id });
+				if (const auto owner = task->session.get()) {
+					auto &cache = _results[owner];
+					const auto sequence = ++_nextResultSequence;
+					cache[task->id] = CachedResult{
+						.session = task->session,
+						.result = Result{ .text = transcript, .failed = failed },
+						.sequence = sequence,
+					};
+					_resultOrder.push_back({ owner, task->id, sequence });
+					while (_resultOrder.size() > kMaxCachedResults) {
+						const auto [oldOwner, oldId, oldSequence] = _resultOrder.front();
+						_resultOrder.pop_front();
+						const auto oldCache = _results.find(oldOwner);
+						if (oldCache != end(_results)) {
+							const auto oldResult = oldCache->second.find(oldId);
+							if (oldResult != end(oldCache->second)
+								&& oldResult->second.sequence == oldSequence) {
+								oldCache->second.erase(oldResult);
+							}
+							if (oldCache->second.empty()) {
+								_results.erase(oldCache);
+							}
+						}
+					}
+				}
 			}
 			crl::on_main(task->session, [id = task->id, session = task->session] {
 				const auto strong = session.get();
@@ -605,13 +647,35 @@ private:
 		}
 	}
 
+	struct CachedResult {
+		base::weak_ptr<Main::Session> session;
+		Result result;
+		uint64 sequence = 0;
+	};
+	struct ResultOrder {
+		Main::Session *owner = nullptr;
+		FullMsgId id;
+		uint64 sequence = 0;
+	};
+
+	[[nodiscard]] bool resultExists(Main::Session *owner, FullMsgId id) const {
+		const auto i = _results.find(owner);
+		if (i == end(_results)) {
+			return false;
+		}
+		const auto result = i->second.find(id);
+		return result != end(i->second) && result->second.session.get() == owner;
+	}
+
 	mutable std::mutex _mutex;
 	std::condition_variable _queueCondition;
 	std::atomic<bool> _stop = false;
 	std::deque<Task> _queue;
 	std::optional<RecordingTask> _recording;
-	std::set<FullMsgId> _pending;
-	std::map<FullMsgId, Result> _results;
+	std::set<std::pair<Main::Session*, FullMsgId>> _pending;
+	std::map<Main::Session*, std::map<FullMsgId, CachedResult>> _results;
+	std::deque<ResultOrder> _resultOrder;
+	uint64 _nextResultSequence = 0;
 	std::mutex _modelMutex;
 	bool _initialized = false;
 	std::atomic<tinyasr_models*> _models = nullptr;
@@ -658,12 +722,14 @@ void Engine::transcribeSong(
 	});
 }
 
-std::optional<Result> Engine::result(FullMsgId id) const {
-	return _impl->result(id);
+std::optional<Result> Engine::result(
+		not_null<Main::Session*> session,
+		FullMsgId id) const {
+	return _impl->result(session, id);
 }
 
-void Engine::markShown(FullMsgId id) {
-	_impl->markShown(id);
+void Engine::markShown(not_null<Main::Session*> session, FullMsgId id) {
+	_impl->markShown(session, id);
 }
 
 void RegisterSettings() {

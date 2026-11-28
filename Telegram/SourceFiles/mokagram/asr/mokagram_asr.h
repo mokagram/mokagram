@@ -71,8 +71,10 @@ public:
 		Fn<void(float)> progress,
 		Fn<void(std::vector<TimedWord>)> done);
 
-	[[nodiscard]] std::optional<Result> result(FullMsgId id) const;
-	void markShown(FullMsgId id);
+	[[nodiscard]] std::optional<Result> result(
+		not_null<Main::Session*> session,
+		FullMsgId id) const;
+	void markShown(not_null<Main::Session*> session, FullMsgId id);
 
 	~Engine();
 
