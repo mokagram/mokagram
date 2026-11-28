@@ -1,5 +1,6 @@
 mokaGram (27.11.26)
 
+- Download audio for lyrics synchronization in parallel so timestamp generation can start sooner.
 - Style shared media tabs as a rounded selector with readable labels in light and dark themes.
 - Keep light text readable on profile music cards by dimming bright collectible backgrounds.
 - Restore rounded hover highlights for the gifts and story shortcuts in My Profile.

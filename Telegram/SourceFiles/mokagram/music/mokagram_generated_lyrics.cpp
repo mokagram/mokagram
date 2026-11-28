@@ -29,6 +29,7 @@
 #include <QtCore/QSaveFile>
 #include <QtCore/QStandardPaths>
 
+#include <cstring>
 #include <map>
 #include <tuple>
 
@@ -37,6 +38,7 @@ namespace {
 
 constexpr auto kSong = AudioMsgId::Type::Song;
 constexpr auto kMaxAudioBytes = int64(64 * 1024 * 1024);
+constexpr auto kConcurrentAudioParts = 8;
 constexpr auto kPartTimeout = crl::time(30000);
 constexpr auto kMaxTranscriptBytes = 1024 * 1024;
 constexpr auto kMaxDiskTranscripts = 96;
@@ -330,18 +332,24 @@ private:
 			finish({});
 			return;
 		}
-		_bytes.reserve(_loader->size());
+		_bytes = QByteArray(_loader->size(), Qt::Uninitialized);
+		_partsInFlight.reserve(kConcurrentAudioParts);
 		_loader->parts() | rpl::on_next([this](Media::Streaming::LoadedPart part) {
-			const auto size = _loader->size();
-			const auto offset = int64(_bytes.size());
-			const auto expected = std::min(Media::Streaming::Loader::kPartSize, size - offset);
-			if (part.offset != offset || part.bytes.size() != expected) {
+			if (_partsInFlight.empty()) {
+				return;
+			}
+			const auto size = int64(_bytes.size());
+			if (!_partsInFlight.remove(part.offset)
+				|| part.bytes.size() != std::min(
+					Media::Streaming::Loader::kPartSize, size - part.offset)) {
+				_partsInFlight.clear();
+				_timeout.cancel();
 				crl::on_main(this, [this] { finish({}); });
 				return;
 			}
-			_bytes.append(part.bytes);
-			if (_bytes.size() < size) {
-				loadNext();
+			std::memcpy(_bytes.data() + part.offset, part.bytes.constData(), part.bytes.size());
+			if (_nextOffset < size || !_partsInFlight.empty()) {
+				loadMore();
 			} else {
 				_timeout.cancel();
 				// Отпускаем загрузчик после выхода из его обработчика части.
@@ -351,7 +359,7 @@ private:
 				});
 			}
 		}, _lifetime);
-		loadNext();
+		loadMore();
 	}
 
 public:
@@ -373,9 +381,14 @@ public:
 	}
 
 private:
-	void loadNext() {
+	void loadMore() {
 		_timeout.callOnce(kPartTimeout);
-		_loader->load(_bytes.size());
+		while (_nextOffset < _bytes.size() && _partsInFlight.size() < kConcurrentAudioParts) {
+			const auto offset = _nextOffset;
+			_nextOffset += Media::Streaming::Loader::kPartSize;
+			_partsInFlight.insert(offset);
+			_loader->load(offset);
+		}
 	}
 
 	void transcribe(QByteArray bytes, Core::FileLocation location) {
@@ -402,6 +415,8 @@ private:
 	const char *const _languages;
 	std::vector<Fn<void(TranscriptPtr)>> _waiting;
 	QByteArray _bytes;
+	base::flat_set<int64> _partsInFlight;
+	int64 _nextOffset = 0;
 	std::unique_ptr<Media::Streaming::Loader> _loader;
 	base::Timer _timeout;
 	base::binary_guard _guard;
