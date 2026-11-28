@@ -13,6 +13,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_keyboard_text_selection.h"
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_touch_scroll.h"
+#include "history/history_inner_widget_accessibility.h"
+#include "history/history_message_selection.h"
+#include "ui/controls/swipe_handler_data.h"
+#include "ui/effects/animations.h"
+#include "ui/effects/thanos_effect_controller.h"
+#include "ui/widgets/elastic_scroll.h"
+#include "ui/widgets/middle_click_autoscroll.h"
+#include "ui/widgets/tooltip.h"
+#include "ui/dragging_scroll_manager.h"
+#include "ui/rp_widget.h"
+#include "ui/userpic_view.h"
 #include "mokagram/music/mokagram_music_presence.h"
 
 #include <QtGui/QPainterPath>
