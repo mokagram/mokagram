@@ -8061,17 +8061,18 @@ constexpr auto kSeekFrameInterval = 33;
 constexpr auto kBackdropFrameInterval = 100;
 constexpr auto kHomeSideGlowMin = 96;
 
-[[nodiscard]] int HomeSideGlowWidth(int width) {
-	return std::max((width - style::ConvertScale(kMusicListMaxWidth)) / 2, 0);
+[[nodiscard]] int HomeSideGlowWidth(int width, QRect column) {
+	return std::max(0, std::min(column.x(), width - column.right() - 1));
 }
 
 void PaintHomeSideGlow(
 		QPainter &p,
 		QRect band,
+		int width,
 		QColor tint,
 		bool light,
 		double pulse) {
-	const auto side = HomeSideGlowWidth(band.width());
+	const auto side = HomeSideGlowWidth(width, band);
 	const auto minimum = style::ConvertScale(kHomeSideGlowMin);
 	if (side <= minimum || band.isEmpty() || !tint.alpha()) {
 		return;
@@ -8097,8 +8098,8 @@ void PaintHomeSideGlow(
 	rightGlow.setColorAt(.14, tint);
 	rightGlow.setColorAt(.5, transparent);
 	rightGlow.setColorAt(1., transparent);
-	p.fillRect(QRectF(left - glowWidth, top, glowWidth, height), leftGlow);
-	p.fillRect(QRectF(right, top, glowWidth, height), rightGlow);
+	p.fillRect(QRect(left - side, top, side, height), leftGlow);
+	p.fillRect(QRect(right, top, side, height), rightGlow);
 }
 
 struct PlayerSpringSpec {
@@ -10654,10 +10655,12 @@ protected:
 	}
 
 	void repaintHomeSideGlow() {
-		const auto side = HomeSideGlowWidth(width());
-		const auto top = _tabScroll->y();
-		update(QRect(0, top, side, height() - top));
-		update(QRect(width() - side, top, side, height() - top));
+		const auto column = _tabScroll->geometry();
+		const auto side = HomeSideGlowWidth(width(), column);
+		const auto top = column.y();
+		const auto right = column.right() + 1;
+		update(QRect(column.x() - side, top, side, height() - top));
+		update(QRect(right, top, side, height() - top));
 	}
 
 	void setHomeSideGlow(QColor accent) {
@@ -10669,7 +10672,8 @@ protected:
 		_homeSideGlow = target;
 		_homeSideGlowFade.stop();
 		if (isVisible() && PlayerMotionEnabled()
-			&& HomeSideGlowWidth(width()) > style::ConvertScale(kHomeSideGlowMin)
+			&& HomeSideGlowWidth(width(), _tabScroll->geometry())
+				> style::ConvertScale(kHomeSideGlowMin)
 			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)
 			&& Mokagram::Settings::Bool(u"player.dynamic_background"_q)) {
 			_homeSideGlowFade.start(
@@ -12231,12 +12235,9 @@ protected:
 		const auto layout = computeLayout();
 		if (_tab == Tab::Home && _homeAlbumOpen
 			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)) {
-			const auto scrollWidth = std::min(
-				layout.center.width(), s(kMusicListMaxWidth));
-			const auto scrollLeft = layout.center.x()
-				+ (layout.center.width() - scrollWidth) / 2;
-			PaintHomeSideGlow(p, QRect(scrollLeft, layout.scrollTop, scrollWidth,
-				layout.contentBottom - layout.scrollTop), homeSideGlowColor(),
+			auto band = _tabScroll->geometry();
+			band.setHeight(layout.contentBottom - band.y());
+			PaintHomeSideGlow(p, band, width(), homeSideGlowColor(),
 				IsLightMusicTheme(), _homeSideGlowPulsing ? _backgroundPulse : 0.);
 		}
 		if (_tab == Tab::Search && showCatalogFilterSkeleton()) {
@@ -13157,7 +13158,8 @@ private:
 			&& !PowerSaving::On(PowerSaving::kAnimations);
 		const auto homePulse = active && _isPlaying && !anim::Disabled()
 			&& _tab == Tab::Home && _homeAlbumOpen && _homeSideGlow.alpha()
-			&& HomeSideGlowWidth(width()) > style::ConvertScale(kHomeSideGlowMin)
+			&& HomeSideGlowWidth(width(), _tabScroll->geometry())
+				> style::ConvertScale(kHomeSideGlowMin)
 			&& Mokagram::Settings::Bool(u"player.cover_colors"_q)
 			&& Mokagram::Settings::Bool(u"player.dynamic_background"_q);
 		if (_homeSideGlowPulsing != homePulse) {
