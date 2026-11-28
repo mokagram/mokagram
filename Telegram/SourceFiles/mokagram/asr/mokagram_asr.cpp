@@ -220,49 +220,65 @@ std::vector<float> DecodePcm(
 // The recognizer emits a JSON array of final words per file piece:
 //   [{"text":"привет","start":0.12,"end":0.5}, ...]
 // There are no "commit" wrappers here: those belong to session events.
-Segment ParseTranscript(const char *json, bool timed) {
-	const auto document = QJsonDocument::fromJson(
-		QByteArray::fromRawData(json, std::strlen(json)));
-	if (!document.isArray()) {
-		return {};
-	}
-	auto result = Segment();
-	auto first = true;
-	for (const auto &value : document.array()) {
-		if (!value.isObject()) {
-			continue;
-		}
+QJsonArray TranscriptWords(const char *json) {
+	return QJsonDocument::fromJson(
+		QByteArray::fromRawData(json, std::strlen(json))).array();
+}
+
+QString ParseTranscript(const char *json) {
+	auto result = QString();
+	for (const auto &value : TranscriptWords(json)) {
 		const auto object = value.toObject();
-		const auto start = timed ? object.value(u"start"_q).toDouble(-1.) : 0.;
 		const auto text = object.value(u"text"_q).toString();
-		if (text.isEmpty() || !(start >= 0. && start <= kMaxRecordingSeconds)) {
+		if (text.isEmpty()) {
 			continue;
 		}
-		if (first && timed) {
-			result.startMs = qRound64(start * 1000.);
+		if (!result.isEmpty() && !object.value(u"join"_q).toBool()) {
+			result.append(u' ');
 		}
-		// "join": true means no space before the word (Khmer syllables).
-		if (!first && !object.value(u"join"_q).toBool()) {
-			result.text.append(u' ');
-		}
-		result.text.append(text);
-		first = false;
+		result.append(text);
 	}
-	result.text = result.text.trimmed();
-	return result;
+	return result.trimmed();
+}
+
+void AppendTimedWords(const char *json, std::vector<TimedWord> &words) {
+	for (const auto &value : TranscriptWords(json)) {
+		const auto object = value.toObject();
+		const auto start = object.value(u"start"_q).toDouble(-1.);
+		const auto end = object.value(u"end"_q).toDouble(-1.);
+		if (!(start >= 0. && end > start && end <= kMaxRecordingSeconds)) {
+			continue;
+		}
+		const auto startMs = qRound64(start * 1000.);
+		const auto endMs = qRound64(end * 1000.);
+		if (endMs <= startMs || (!words.empty() && startMs < words.back().endMs)) {
+			continue;
+		}
+		auto text = object.value(u"text"_q).toString().trimmed();
+		if (!text.isEmpty()) {
+			words.push_back({
+				startMs,
+				endMs,
+				std::move(text),
+				object.value(u"join"_q).toBool(),
+			});
+		}
+	}
 }
 
 void Recognize(
 		tinyasr_models *models,
 		std::vector<float> pcm,
 		const char *languages,
+		bool music,
 		const auto &cancelled,
 		const auto &consume) {
 	if (pcm.empty() || cancelled()) {
 		return;
 	}
+	const auto create = music ? &tinyasr_music_new : &tinyasr_file_new;
 	const auto file = std::unique_ptr<tinyasr_file, decltype(&tinyasr_file_free)>(
-		tinyasr_file_new(models, pcm.data(), pcm.size(), languages, 4),
+		create(models, pcm.data(), pcm.size(), languages, 4),
 		&tinyasr_file_free);
 	std::vector<float>().swap(pcm);
 	while (file && !cancelled()) {
@@ -277,8 +293,9 @@ void Recognize(
 struct RecordingTask {
 	QByteArray bytes;
 	Core::FileLocation location;
+	QByteArray languages;
 	base::binary_guard guard;
-	Fn<void(std::vector<Segment>)> done;
+	Fn<void(std::vector<TimedWord>)> done;
 };
 
 [[nodiscard]] std::vector<float> DecodeRecording(
@@ -460,26 +477,23 @@ private:
 		}
 	}
 
-	void transcribeRecording(RecordingTask task) {
+	void transcribeSong(RecordingTask task) {
 		const auto cancelled = [&] { return _stop || !task.guard.alive(); };
-		auto segments = std::vector<Segment>();
+		auto words = std::vector<TimedWord>();
 		if (!cancelled() && init()) {
 			auto pcm = DecodeRecording(task, cancelled);
 			task.bytes = {};
-			Recognize(_models.load(), std::move(pcm), nullptr, cancelled,
-				[&](const char *piece) {
-					auto segment = ParseTranscript(piece, true);
-					if (!segment.text.isEmpty()) {
-						segments.push_back(std::move(segment));
-					}
+			Recognize(_models.load(), std::move(pcm), task.languages.constData(),
+				true, cancelled, [&](const char *piece) {
+					AppendTimedWords(piece, words);
 				});
 		}
 		if (!cancelled()) {
 			crl::on_main(std::move(task.guard), [
 				done = std::move(task.done),
-				segments = std::move(segments)
+				words = std::move(words)
 			]() mutable {
-				done(std::move(segments));
+				done(std::move(words));
 			});
 		}
 	}
@@ -504,7 +518,7 @@ private:
 				}
 			}
 			if (recording) {
-				transcribeRecording(std::move(*recording));
+				transcribeSong(std::move(*recording));
 				continue;
 			}
 			const auto task = &*current;
@@ -512,8 +526,8 @@ private:
 			const auto cancelled = [&] { return _stop.load(); };
 			auto wrap = BytesWrap(task->bytes);
 			Recognize(_models.load(), DecodePcm(BytesFormat(wrap), cancelled),
-				"ru,en", cancelled, [&](const char *piece) {
-					const auto text = ParseTranscript(piece, false).text;
+				"ru,en", false, cancelled, [&](const char *piece) {
+					const auto text = ParseTranscript(piece);
 					if (!text.isEmpty()) {
 						if (!transcript.isEmpty()) {
 							transcript.append(u' ');
@@ -577,14 +591,16 @@ void Engine::transcribe(not_null<Main::Session*> session, FullMsgId id, const QB
 	_impl->enqueue(Task(id, bytes, session));
 }
 
-void Engine::transcribeRecording(
+void Engine::transcribeSong(
 		QByteArray bytes,
 		Core::FileLocation location,
+		const char *languages,
 		base::binary_guard guard,
-		Fn<void(std::vector<Segment>)> done) {
+		Fn<void(std::vector<TimedWord>)> done) {
 	_impl->enqueue(RecordingTask{
 		std::move(bytes),
 		std::move(location),
+		languages ? QByteArray(languages) : QByteArray(),
 		std::move(guard),
 		std::move(done),
 	});

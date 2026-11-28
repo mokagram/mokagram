@@ -324,6 +324,16 @@ pub unsafe extern "C" fn tinyasr_session_free(s: *mut CSession) {
 /// A recorded file (n samples, 16 kHz, copied): VAD runs here. `langs` and `beam` as for sessions.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tinyasr_file_new(m: *const Models, pcm: *const f32, n: usize, lang_list: *const c_char, beam: u32) -> *mut CFile {
+    unsafe { file_new(m, pcm, n, lang_list, beam, false) }
+}
+
+/// A song: decode all of the audio and choose one language for the file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tinyasr_music_new(m: *const Models, pcm: *const f32, n: usize, lang_list: *const c_char, beam: u32) -> *mut CFile {
+    unsafe { file_new(m, pcm, n, lang_list, beam, true) }
+}
+
+unsafe fn file_new(m: *const Models, pcm: *const f32, n: usize, lang_list: *const c_char, beam: u32, music: bool) -> *mut CFile {
     // SAFETY: m is null or came from tinyasr_load and outlives the file; pcm is null or points to n floats; lang is
     // null or a C string.
     let Some(m): Option<&'static Models> = (unsafe { m.as_ref() }) else {
@@ -331,7 +341,8 @@ pub unsafe extern "C" fn tinyasr_file_new(m: *const Models, pcm: *const f32, n: 
     };
     let x = unsafe { samples(pcm, n) };
     let beam = if beam > 0 { beam as usize } else { crate::DEFAULT_BEAM };
-    let f = Transcription::new(m, x, &unsafe { langs(lang_list) }, beam);
+    let langs = unsafe { langs(lang_list) };
+    let f = if music { Transcription::new_music(m, x, &langs, beam) } else { Transcription::new(m, x, &langs, beam) };
     Box::into_raw(Box::new(CFile { m, f, out: Vec::new() }))
 }
 

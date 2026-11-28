@@ -25,6 +25,62 @@ constexpr auto kSong = AudioMsgId::Type::Song;
 constexpr auto kMaxAudioBytes = int64(64 * 1024 * 1024);
 constexpr auto kPartTimeout = crl::time(30000);
 
+[[nodiscard]] const char *SongLanguages(const QString &title, const QString &artist) {
+	const auto clean = CleanTitle(title, artist);
+	auto name = QStringView(clean);
+	if (const auto bracket = name.indexOf(u'('); bracket > 0) {
+		name = name.left(bracket);
+	}
+	if (const auto bracket = name.indexOf(u'['); bracket > 0) {
+		name = name.left(bracket);
+	}
+	auto russian = false;
+	auto ukrainian = false;
+	auto cyrillic = false;
+	for (const auto ch : name) {
+		const auto lower = ch.toLower();
+		russian |= QStringView(u"ыэъё").contains(lower);
+		ukrainian |= QStringView(u"іїєґ").contains(lower);
+		cyrillic |= ch.script() == QChar::Script_Cyrillic;
+	}
+	return (russian != ukrainian)
+		? (russian ? "ru" : "uk")
+		: (cyrillic ? "ru,uk" : nullptr);
+}
+
+[[nodiscard]] Lyrics LyricsFromWords(const std::vector<Asr::TimedWord> &words) {
+	auto result = Lyrics();
+	for (const auto &word : words) {
+		const auto startLine = [&] {
+			if (result.lines.empty()) {
+				return true;
+			} else if (word.join) {
+				return false;
+			}
+			const auto &line = result.lines.back();
+			const auto gap = word.startMs - line.words.back().endMs;
+			const auto phraseEnd = QStringView(u".?!…;:").contains(line.text.back());
+			return gap >= 550
+				|| phraseEnd
+				|| line.words.size() >= 9
+				|| line.text.size() + 1 + word.text.size() > 48
+				|| (line.words.size() >= 3 && (gap >= 280 || line.text.back() == u','));
+		}();
+		if (startLine) {
+			result.lines.push_back({ word.startMs });
+		}
+		auto &line = result.lines.back();
+		if (!line.text.isEmpty() && !word.join) {
+			line.text.append(u' ');
+		}
+		const auto from = int(line.text.size());
+		line.text += word.text;
+		line.words.push_back({ word.startMs, word.endMs, from, int(line.text.size()) });
+	}
+	result.found = result.synced = !result.lines.empty();
+	return result;
+}
+
 [[nodiscard]] bool SameAudio(const AudioMsgId &a, const AudioMsgId &b) {
 	return a.audio() == b.audio() && a.contextId() == b.contextId();
 }
@@ -39,9 +95,14 @@ std::unique_ptr<Recognition> &Active();
 
 class Recognition final : public base::has_weak_ptr {
 public:
-	Recognition(QString key, const AudioMsgId &audio, Fn<void(Lyrics)> done)
+	Recognition(
+		QString key,
+		const AudioMsgId &audio,
+		const char *languages,
+		Fn<void(Lyrics)> done)
 	: _key(std::move(key))
 	, _audio(audio)
+	, _languages(languages)
 	, _timeout([this] { finish({}); }) {
 		join(std::move(done));
 	}
@@ -134,21 +195,16 @@ private:
 			finish({});
 			return;
 		}
-		Asr::Engine::Instance().transcribeRecording(
-			std::move(bytes), std::move(location), _guard.make_guard(),
-			[this](std::vector<Asr::Segment> segments) {
-				auto result = Lyrics();
-				result.lines.reserve(segments.size());
-				for (auto &segment : segments) {
-					result.lines.push_back({ segment.startMs, std::move(segment.text) });
-				}
-				result.found = result.synced = !result.lines.empty();
-				finish(std::move(result));
+		Asr::Engine::Instance().transcribeSong(
+			std::move(bytes), std::move(location), _languages, _guard.make_guard(),
+			[this](std::vector<Asr::TimedWord> words) {
+				finish(LyricsFromWords(words));
 			});
 	}
 
 	const QString _key;
 	const AudioMsgId _audio;
+	const char *const _languages;
 	std::vector<Fn<void(Lyrics)>> _waiting;
 	QByteArray _bytes;
 	std::unique_ptr<Media::Streaming::Loader> _loader;
@@ -171,6 +227,7 @@ void FetchPlaybackLyrics(const Track &track, Fn<void(Lyrics)> done) {
 		: base::weak_ptr<Main::Session>();
 	FetchLyrics(track.id, track.title, track.artist, track.durationMs,
 		[key = track.id, duration = track.durationMs, audio, session,
+		 languages = SongLanguages(track.title, track.artist),
 		 done = std::move(done)](Lyrics result) {
 			if (result.found || Core::Quitting() || !session.get()
 				|| duration > Asr::kMaxRecordingDurationMs
@@ -195,7 +252,7 @@ void FetchPlaybackLyrics(const Track &track, Fn<void(Lyrics)> done) {
 			if (active) {
 				active->finish({});
 			}
-			active = std::make_unique<Recognition>(key, audio, std::move(generate));
+			active = std::make_unique<Recognition>(key, audio, languages, std::move(generate));
 			active->start();
 		});
 }

@@ -40,9 +40,11 @@ struct Result {
 	bool shown = false;
 };
 
-struct Segment {
+struct TimedWord {
 	qint64 startMs = 0;
+	qint64 endMs = 0;
 	QString text;
+	bool join = false;
 };
 
 // Распознавание выполняется в фоновом потоке.
@@ -57,14 +59,15 @@ public:
 	// Ставит задачу в очередь расшифровки. bytes это содержимое .ogg/opus.
 	void transcribe(not_null<Main::Session*> session, FullMsgId id, const QByteArray &bytes);
 
-	// Готовая аудиозапись: данные в памяти или локальный файл. done вызывается
-	// в главном потоке, если задача не отменена. Пустой результат означает,
-	// что запись не удалось распознать.
-	void transcribeRecording(
+	// Песня в памяти или в локальном файле. languages ограничивает выбор
+	// языка (коды через запятую; nullptr разрешает все языки модели).
+	// done вызывается в главном потоке, если задача не отменена.
+	void transcribeSong(
 		QByteArray bytes,
 		Core::FileLocation location,
+		const char *languages,
 		base::binary_guard guard,
-		Fn<void(std::vector<Segment>)> done);
+		Fn<void(std::vector<TimedWord>)> done);
 
 	[[nodiscard]] std::optional<Result> result(FullMsgId id) const;
 	void markShown(FullMsgId id);

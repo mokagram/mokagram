@@ -118,6 +118,8 @@ void tinyasr_session_free(tinyasr_session *s);
 /* A recorded file (copied; langs and beam as for sessions): only the full-context pass, piece by piece. next returns the next piece's final
  * words as a JSON array of {"text","start","end"} (seconds), or NULL at the end. NULL if m is NULL. */
 tinyasr_file *tinyasr_file_new(const tinyasr_models *m, const float *pcm, size_t n, const char *langs, uint32_t beam);
+/* Music: overlapping audio windows without VAD cuts; one language per file. Use the same next/free functions. */
+tinyasr_file *tinyasr_music_new(const tinyasr_models *m, const float *pcm, size_t n, const char *langs, uint32_t beam);
 const char *tinyasr_file_lang(const tinyasr_file *f);
 const char *tinyasr_file_next(tinyasr_file *f);
 float tinyasr_file_progress(const tinyasr_file *f); /* 0..1; -1 for NULL */
